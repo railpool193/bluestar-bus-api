@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8">
+  <title>Bluestar Bus – Indulások</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 40px;
+      background: #f4f7fb;
+      color: #333;
+    }
+    h1 {
+      text-align: center;
+    }
+    table {
+      margin: 20px auto;
+      border-collapse: collapse;
+      width: 80%;
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 12px;
+      text-align: center;
+    }
+    th {
+      background: #007bff;
+      color: white;
+    }
+    tr:nth-child(even) {
+      background: #f9f9f9;
+    }
+    #refresh {
+      display: block;
+      margin: 20px auto;
+      padding: 10px 20px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    #refresh:hover {
+      background: #0056b3;
+    }
+  </style>
+</head>
+<body>
+  <h1>🚍 Bluestar Bus – Következő indulások</h1>
+  <button id="refresh">🔄 Frissítés</button>
+  <table>
+    <thead>
+      <tr>
+        <th>Járat</th>
+        <th>Úticél</th>
+        <th>Indulás</th>
+      </tr>
+    </thead>
+    <tbody id="bus-table">
+      <tr><td colspan="3">Betöltés...</td></tr>
+    </tbody>
+  </table>
+
+  <script>
+    async function loadDepartures() {
+      const tableBody = document.getElementById("bus-table");
+      tableBody.innerHTML = "<tr><td colspan='3'>Betöltés...</td></tr>";
+
+      try {
+        const response = await fetch("https://bluestar-bus-api-production-5886.up.railway.app/vincents-walk/ck?minutes=60");
+        const data = await response.json();
+
+        tableBody.innerHTML = "";
+        data.departures.forEach(dep => {
+          const row = `
+            <tr>
+              <td>${dep.route}</td>
+              <td>${dep.destination}</td>
+              <td>${dep.departure_time}</td>
+            </tr>
+          `;
+          tableBody.innerHTML += row;
+        });
+
+        if (data.departures.length === 0) {
+          tableBody.innerHTML = "<tr><td colspan='3'>Nincs indulás az elkövetkező 60 percben.</td></tr>";
+        }
+
+      } catch (err) {
+        tableBody.innerHTML = `<tr><td colspan='3'>Hiba történt: ${err.message}</td></tr>`;
+      }
+    }
+
+    document.getElementById("refresh").addEventListener("click", loadDepartures);
+
+    // automatikus betöltés induláskor
+    loadDepartures();
+    // automatikus frissítés 1 percenként
+    setInterval(loadDepartures, 60000);
+  </script>
+</body>
+</html>
