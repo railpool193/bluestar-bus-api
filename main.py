@@ -1,233 +1,259 @@
 # main.py
 import os
-import csv
-from pathlib import Path
-from typing import List, Dict, Any, Optional
+import json
+from datetime import datetime, date, timedelta, time as dtime
+from typing import List, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+import pandas as pd
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# --- Opcionális modulok (amennyiben nálad már léteznek) ---
-# Mindkettő "best-effort" használat; ha nincs / másként nevezett,
-# akkor továbbra is működik a backend menetrendi adatokkal.
-gtfs_utils = None
-siri_live = None
+# -----------------------------
+# Opció: élő adatok (SIRI)
+# -----------------------------
+SIRI_AVAILABLE = False
 try:
-    import gtfs_utils as _gtfs  # a te repo-dból
-    gtfs_utils = _gtfs
+    import siri_live  # a te siri_live.py modulod
+    SIRI_AVAILABLE = True
 except Exception:
-    gtfs_utils = None
+    # ha nincs vagy hibázik, akkor timetable-only módban megyünk
+    SIRI_AVAILABLE = False
 
-try:
-    import siri_live as _siri  # a te repo-dból
-    siri_live = _siri
-except Exception:
-    siri_live = None
-
-APP_DIR = Path(__file__).resolve().parent
-DATA_DIR = APP_DIR / "data"
-INDEX_FILE = APP_DIR / "index.html"
 
 app = FastAPI(title="Bluestar Bus API", version="1.1")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ------------- GTFS stops betöltés egyszer -------------
-_STOPS: List[Dict[str, str]] = []
-_STOPS_IDX_READY = False
+# -----------------------------
+# GTFS betöltés
+# -----------------------------
+DATA_DIR = os.getenv("GTFS_DIR", "data")
+
+def _load_csv(path: str) -> pd.DataFrame:
+    p = os.path.join(DATA_DIR, path)
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"Hiányzó GTFS fájl: {p}")
+    return pd.read_csv(p)
+
+stops_df         = _load_csv("stops.txt")
+stop_times_df    = _load_csv("stop_times.txt")
+trips_df         = _load_csv("trips.txt")
+routes_df        = _load_csv("routes.txt")
+calendar_df      = _load_csv("calendar.txt")
+calendar_dates_df= _load_csv("calendar_dates.txt")
+
+# Normalize oszlopok (ha hiányoznának)
+for col in ["stop_code", "stop_name"]:
+    if col not in stops_df.columns:
+        stops_df[col] = None
+
+if "trip_headsign" not in trips_df.columns:
+    trips_df["trip_headsign"] = ""
+
+# gyors indexek
+STOP_ID_SET: set = set(stops_df["stop_id"].astype(str))
+
+# ATCO/NaPTAN (stop_code) -> GTFS stop_id
+ATCO_TO_GTFS: Dict[str, str] = {}
+if "stop_code" in stops_df.columns:
+    for _, row in stops_df.iterrows():
+        sc = str(row.get("stop_code") or "").strip()
+        if sc:
+            ATCO_TO_GTFS[sc] = str(row["stop_id"])
+
+# keresőhöz: stop_name + stop_id
+SEARCH_ITEMS: List[Dict[str, str]] = []
+for _, r in stops_df.iterrows():
+    SEARCH_ITEMS.append({
+        "stop_id": str(r["stop_id"]),
+        "stop_code": str(r.get("stop_code") or ""),
+        "name": str(r.get("stop_name") or ""),
+    })
 
 
-def _load_stops() -> None:
-    global _STOPS, _STOPS_IDX_READY
-    if _STOPS_IDX_READY:
-        return
-    stops_txt = DATA_DIR / "stops.txt"
-    if not stops_txt.exists():
-        _STOPS = []
-        _STOPS_IDX_READY = True
-        return
-
-    with stops_txt.open("r", encoding="utf-8-sig", newline="") as fh:
-        reader = csv.DictReader(fh)
-        _STOPS = []
-        for row in reader:
-            # fontos mezők normalizálása
-            _STOPS.append(
-                {
-                    "stop_id": row.get("stop_id", "").strip(),
-                    "stop_name": row.get("stop_name", "").strip(),
-                    "stop_lat": row.get("stop_lat", ""),
-                    "stop_lon": row.get("stop_lon", ""),
-                }
-            )
-    _STOPS_IDX_READY = True
+# -----------------------------
+# Segédfüggvények
+# -----------------------------
+def resolve_stop_id(input_id: str) -> str:
+    """
+    ATCO/NaPTAN kód -> GTFS stop_id feloldás.
+    Ha már GTFS stop_id, változatlan.
+    Ha nincs találat, visszaadjuk az eredetit (így látszik, hogy nincs rá timetable).
+    """
+    if not input_id:
+        return input_id
+    sid = str(input_id).strip()
+    if sid in STOP_ID_SET:
+        return sid
+    # ATCO/NaPTAN feloldás
+    if sid in ATCO_TO_GTFS:
+        return ATCO_TO_GTFS[sid]
+    u = sid.upper()
+    if u in ATCO_TO_GTFS:
+        return ATCO_TO_GTFS[u]
+    return sid
 
 
-def search_stops_by_name(q: str, limit: int = 8) -> List[Dict[str, str]]:
-    """Egyszerű, kis/nagybetűt nem érzékeny tartalmazás alapú keresés."""
-    _load_stops()
-    if not q:
+def service_active_on(d: date, service_row) -> bool:
+    """
+    GTFS calendar + calendar_dates alapján aktív-e a service adott napon.
+    """
+    # calendar.txt ellenőrzés
+    weekday = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"][d.weekday()]
+    if not service_row.get(weekday, 0):
+        return False
+
+    start_date = str(service_row.get("start_date"))
+    end_date   = str(service_row.get("end_date"))
+    # YYYYMMDD -> date
+    def parse_ymd(s: str) -> date:
+        return date(int(s[0:4]), int(s[4:6]), int(s[6:8]))
+    try:
+        sd = parse_ymd(start_date)
+        ed = parse_ymd(end_date)
+        if d < sd or d > ed:
+            return False
+    except Exception:
+        # ha valami hibás a dátumban, próbáljunk naponként override-dal (lent)
+        pass
+
+    # calendar_dates override-ok
+    #  - exception_type = 2 -> kivétel (nem jár)
+    #  - exception_type = 1 -> extra nap (jár)
+    sid = service_row["service_id"]
+    day = int(d.strftime("%Y%m%d"))
+    sub = calendar_dates_df[calendar_dates_df["service_id"] == sid]
+    if not sub.empty:
+        exact = sub[sub["date"] == day]
+        if not exact.empty:
+            et = int(exact.iloc[0]["exception_type"])
+            if et == 2:
+                return False
+            if et == 1:
+                return True
+    return True
+
+
+def build_active_service_set(d: date) -> set:
+    """
+    Mely service_id-k aktívak ma?
+    """
+    active = set()
+    for _, srv in calendar_df.iterrows():
+        if service_active_on(d, srv):
+            active.add(srv["service_id"])
+    # calendar_dates-ből extra 1-es (hozzáadás)
+    adds = calendar_dates_df[calendar_dates_df["exception_type"] == 1]
+    day = int(d.strftime("%Y%m%d"))
+    adds = adds[adds["date"] == day]
+    for _, r in adds.iterrows():
+        active.add(r["service_id"])
+    # calendar_dates kivételek (2-es) levonása – ezt már a service_active_on intézi,
+    # itt nem muszáj még egyszer.
+    return active
+
+
+def parse_gtfs_time_to_datetime(gtfs_hms: str, base_day: date) -> Optional[datetime]:
+    """
+    'HH:MM:SS' (akár 24+ órás) GTFS idő -> konkrét datetime (base_day-hoz).
+    """
+    if not gtfs_hms or pd.isna(gtfs_hms):
+        return None
+    try:
+        parts = gtfs_hms.split(":")
+        h = int(parts[0]); m = int(parts[1]); s = int(parts[2]) if len(parts) > 2 else 0
+        carry_days = h // 24
+        h = h % 24
+        dt = datetime.combine(base_day, dtime(0, 0, 0)) + timedelta(days=carry_days, hours=h, minutes=m, seconds=s)
+        return dt
+    except Exception:
+        return None
+
+
+def get_live_times_for_stop(stop_id: str, minutes: int) -> set:
+    """
+    Élő (SIRI) időpontok halmaza. Formátum: { 'HH:MM' } (lokális idő).
+    Ha nincs SIRI, üres halmaz.
+    """
+    if not SIRI_AVAILABLE:
+        return set()
+    try:
+        # feltételezzük, hogy a siri_live-ben van egy ilyen segédfüggvény:
+        # get_departures(stop_id: str, minutes: int) -> List[Dict[str, Any]]
+        # és a dict-ben van pl. "time" vagy "departure_time" "HH:MM" formátumban.
+        live = siri_live.get_departures(stop_id=stop_id, minutes=minutes)  # igazítsd a saját implementációdhoz
+        times = set()
+        for it in live or []:
+            t = str(it.get("time") or it.get("departure_time") or "")
+            if t:
+                # formázzuk HH:MM-re (ha HH:MM:SS jön)
+                times.add(t[0:5])
+        return times
+    except Exception:
+        return set()
+
+
+def get_next_departures(stop_id: str, minutes: int = 60) -> List[Dict]:
+    """
+    Következő indulások GTFS alapján, minutes időablakban.
+    Élő adatok bejelölése (is_live) – ha elérhető.
+    """
+    now = datetime.now()
+    end_time = now + timedelta(minutes=minutes)
+
+    # csak ma (és túlfutó éjfél felett) nézünk
+    active_services = build_active_service_set(now.date())
+
+    # join: stop_times + trips + routes
+    st = stop_times_df[stop_times_df["stop_id"].astype(str) == str(stop_id)]
+    if st.empty:
         return []
-    qq = q.lower().strip()
-    results = [s for s in _STOPS if qq in s["stop_name"].lower()]
-    # rendezés: rövidebb név, majd ABC
-    results.sort(key=lambda s: (len(s["stop_name"]), s["stop_name"]))
-    return results[:limit]
+    merged = st.merge(trips_df, on="trip_id", how="left").merge(routes_df, on="route_id", how="left")
+
+    rows = []
+    for _, r in merged.iterrows():
+        sid = r.get("service_id")
+        if sid not in active_services:
+            continue
+
+        dep_str = str(r.get("departure_time") or "")
+        dep_dt = parse_gtfs_time_to_datetime(dep_str, now.date())
+        if dep_dt is None:
+            continue
+
+        if dep_dt < now or dep_dt > end_time:
+            continue
+
+        route_short = str(r.get("route_short_name") or r.get("route_id") or "")
+        headsign = str(r.get("trip_headsign") or r.get("route_long_name") or "")
+
+        rows.append({
+            "route": route_short,
+            "destination": headsign,
+            "departure_time": dep_dt.strftime("%H:%M"),
+        })
+
+    # idő szerint rendezés
+    rows.sort(key=lambda x: x["departure_time"])
+
+    # élő időpontok bejelölése (ha van)
+    live_times = get_live_times_for_stop(stop_id, minutes)
+    for it in rows:
+        it["is_live"] = (it["departure_time"] in live_times)
+
+    return rows
 
 
-# ------------------- Élő + menetrendi egyesítés -------------------
-
-def _normalize_live_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Különböző szerkezetekből normalizál egy "live" rekordot.
-    Várt kimenet: route, destination, departure_time, realtime=True
-    """
-    if not item:
-        return None
-
-    # lehetséges kulcsnevek
-    route = item.get("route") or item.get("line") or item.get("line_name")
-    dest = item.get("destination") or item.get("direction") or item.get("dest")
-    # idő: preferált "expected", ha nincs, akkor "departure_time"/"aimed"
-    dep = (
-        item.get("expected_departure_time")
-        or item.get("expected_time")
-        or item.get("departure_time")
-        or item.get("aimed_departure_time")
-        or item.get("time")
-    )
-
-    if not (route and dest and dep):
-        return None
-
-    return {
-        "route": str(route),
-        "destination": str(dest),
-        "departure_time": str(dep),
-        "realtime": True,
-    }
-
-
-def _fetch_live(stop_id: str, minutes: int) -> List[Dict[str, Any]]:
-    """Best-effort lekérés a siri_live modulból több névvel/struktúrával."""
-    if siri_live is None:
-        return []
-
-    # támogatott hívásnevek:
-    candidates = [
-        ("get_departures", {"stop_id": stop_id, "minutes": minutes}),
-        ("get_next_departures", {"stop_id": stop_id, "minutes": minutes}),
-        ("get_next_departures", {"stop_id": stop_id}),  # régi szignatúra
-        ("build_departures", {"stop_id": stop_id, "minutes": minutes}),
-    ]
-    for func_name, kwargs in candidates:
-        func = getattr(siri_live, func_name, None)
-        if callable(func):
-            try:
-                data = func(**kwargs)
-                # data lehet lista vagy dict {"departures": [...]}
-                if isinstance(data, dict) and "departures" in data:
-                    data = data["departures"]
-                if not isinstance(data, list):
-                    continue
-                out = []
-                for it in data:
-                    norm = _normalize_live_item(it)
-                    if norm:
-                        out.append(norm)
-                return out
-            except TypeError:
-                # nem passzoló szignatúra → próbáljuk a következőt
-                continue
-            except Exception:
-                # ha bármi gond van, lépünk tovább a fallbackre
-                return []
-    return []
-
-
-def _normalize_sched_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Menetrendi rekord normalizálása."""
-    if not item:
-        return None
-    route = item.get("route") or item.get("line") or item.get("line_name")
-    dest = item.get("destination") or item.get("headsign") or item.get("dest")
-    dep = item.get("departure_time") or item.get("time")
-    if not (route and dest and dep):
-        return None
-    return {
-        "route": str(route),
-        "destination": str(dest),
-        "departure_time": str(dep),
-        "realtime": bool(item.get("realtime", False)),  # ha netán már benne van
-    }
-
-
-def _fetch_schedule(stop_id: str, minutes: int) -> List[Dict[str, Any]]:
-    """Menetrendi (GTFS) következő indulások lekérése, ha van hozzá util."""
-    if gtfs_utils is None:
-        return []
-
-    # több lehetséges publikus segédfüggvény támogatása
-    candidates = [
-        ("get_next_departures", {"stop_id": stop_id, "minutes": minutes}),
-        ("next_departures", {"stop_id": stop_id, "minutes": minutes}),
-        ("get_departures", {"stop_id": stop_id, "minutes": minutes}),
-    ]
-    for func_name, kwargs in candidates:
-        func = getattr(gtfs_utils, func_name, None)
-        if callable(func):
-            try:
-                data = func(**kwargs)
-                if isinstance(data, dict) and "departures" in data:
-                    data = data["departures"]
-                if not isinstance(data, list):
-                    continue
-                out = []
-                for it in data:
-                    norm = _normalize_sched_item(it)
-                    if norm:
-                        out.append(norm)
-                return out
-            except Exception:
-                return []
-    return []
-
-
-def _merge_departures(schedule: List[Dict[str, Any]],
-                      live: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Egyszerű egyesítés:
-    - élő rekord felülírja / jelzi ugyanazt az indulást
-    - kulcs: (route, destination, departure_time)
-    """
-    merged: Dict[tuple, Dict[str, Any]] = {}
-    for it in schedule:
-        key = (it["route"], it["destination"], it["departure_time"])
-        merged[key] = dict(it)
-
-    for it in live:
-        key = (it["route"], it["destination"], it["departure_time"])
-        if key in merged:
-            # ha menetrendiben megvan ugyanez az idő → jelöljük élőnek
-            merged[key]["realtime"] = True
-        else:
-            merged[key] = dict(it)
-
-    # vissza listává, idő szerinti ABC (hh:mm alaknál működik)
-    out = list(merged.values())
-    out.sort(key=lambda x: (x.get("departure_time", ""), x.get("route", "")))
-    return out
-
-
-# ---------------------- Endpoints ----------------------
-
-@app.get("/")
+# -----------------------------
+# Végpontok
+# -----------------------------
+@app.get("/", response_class=JSONResponse)
 def root():
     return {
         "message": "Bluestar Bus API",
@@ -241,48 +267,70 @@ def root():
     }
 
 
-@app.get("/health")
+@app.get("/health", response_class=JSONResponse)
 def health():
-    return {"ok": True}
+    return {"status": "ok", "gtfs_loaded": True, "siri_available": SIRI_AVAILABLE}
 
 
-@app.get("/index.html")
-def index_html():
-    if INDEX_FILE.exists():
-        return FileResponse(INDEX_FILE)
-    return JSONResponse({"message": "Bluestar Bus API - nincs index.html"}, status_code=200)
+@app.get("/search_stops", response_class=JSONResponse)
+def search_stops(q: str = Query(..., min_length=2), limit: int = 12):
+    """
+    Név szerinti kereső (case-insensitive). Visszaadja a
+    - display_name (pl. 'Southampton, Vincents Walk [CH]'),
+    - stop_id (GTFS),
+    - stop_code (ATCO/NaPTAN) mezőket.
+    """
+    tq = q.strip().lower()
+    out = []
+    for item in SEARCH_ITEMS:
+        name = item["name"].lower()
+        if tq in name:
+            out.append({
+                "display_name": item["name"],
+                "stop_id": item["stop_id"],
+                "stop_code": item["stop_code"],
+            })
+            if len(out) >= limit:
+                break
+    return {"query": q, "results": out}
 
 
-@app.get("/search_stops")
-def api_search_stops(q: str = Query(..., min_length=2, description="Megálló neve"),
-                     limit: int = 8):
-    try:
-        results = search_stops_by_name(q, limit=limit)
-        # front-end kényelmi label
-        for r in results:
-            r["label"] = f'{r["stop_name"]} ({r["stop_id"]})'
-        return {"query": q, "results": results}
-    except Exception as e:
-        raise HTTPException(500, f"Search failed: {e}")
+@app.get("/next_departures/{stop_id}", response_class=JSONResponse)
+def next_departures(stop_id: str, minutes: int = Query(60, ge=1, le=360)):
+    """
+    Következő indulások. Elfogad:
+    - GTFS stop_id (1980SN…),
+    - ATCO/NaPTAN (1900HAA…): automatikusan feloldjuk GTFS-re.
+    """
+    canonical = resolve_stop_id(stop_id)
+    deps = get_next_departures(canonical, minutes=minutes)
+    return {"stop_id": canonical, "minutes": minutes, "departures": deps}
 
 
-@app.get("/next_departures/{stop_id}")
-def api_next_departures(stop_id: str, minutes: int = 60):
-    try:
-        sched = _fetch_schedule(stop_id, minutes)
-        live = _fetch_live(stop_id, minutes)
-        departures = _merge_departures(sched, live)
-        return {"stop_id": stop_id, "minutes": minutes, "departures": departures}
-    except Exception as e:
-        raise HTTPException(500, f"Failed to build departures: {e}")
+# --- kényelmi példa endpointok (ahogy korábban használtad) ---
+@app.get("/vincents-walk/ck", response_class=JSONResponse)
+def vw_ck(minutes: int = Query(60, ge=1, le=360)):
+    return next_departures("1980SN12618B", minutes)  # Vincents Walk [CH]
 
 
-# --- A két kényelmi végpont (ha korábban használtad) ---
-@app.get("/vincents-walk/ck")
-def next_ck(minutes: int = 60):
-    return api_next_departures("1980SN12619E", minutes)
+@app.get("/vincents-walk/cm", response_class=JSONResponse)
+def vw_cm(minutes: int = Query(60, ge=1, le=360)):
+    return next_departures("1980HAA13371", minutes)  # ATCO -> feloldás után GTFS
 
 
-@app.get("/vincents-walk/cm")
-def next_cm(minutes: int = 60):
-    return api_next_departures("1980HAA13371", minutes)
+# Debug: feloldás teszt
+@app.get("/api/debug/resolve", response_class=JSONResponse)
+def debug_resolve(input: str):
+    resolved = resolve_stop_id(input)
+    return {"input": input, "resolved_to": resolved, "is_gtfs": resolved in STOP_ID_SET}
+
+
+# -----------------------------
+# Egyszerű UI (ha van index.html a repo gyökerében)
+# -----------------------------
+@app.get("/index.html", response_class=HTMLResponse)
+def serve_index():
+    if os.path.exists("index.html"):
+        with open("index.html", "r", encoding="utf-8") as f:
+            return HTMLResponse(f.read())
+    return HTMLResponse('<pre>{"message":"Bluestar Bus API - nincs index.html"}</pre>')
