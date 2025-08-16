@@ -1,140 +1,143 @@
-import os
+# main.py
+from __future__ import annotations
+
 import csv
-from typing import List, Dict, Any
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+import os
+import time
 from pathlib import Path
-from datetime import datetime, timedelta
+from typing import List, Dict, Optional, Tuple
 
-from gtfs_utils import get_next_departures  # a korábbi GTFS logikád
-import siri_live  # a korábbi “élő” adat logikád
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Bluestar Bus API")
+from gtfs_utils import get_next_departures  # def get_next_departures(stop_id: str, minutes: int) -> List[Dict]
 
+app = FastAPI(title="Bluestar Bus API", version="1.1")
+
+# ---- CORS (ha külön domainről hívod a frontendet) ----
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],      # ha szigorúbb kell: ["https://sajatdomain.hu"]
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-ROOT = Path(__file__).parent
-DATA_DIR = ROOT / "data"
-STOPS_FILE = DATA_DIR / "stops.txt"
+# ---- index.html kiszolgálás ----
+BASE_DIR = Path(__file__).resolve().parent
+INDEX_FILE = BASE_DIR / "index.html"
 
-# ---------------------------
-# Megálló-adatbázis (GTFS/stops.txt)
-# ---------------------------
-STOPS: List[Dict[str, Any]] = []
-
-def _norm(s: str) -> str:
-    return " ".join(s.lower().strip().split())
-
-def _load_stops() -> None:
-    global STOPS
-    STOPS = []
-    if not STOPS_FILE.exists():
-        return
-    with open(STOPS_FILE, newline="", encoding="utf-8") as f:
-        rdr = csv.DictReader(f)
-        for row in rdr:
-            # A GTFS tipikusan: stop_id, stop_name, stop_lat, stop_lon, ...
-            STOPS.append({
-                "stop_id": row.get("stop_id", "").strip(),
-                "name": row.get("stop_name", "").strip(),
-                "lat": row.get("stop_lat"),
-                "lon": row.get("stop_lon"),
-                "loc": row.get("stop_desc") or row.get("platform_code") or "",
-            })
-_load_stops()
-
-# ---------------------------
-# Root + egészségügy
-# ---------------------------
-@app.get("/", response_class=JSONResponse)
+@app.get("/", response_class=HTMLResponse)
 def root():
-    return {
-        "message": "Bluestar Bus API",
-        "links": {
-            "docs": "/docs",
-            "health": "/health",
-            "ck_next_60": "/vincents-walk/ck?minutes=60",
-            "cm_next_60": "/vincents-walk/cm?minutes=60",
-            "generic_example": "/next_departures/1980SN12619E?minutes=60",
-        },
-    }
+    if INDEX_FILE.exists():
+        return FileResponse(str(INDEX_FILE), media_type="text/html; charset=utf-8")
+    return JSONResponse(
+        {
+            "message": "Bluestar Bus API",
+            "links": {
+                "docs": "/docs",
+                "health": "/health",
+                "ck_next_60": "/vincents-walk/ck?minutes=60",
+                "cm_next_60": "/vincents-walk/cm?minutes=60",
+                "generic_example": "/next_departures/1980SN12619E?minutes=60",
+            },
+        }
+    )
+
+@app.get("/index.html", response_class=HTMLResponse)
+def index_html():
+    if INDEX_FILE.exists():
+        return FileResponse(str(INDEX_FILE), media_type="text/html; charset=utf-8")
+    return JSONResponse({"message": "Bluestar Bus API - nincs index.html"})
 
 @app.get("/health")
 def health():
-    return {"ok": True, "time": datetime.utcnow().isoformat() + "Z"}
+    return {"status": "ok"}
 
-# ---------------------------
-# Megálló-keresés (kis/nagybetű független, több találatot ad vissza)
-# ---------------------------
-@app.get("/search_stop")
-def search_stop(
-    name: str = Query(..., description="Megálló neve (részlet is lehet)"),
-    limit: int = Query(15, ge=1, le=50),
+# ---- GTFS megállók betöltése ----
+STOPS_TXT = BASE_DIR / "data" / "stops.txt"
+stops_index: List[Dict[str, str]] = []
+
+def _norm(s: str) -> str:
+    return s.lower().strip()
+
+def _load_stops():
+    global stops_index
+    stops_index = []
+    if not STOPS_TXT.exists():
+        return
+    with STOPS_TXT.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            sid = (row.get("stop_id") or "").strip()
+            sname = (row.get("stop_name") or "").strip()
+            if sid and sname:
+                stops_index.append({"stop_id": sid, "stop_name": sname, "_norm": _norm(sname)})
+
+_load_stops()
+
+# ---- Egyszerű TTL cache a /search_stops válaszokra ----
+# Kulcs: (term, limit)  ->  (timestamp, results)
+_search_cache: Dict[Tuple[str, int], Tuple[float, List[Dict[str, str]]]] = {}
+SEARCH_TTL_SECONDS = 24 * 60 * 60  # 24 óra
+
+def _cached_search(term: str, limit: int) -> List[Dict[str, str]]:
+    now = time.time()
+    key = (term, limit)
+    hit = _search_cache.get(key)
+    if hit and now - hit[0] < SEARCH_TTL_SECONDS:
+        return hit[1]
+    # új lekérdezés
+    t = _norm(term)
+    starts, contains = [], []
+    for st in stops_index:
+        nm_norm = st["_norm"]
+        if t in nm_norm:
+            item = {"stop_id": st["stop_id"], "stop_name": st["stop_name"]}
+            (starts if nm_norm.startswith(t) else contains).append(item)
+    results = (starts + contains)[:limit]
+    _search_cache[key] = (now, results)
+    # méret féken tartása (nagyon egyszerű LRU-szerű takarítás)
+    if len(_search_cache) > 1000:
+        # legöregebb 200 elem törlése
+        for _ in range(200):
+            oldest = min(_search_cache.items(), key=lambda kv: kv[1][0])[0]
+            _search_cache.pop(oldest, None)
+    return results
+
+# ---- Megálló-kereső ----
+@app.get("/search_stops", response_model=List[Dict[str, str]])
+def search_stops(
+    q: Optional[str] = Query(None, description="Megálló neve (részlet)"),
+    name: Optional[str] = Query(None, description="Alias a q helyett"),
+    limit: int = Query(20, ge=1, le=50),
 ):
-    if not STOPS:
-        raise HTTPException(status_code=503, detail="Nincs GTFS stops.txt betöltve.")
-    q = _norm(name)
-    if len(q) < 2:
-        return {"query": name, "results": []}
+    term = (q or name or "").strip()
+    if not term or not stops_index:
+        return []
+    return _cached_search(term, limit)
 
-    results = []
-    for s in STOPS:
-        if q in _norm(s["name"]):
-            results.append({
-                "stop_id": s["stop_id"],
-                "name": s["name"],
-                "lat": s["lat"],
-                "lon": s["lon"],
-            })
-        if len(results) >= limit:
-            break
-    return {"query": name, "count": len(results), "results": results}
-
-# ---------------------------
-# Következő indulások (GTFS)
-# ---------------------------
+# ---- Indulások ----
 @app.get("/next_departures/{stop_id}")
-def next_departures(stop_id: str, minutes: int = 60):
+def api_next_departures(stop_id: str, minutes: int = Query(60, ge=1, le=240)):
     try:
-        deps = get_next_departures(stop_id, minutes=minutes)
-        return {"stop_id": stop_id, "minutes": minutes, "departures": deps}
-    except TypeError:
-        # korábbi hibád: get_next_departures nem várt "minutes"-t → most már várt,
-        # de ha egy régi verzió futna, próbáljuk meg paraméter nélkül:
-        deps = get_next_departures(stop_id)
-        # opcionális: szűkítsük minutes ablakra, ha a régi függvény sokat ad vissza
-        # (ha a régi nem ad időt, ezt el is hagyhatod)
-        return {"stop_id": stop_id, "minutes": minutes, "departures": deps}
+        # minutes pozíciós arg, hogy biztosan kompatibilis legyen
+        deps = get_next_departures(stop_id, minutes)
+    except TypeError as e:
+        return JSONResponse(status_code=500, content={"detail": f"Failed to build departures (TypeError): {e}"})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to build departures ({type(e).__name__}): {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to build departures: {e}")
+    return {"stop_id": stop_id, "minutes": minutes, "departures": deps or []}
 
-# ---------------------------
-# Vincents Walk gyorslinkek (ha használod)
-# ---------------------------
+# ---- Kényelmi aliasok ----
+VW_CK = os.getenv("VW_CK_STOP_ID", "1980HAA13371")
+VW_CM = os.getenv("VW_CM_STOP_ID", "1980SN12619E")
+
 @app.get("/vincents-walk/ck")
-def vw_ck(minutes: int = 60):
-    return next_departures("1980SN12619E", minutes=minutes)
+def vw_ck(minutes: int = Query(60, ge=1, le=240)):
+    return api_next_departures(VW_CK, minutes)
 
 @app.get("/vincents-walk/cm")
-def vw_cm(minutes: int = 60):
-    return next_departures("1980SN12619W", minutes=minutes)
-
-# ---------------------------
-# Egyszerű index.html
-# ---------------------------
-@app.get("/index.html", response_class=HTMLResponse)
-def serve_index():
-    idx = ROOT / "index.html"
-    if idx.exists():
-        return idx.read_text(encoding="utf-8")
-    return HTMLResponse(
-        '<!doctype html><meta charset="utf-8"><title>Bluestar Bus</title>'
-        '<p>Hiányzik az <code>index.html</code> a gyökérből.</p>',
-        status_code=200,
-    )
+def vw_cm(minutes: int = Query(60, ge=1, le=240)):
+    return api_next_departures(VW_CM, minutes)
