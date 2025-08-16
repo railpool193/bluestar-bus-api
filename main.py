@@ -68,3 +68,21 @@ def live(line: str | None = Query(default=None, description="Opcionális vonalsz
         return {"count": len(data), "line": line, "vehicles": data}
     except LiveDataError as e:
         return {"error": str(e)}
+import os
+import requests
+
+feed_id = os.getenv("BODS_FEED_ID")
+api_key = os.getenv("BODS_API_KEY")
+
+url = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/{feed_id}/?api_key={api_key}"
+
+print("Fetching:", url)
+
+resp = requests.get(url, timeout=30)
+resp.raise_for_status()
+
+# Ez ZIP fájl (benne XML)
+with open("avl_feed.zip", "wb") as f:
+    f.write(resp.content)
+
+print("Feed downloaded: avl_feed.zip")
