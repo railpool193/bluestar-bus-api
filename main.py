@@ -98,3 +98,13 @@ def vincents_walk_any(
     stop_id = "1980SN12619E"
     deps = _call_next_departures(stop_id, minutes)
     return {"stop_id": stop_id, "minutes": minutes, "departures": deps}
+from fastapi.responses import FileResponse
+from pathlib import Path
+
+# ...
+
+@app.get("/", include_in_schema=False)
+def index():
+    # A repo gyökerében lévő index.html-t szolgálja ki
+    file_path = Path(__file__).with_name("index.html")
+    return FileResponse(file_path)
