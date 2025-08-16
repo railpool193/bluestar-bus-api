@@ -1,163 +1,106 @@
-<!doctype html>
-<html lang="hu">
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta charset="UTF-8">
   <title>Bluestar Bus – Live Departures</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial}
-    .wrap{max-width:960px;margin:0 auto;padding:16px}
-    .card{background:#101318;color:#eaeef2;border:1px solid #232834;border-radius:14px;box-shadow:0 6px 18px #00000055}
-    .head{padding:18px 18px 8px}
-    .row{display:flex;gap:10px;flex-wrap:wrap}
-    .row > *{flex:1 1 220px}
-    input,button{width:100%;background:#0f1420;color:#eaeef2;border:1px solid #2a3242;border-radius:12px;padding:12px 14px;font-size:16px;outline:none}
-    input:focus{border-color:#5aa9ff;box-shadow:0 0 0 3px #5aa9ff33}
-    .btn{cursor:pointer;background:#162033;border-color:#243147}
-    .btn:hover{background:#1a2740}
-    .actions{padding:0 18px 16px;display:flex;gap:10px;flex-wrap:wrap}
-    .res{padding:0 18px 18px}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:10px 8px;border-bottom:1px solid #232834;text-align:left}
-    th{font-weight:600;color:#aab6c6}
-    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid}
-    .live{color:#22c55e;border-color:#22c55e33;background:#22c55e1a}
-    .sched{color:#94a3b8;border-color:#94a3b833;background:#94a3b81a}
-    .muted{color:#94a3b8}
-    /* kereső dropdown */
-    .searchbox{position:relative}
-    .dropdown{position:absolute;z-index:20;left:0;right:0;top:calc(100% + 6px);background:#0b0f18;border:1px solid #202838;border-radius:10px;max-height:280px;overflow:auto;box-shadow:0 10px 20px #00000066}
-    .opt{padding:10px 12px;border-bottom:1px solid #1a2130;cursor:pointer}
-    .opt:last-child{border-bottom:none}
-    .opt:hover{background:#131a2a}
-    .opt .small{display:block;color:#94a3b8;font-size:12px;margin-top:2px}
+    body {
+      font-family: Arial, sans-serif;
+      background: #111;
+      color: #eee;
+      margin: 0;
+      padding: 1rem;
+    }
+    h1 { font-size: 1.4rem; }
+    input, button, select {
+      padding: .5rem;
+      margin: .2rem;
+      border-radius: 4px;
+      border: none;
+    }
+    button { background: #2c7be5; color: white; cursor: pointer; }
+    button:hover { background: #1a5cc6; }
+    .results { margin-top: 1rem; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+      background: #222;
+    }
+    th, td {
+      padding: .5rem;
+      border-bottom: 1px solid #333;
+      text-align: left;
+    }
+    .live { color: #4cff4c; font-weight: bold; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <div class="head">
-        <h2 style="margin:0 0 10px">Bluestar Bus – Live Departures</h2>
-        <div class="row">
-          <div class="searchbox">
-            <input id="stopSearch" placeholder="Megálló keresése (pl. Vincents Walk)"/>
-            <div id="dd" class="dropdown" style="display:none"></div>
-          </div>
-          <input id="stopId" placeholder="Stop ID (pl. 1980SN12619E)" />
-          <input id="mins" type="number" value="60" min="5" max="180" />
-        </div>
-      </div>
-      <div class="actions">
-        <button class="btn" id="btnCk">Vincents Walk (ck)</button>
-        <button class="btn" id="btnCm">Vincents Walk (cm)</button>
-        <button class="btn" id="btnUse">Use Stop ID (generic)</button>
-      </div>
-      <div class="res">
-        <h3 id="title" class="muted" style="margin:0 0 8px">–</h3>
-        <div class="tablewrap">
-          <table id="tbl">
-            <thead><tr>
-              <th>Route</th><th>Destination</th><th>Status</th><th>Time</th>
-            </tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+  <h1>Bluestar Bus – Live Departures</h1>
+
+  <div>
+    <input type="text" id="searchBox" placeholder="Search stop name (e.g. Vincents Walk)">
+    <button onclick="searchStops()">Search</button>
   </div>
 
-<script>
-const API = "";
+  <div id="stopResults"></div>
 
-function fmtRow(d){
-  const route = d.route || "";
-  const dest  = d.destination || "";
-  const sched = d.departure_time || "";
-  const live = !!d.live;
-  const pred = d.predicted_time || null;
-  let time = sched;
-  if (pred && pred !== sched) time = `${sched} → ${pred}`;
-  const badge = live
-    ? '<span class="badge live">LIVE</span>'
-    : '<span class="badge sched">SCHEDULED</span>';
-  return `<tr>
-    <td>${route}</td>
-    <td>${dest}</td>
-    <td>${badge}</td>
-    <td>${time}</td>
-  </tr>`;
-}
+  <div>
+    <label>Stop ID:</label>
+    <input type="text" id="stopId" value="1980SN12619E">
+    <label>Minutes:</label>
+    <input type="number" id="minutes" value="60" min="5" max="180">
+    <button onclick="loadDepartures()">OK</button>
+  </div>
 
-async function loadGeneric(stopId, mins){
-  const r = await fetch(`${API}/next_departures/${encodeURIComponent(stopId)}?minutes=${mins}`);
-  if(!r.ok){ throw new Error(await r.text()); }
-  return r.json();
-}
+  <div id="departures" class="results"></div>
 
-function render(data){
-  const t = document.querySelector("#tbl tbody");
-  t.innerHTML = (data.departures || []).map(fmtRow).join("") || `<tr><td colspan="4" class="muted">No data</td></tr>`;
-  document.getElementById("title").textContent =
-    `Departures – stop ${data.stop_id}, next ${data.minutes} min`;
-}
+  <script>
+    async function searchStops() {
+      const q = document.getElementById("searchBox").value;
+      if (!q) return;
+      const res = await fetch(`/stops?q=${encodeURIComponent(q)}`);
+      if (!res.ok) { alert("Error searching stops"); return; }
+      const data = await res.json();
+      let html = "<ul>";
+      data.forEach(stop => {
+        html += `<li>
+          <a href="#" onclick="selectStop('${stop.stop_id}')">
+            ${stop.name} (${stop.stop_id})
+          </a>
+        </li>`;
+      });
+      html += "</ul>";
+      document.getElementById("stopResults").innerHTML = html;
+    }
 
-// quick buttons
-document.getElementById("btnCk").onclick = async ()=>{
-  const mins = +document.getElementById("mins").value || 60;
-  const data = await loadGeneric("1980SN12619E", mins);
-  document.getElementById("stopId").value = "1980SN12619E";
-  render(data);
-};
-document.getElementById("btnCm").onclick = async ()=>{
-  const mins = +document.getElementById("mins").value || 60;
-  const data = await loadGeneric("1980SN12619W", mins); // ha másik ID, cseréld
-  document.getElementById("stopId").value = "1980SN12619W";
-  render(data);
-};
-document.getElementById("btnUse").onclick = async ()=>{
-  const stopId = document.getElementById("stopId").value.trim();
-  if(!stopId) return;
-  const mins = +document.getElementById("mins").value || 60;
-  const data = await loadGeneric(stopId, mins);
-  render(data);
-};
+    function selectStop(stopId) {
+      document.getElementById("stopId").value = stopId;
+      document.getElementById("stopResults").innerHTML = "";
+      loadDepartures();
+    }
 
-// -------- Megálló-kereső (debounce + dropdown) --------
-let timer = null;
-const dd  = document.getElementById("dd");
-const inp = document.getElementById("stopSearch");
-inp.addEventListener("input", ()=>{
-  clearTimeout(timer);
-  const q = inp.value.trim();
-  if(q.length < 2){ dd.style.display = "none"; dd.innerHTML=""; return; }
-  timer = setTimeout(async ()=>{
-    const r = await fetch(`${API}/stops?q=${encodeURIComponent(q)}&limit=12`);
-    if(!r.ok){ dd.style.display="none"; return; }
-    const arr = await r.json();
-    dd.innerHTML = arr.map(s => `
-      <div class="opt" data-id="${s.stop_id}">
-        ${s.name}
-        <span class="small">${s.stop_id}${s.desc ? " · "+s.desc : ""}</span>
-      </div>`).join("");
-    dd.style.display = arr.length ? "block" : "none";
-    Array.from(dd.querySelectorAll(".opt")).forEach(el=>{
-      el.onclick = async ()=>{
-        dd.style.display="none";
-        const id = el.getAttribute("data-id");
-        document.getElementById("stopId").value = id;
-        const mins = +document.getElementById("mins").value || 60;
-        const data = await loadGeneric(id, mins);
-        render(data);
-      };
-    });
-  }, 200);
-});
-document.addEventListener("click",(e)=>{
-  if(!dd.contains(e.target) && e.target !== inp) dd.style.display="none";
-});
+    async function loadDepartures() {
+      const stopId = document.getElementById("stopId").value;
+      const minutes = document.getElementById("minutes").value;
+      const res = await fetch(`/next_departures/${stopId}?minutes=${minutes}`);
+      if (!res.ok) { alert("Error loading departures"); return; }
+      const data = await res.json();
 
-// initial
-document.getElementById("btnCk").click();
-</script>
+      let html = `<h3>Departures – stop ${data.stop_id}, next ${data.minutes} min</h3>`;
+      html += "<table><tr><th>Route</th><th>Destination</th><th>Time</th></tr>";
+      data.departures.forEach(dep => {
+        const live = dep.live ? `<span class="live">${dep.predicted_time || dep.departure_time}</span>` : dep.departure_time;
+        html += `<tr>
+          <td>${dep.route}</td>
+          <td>${dep.destination || ""}</td>
+          <td>${live}</td>
+        </tr>`;
+      });
+      html += "</table>";
+      document.getElementById("departures").innerHTML = html;
+    }
+  </script>
 </body>
 </html>
