@@ -1,158 +1,200 @@
 # main.py
 import os
 import logging
-from typing import List, Dict, Any
+from pathlib import Path
+from typing import List, Dict, Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Query, Path as FPath, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 
-# --- Loggolás ---------------------------------------------------------------
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-log = logging.getLogger("bluestar.main")
+import pandas as pd
 
-# --- Külső modulok betöltése (GTFS + SIRI) ---------------------------------
-GTFS_OK = False
-SIRI_OK = False
-GTFS_ERR = None
-SIRI_ERR = None
+# Saját modul: élő adatok a BODS SIRI-VM-ből
+import siri_live  # ensure siri_live.py is in the same directory
 
-try:
-    import gtfs_utils as gtfs  # saját modulod
-    # ha a modulban van init betöltés, ez elég; különben itt is lehetne cache-elni
-    GTFS_OK = True
-    log.info("GTFS modul betöltve.")
-except Exception as e:
-    GTFS_ERR = repr(e)
-    log.exception("GTFS modul betöltése sikertelen.")
+APP_DIR = Path(__file__).resolve().parent
+DATA_DIR = APP_DIR / "data"
+STOPS_FILE = DATA_DIR / "stops.txt"
+INDEX_HTML = APP_DIR / "index.html"
 
-try:
-    import siri_live as siri  # saját modulod
-    SIRI_OK = True
-    log.info("SIRI modul betöltve.")
-except Exception as e:
-    SIRI_ERR = repr(e)
-    log.exception("SIRI modul betöltése sikertelen.")
+logger = logging.getLogger("uvicorn.error")
+logging.basicConfig(level=logging.INFO)
 
-# --- FastAPI app ------------------------------------------------------------
 app = FastAPI(title="Bluestar Bus API", version="1.0.0")
 
-# CORS (ha később külön domainről kérdezed az API-t)
+# CORS – ha máshonnan is akarod hívni
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ha szigorítanád: ["https://sajat-domain"]
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Statikus fájlok (index.html, CSS, JS)
-STATIC_DIR = os.path.join(os.getcwd(), "static")
-if os.path.isdir(STATIC_DIR):
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-    log.info("Static dir mounted: %s", STATIC_DIR)
-else:
-    log.warning("Nincs 'static' mappa. A / csak JSON fallback-et ad.")
+# -------- GTFS: stops betöltése és egyszerű kereső -------- #
 
-# --- Gyökér: index.html kiszolgálása ---------------------------------------
+_stops_df: Optional[pd.DataFrame] = None
+
+
+def _load_stops() -> pd.DataFrame:
+    global _stops_df
+    if _stops_df is not None:
+        return _stops_df
+
+    if not STOPS_FILE.exists():
+        logger.error("GTFS stops.txt nem található: %s", STOPS_FILE)
+        raise FileNotFoundError(f"Missing GTFS file: {STOPS_FILE}")
+
+    df = pd.read_csv(STOPS_FILE, dtype=str).fillna("")
+    # Szükséges oszlopok biztosítása
+    for col in ["stop_id", "stop_name"]:
+        if col not in df.columns:
+            raise ValueError(f"stops.txt missing column: {col}")
+
+    # Néhány feed stop_code-ot is ad – ha van, őrizzük meg
+    if "stop_code" not in df.columns:
+        df["stop_code"] = ""
+
+    # Könnyebb kereséshez készítsünk egy 'q' mezőt
+    df["q"] = (df["stop_name"].str.lower() + " " + df["stop_code"].str.lower()).str.strip()
+    _stops_df = df
+    logger.info("GTFS stops betöltve: %d sor", len(df))
+    return _stops_df
+
+
+def search_stops(q: str, limit: int = 10) -> List[Dict[str, str]]:
+    df = _load_stops()
+    qn = q.strip().lower()
+    if not qn:
+        return []
+
+    hits = df[df["q"].str.contains(qn, na=False)].head(limit)
+    out = []
+    for _, r in hits.iterrows():
+        disp = r["stop_name"]
+        if r.get("stop_code") and str(r["stop_code"]).strip().lower() != "nan" and r["stop_code"] != "":
+            disp = f"{disp} ({r['stop_code']})"
+        out.append(
+            {
+                "display_name": disp,
+                "stop_id": r["stop_id"],
+                "stop_code": r.get("stop_code", ""),
+            }
+        )
+    return out
+
+
+# ---------------------- ROUTES ---------------------- #
+
 @app.get("/", include_in_schema=False)
 def root():
     """
-    Ha van static/index.html, azt szolgáljuk ki.
-    Egyébként egy rövid JSON-t adunk linkekkel.
+    Visszaadja az index.html-t (egyszerű UI).
+    Ha nincs index.html, akkor egy linkgyűjtő JSON megy vissza.
     """
-    index_path = os.path.join(STATIC_DIR, "index.html")
-    if os.path.isfile(index_path):
-        return FileResponse(index_path)
-    return JSONResponse(
-        {
-            "message": "Bluestar Bus API",
-            "links": {
-                "docs": "/docs",
-                "openapi": "/openapi.json",
-                "health": "/health",
-                "search_example": "/search_stops?q=vincent",
-                "generic_example": "/next_departures/1980SN12619E?minutes=60",
-            },
-        }
-    )
-
-# --- Healthcheck ------------------------------------------------------------
-@app.get("/health")
-def health() -> Dict[str, Any]:
+    if INDEX_HTML.exists():
+        return FileResponse(str(INDEX_HTML))
+    # Fallback: JSON „kezdőlap”
     return {
-        "status": "ok",
-        "gtfs_loaded": GTFS_OK,
-        "siri_available": SIRI_OK,
-        "gtfs_error": GTFS_ERR,
-        "siri_error": SIRI_ERR,
+        "message": "Bluestar Bus API",
+        "links": {
+            "docs": "/docs",
+            "status": "/status",
+            "stops_example": "/stops?q=hanover",
+            "departures_example": "/departures/1980SN12619A?minutes=60",
+        },
     }
 
-# --- Megálló-kereső (GTFS) -------------------------------------------------
-@app.get("/search_stops")
-def search_stops(q: str = Query(..., min_length=2, description="Megálló név (részlet)")) -> Dict[str, Any]:
-    """
-    Név szerinti megálló-keresés a GTFS 'stops.txt' alapján.
-    Visszaad: display_name, stop_id, stop_code (ha van).
-    """
-    if not GTFS_OK:
-        raise HTTPException(status_code=503, detail=f"GTFS nem elérhető: {GTFS_ERR}")
 
+@app.get("/status")
+def status():
+    """
+    Egészségjelentés: GTFS és SIRI elérhetőség.
+    """
+    gtfs_ok = False
+    gtfs_error = None
     try:
-        results = gtfs.search_stops(q)  # elvárt, hogy list[dict] legyen
-        # Frontend-barát forma
-        out: List[Dict[str, Any]] = []
-        for r in results:
-            out.append(
+        gtfs_ok = len(_load_stops()) > 0
+    except Exception as e:
+        gtfs_error = str(e)
+
+    siri_ok = False
+    siri_error = None
+    try:
+        # siri_live modul egyszerű "ping": API kulcs meglétét és cache-t is érinti
+        siri_ok = siri_live.is_available()
+    except Exception as e:
+        siri_error = str(e)
+
+    return {
+        "status": "ok" if gtfs_ok else "degraded",
+        "gtfs_loaded": gtfs_ok,
+        "siri_available": siri_ok,
+        "gtfs_error": gtfs_error,
+        "siri_error": siri_error,
+    }
+
+
+@app.get("/stops")
+def stops(q: str = Query(..., description="Részlet a megálló nevéből vagy kódjából"), limit: int = 10):
+    """
+    Megálló keresés (GTFS).
+    """
+    try:
+        results = search_stops(q, limit=limit)
+        return {"query": q, "results": results}
+    except Exception as e:
+        logger.exception("Hiba a megálló keresés során")
+        raise HTTPException(status_code=500, detail=f"Hiba a keresés közben: {e}")
+
+
+@app.get("/departures/{stop_id}")
+def departures(
+    stop_id: str = FPath(..., description="GTFS stop_id, pl. 1980SN12619A"),
+    minutes: int = Query(60, ge=1, le=240, description="Előrenézési idő percben (1–240)"),
+):
+    """
+    Indulások (SIRI-VM élő adatok). Visszaadjuk a következő érkezéseket a megadott időablakban.
+    A `siri_live.get_next_departures` feladata, hogy a dict-eket a következő kulcsokkal adja:
+      - route (str)
+      - destination (str)
+      - time (ISO vagy HH:MM)
+      - is_live (bool) – ha True, az idő élő
+      - scheduled_time (opcionális)
+      - delay_seconds (opcionális)
+    """
+    try:
+        results = siri_live.get_next_departures(stop_id=stop_id, minutes=minutes)
+        # Biztonsági normalizálás
+        norm: List[Dict[str, Any]] = []
+        for d in results:
+            norm.append(
                 {
-                    "display_name": r.get("display_name") or r.get("name") or r.get("stop_name"),
-                    "stop_id": r.get("stop_id"),
-                    "stop_code": r.get("stop_code", None),
+                    "route": str(d.get("route", "")),
+                    "destination": str(d.get("destination", "")),
+                    "time": str(d.get("time", "")),
+                    "is_live": bool(d.get("is_live", False)),
+                    "scheduled_time": d.get("scheduled_time"),
+                    "delay_seconds": d.get("delay_seconds"),
                 }
             )
-        return {"query": q, "results": out}
-    except Exception as e:
-        log.exception("Hiba a megálló-keresésben")
-        raise HTTPException(status_code=500, detail=f"Hiba a keresésben: {e}")
-
-# --- Következő indulások (SIRI) --------------------------------------------
-@app.get("/next_departures/{stop_id}")
-def next_departures(stop_id: str, minutes: int = Query(60, ge=1, le=240)) -> Dict[str, Any]:
-    """
-    Következő indulások egy megállóból.
-    A `siri_live.get_next_departures(stop_id, minutes)` függvényt hívja,
-    és továbbítja a visszaadott listát.
-    """
-    if not SIRI_OK:
-        # Ne dőljünk el – adjunk üres listát inkább
-        log.warning("SIRI nem elérhető, üres lista tér vissza.")
-        return {"stop_id": stop_id, "minutes": minutes, "departures": []}
-
-    try:
-        deps = siri.get_next_departures(stop_id=stop_id, minutes=minutes)
-        # Elvárt elem forma (példa):
-        # {
-        #   "route": "17",
-        #   "destination": "City Centre",
-        #   "time": "15:42",
-        #   "is_live": True,           # élő adat?
-        #   "delay_min": 2             # ha van késés
-        # }
-        return {"stop_id": stop_id, "minutes": minutes, "departures": deps}
-    except Exception as e:
-        log.exception("Hiba az indulások építése közben")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to build departures ({e.__class__.__name__}): {e}",
+        return {"stop_id": stop_id, "minutes": minutes, "departures": norm}
+    except siri_live.LiveDataError as e:
+        # A modul explicit hibája: 502
+        logger.warning("SIRI hiba: %s", e)
+        return JSONResponse(
+            status_code=502,
+            content={"stop_id": stop_id, "minutes": minutes, "departures": [], "error": str(e)},
         )
+    except Exception as e:
+        logger.exception("Hiba az indulások lekérésekor")
+        raise HTTPException(status_code=500, detail=f"Hiba az indulások lekérésekor: {e}")
 
-# --- Lokális futtatás (Railway is ezt használja PORT környezeti változóval) -
+
+# --------- Opcionális: Uvicorn helyi futtatáshoz --------- #
 if __name__ == "__main__":
     import uvicorn
 
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=bool(os.getenv("RELOAD", "")))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
