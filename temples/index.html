@@ -1,15 +1,70 @@
-DOCTYPE html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-    <title>Bluestar Bus API</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bluestar Bus Live Departures</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    h1 { color: #2c3e50; }
+    input, button { padding: 8px; margin: 5px; }
+    ul { list-style: none; padding: 0; }
+    li { background: #f4f4f4; margin: 5px 0; padding: 10px; border-radius: 5px; }
+  </style>
 </head>
 <body>
-    <h1>Bluestar Bus API</h1>
-    <p>Keresd meg a megállókat név szerint:</p>
-    <form action="/search_stop" method="get">
-        <input type="text" name="query" placeholder="Pl. Hanover">
-        <button type="submit">Keresés</button>
-    </form>
+  <h1>Bluestar Bus Live Departures</h1>
+
+  <h3>Search Stop</h3>
+  <input type="text" id="search" placeholder="Type stop name...">
+  <button onclick="searchStops()">Search</button>
+
+  <ul id="stop-list"></ul>
+
+  <h3>Departures</h3>
+  <button onclick="loadDepartures()">Load Departures</button>
+  <ul id="departures"></ul>
+
+  <script>
+    const apiBase = "https://js-api-production-5886.up.railway.app";
+    let selectedStop = null;
+
+    async function searchStops() {
+      const q = document.getElementById("search").value;
+      const res = await fetch(`${apiBase}/stops?q=${q}`);
+      const data = await res.json();
+
+      const list = document.getElementById("stop-list");
+      list.innerHTML = "";
+
+      data.forEach(stop => {
+        const li = document.createElement("li");
+        li.textContent = stop.stop_name + " (" + stop.stop_id + ")";
+        li.onclick = () => {
+          selectedStop = stop.stop_id;
+          alert("Selected stop: " + stop.stop_name);
+        };
+        list.appendChild(li);
+      });
+    }
+
+    async function loadDepartures() {
+      if (!selectedStop) {
+        alert("Please select a stop first!");
+        return;
+      }
+      const res = await fetch(`${apiBase}/departures/${selectedStop}`);
+      const data = await res.json();
+
+      const depList = document.getElementById("departures");
+      depList.innerHTML = "";
+
+      data.forEach(dep => {
+        const li = document.createElement("li");
+        li.textContent = `Line ${dep.line} → ${dep.destination} @ ${dep.expected_arrival}`;
+        depList.appendChild(li);
+      });
+    }
+  </script>
 </body>
 </html>
-
