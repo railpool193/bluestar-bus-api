@@ -86,3 +86,16 @@ with open("avl_feed.zip", "wb") as f:
     f.write(resp.content)
 
 print("Feed downloaded: avl_feed.zip")
+from fastapi import FastAPI, Query
+from fastapi.responses import JSONResponse
+from gtfs_utils import get_next_departures
+
+app = FastAPI(title="Bluestar Bus API")
+
+@app.get("/siri-live")
+def siri_live(stop_id: str = Query(...), minutes: int = 60):
+    """Alias: /siri-live?stop_id=...&minutes=...  ->  next_departures"""
+    deps = get_next_departures(stop_id, minutes=minutes)
+    return JSONResponse(
+        content={"stop_id": stop_id, "minutes": minutes, "departures": deps}
+    )
