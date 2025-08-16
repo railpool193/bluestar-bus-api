@@ -1,177 +1,289 @@
 # siri_live.py
 import os
+import io
 import time
-import logging
+import zipfile
 from typing import List, Dict, Any, Optional
+from datetime import datetime, timezone
+
 import requests
 import xmltodict
-from datetime import datetime, timedelta, timezone
 
-logger = logging.getLogger("bluestar.live")
 
-BODS_FEED_ID = os.getenv("BODS_FEED_ID", "")  # pl. 7721
-BODS_API_KEY = os.getenv("BODS_API_KEY", "")
-BODS_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/{BODS_FEED_ID}/"
+# --- Konfiguráció & nagyon egyszerű cache -----------------------------------
 
-# nagyon egyszerű 15 mp-es cache, hogy ne pörgesse a feedet
-_cache: Dict[str, Any] = {"t": 0.0, "data": None}
-CACHE_TTL = 15  # másodperc
+BODS_FEED_ID = os.getenv("BODS_FEED_ID", "").strip()
+BODS_API_KEY = os.getenv("BODS_API_KEY", "").strip()
+
+# A SIRI-VM feed ZIP-je:
+# pl.: https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key=XXXX
+BODS_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/{BODS_FEED_ID}/?api_key={BODS_API_KEY}"
+
+# 15 mp-es XML cache, hogy ne kérdezzük túl sűrűn a BODS-ot
+_cache: Dict[str, Any] = {"t": 0.0, "xml": None}
+CACHE_TTL = 15  # seconds
+
+
+# --- Segédek -----------------------------------------------------------------
 
 class LiveDataError(Exception):
+    """BODS élő adat hiba."""
     pass
 
-def _fetch_xml() -> str:
-    """Letölti a BODS SIRI-VM XML-t, és bőbeszédűen logol."""
-    if not BODS_API_KEY:
-        raise LiveDataError("Hiányzik a BODS_API_KEY env változó.")
 
-    params = {"api_key": BODS_API_KEY}
-    logger.info("BODS lekérés indul: url=%s  feed_id=%s", BODS_URL, BODS_FEED_ID)
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
+    """ISO8601 → datetime (UTC). Kezeli a 'Z' végződést is."""
+    if not ts:
+        return None
     try:
-        resp = requests.get(BODS_URL, params=params, timeout=30)
-        logger.info("BODS válasz: status=%s content-length=%s",
-                    resp.status_code, resp.headers.get("Content-Length"))
-        resp.raise_for_status()
-        return resp.text
-    except requests.RequestException as e:
-        logger.exception("BODS letöltési hiba: %s", e)
-        raise LiveDataError(f"HTTP hiba a BODS lekérésnél: {e}") from e
-
-def _parse_vm(xml_text: str) -> Dict[str, Any]:
-    """XML → dict, biztonságos logolással."""
-    try:
-        parsed = xmltodict.parse(xml_text, dict_constructor=dict)
-        root_keys = list(parsed.keys())[:5]
-        logger.debug("XML parse kész. Gyökér kulcsok: %s", root_keys)
-        return parsed
-    except Exception as e:
-        logger.exception("SIRI-VM XML parse hiba: %s", e)
-        raise LiveDataError(f"XML parse hiba: {e}") from e
-
-def _simplify_vehicle_activity(va: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """VehicleActivity → egyszerű sor (route, dest, aimed/expected, stop_ref)."""
-    try:
-        mvj = va.get("MonitoredVehicleJourney", {})
-        line_ref = mvj.get("LineRef")
-        dest = mvj.get("DestinationName") or mvj.get("DestinationRef")
-
-        mc = mvj.get("MonitoredCall", {}) or {}
-        stop_ref = mc.get("StopPointRef") or ""
-        stop_name = mc.get("StopPointName") or ""
-        aimed = mc.get("AimedDepartureTime") or mc.get("AimedArrivalTime")
-        expected = mc.get("ExpectedDepartureTime") or mc.get("ExpectedArrivalTime")
-
-        def _fmt(ts: Optional[str]) -> Optional[str]:
-            if not ts:
-                return None
-            try:
-                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                return dt.strftime("%H:%M")
-            except Exception:
-                return ts
-
-        row = {
-            "route": str(line_ref) if line_ref else "",
-            "destination": str(dest) if dest else "",
-            "stop_ref": str(stop_ref),
-            "stop_name": str(stop_name),
-            "aimed": _fmt(aimed),
-            "expected": _fmt(expected),
-            "live": expected is not None,
-        }
-        return row
-    except Exception as e:
-        logger.debug("VehicleActivity feldolgozási hiba, átugorjuk: %s", e)
+        ts2 = ts.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts2)
+        # Ha nincs timezone, tekintsük UTC-nek
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
         return None
 
-def _from_cache() -> Optional[List[Dict[str, Any]]]:
+
+def _fmt_hhmm(dt: Optional[datetime]) -> Optional[str]:
+    if not dt:
+        return None
+    loc = dt.astimezone()  # helyi időzóna
+    return loc.strftime("%H:%M")
+
+
+def _safe_get(path: List[str], src: Any) -> Optional[Any]:
+    """
+    Biztonságos lekérés mélyen lévő dict/list struktúrából.
+    path pl.: ["MonitoredVehicleJourney", "MonitoredCall", "StopPointRef"]
+    """
+    node = src
+    for p in path:
+        if isinstance(node, dict):
+            node = node.get(p)
+        else:
+            return None
+    return node
+
+
+# --- BODS letöltés, XML bontás ------------------------------------------------
+
+def _fetch_xml_text() -> str:
+    """Letölti és visszaadja a SIRI-VM XML szöveget (ZIP-ből kibontva)."""
+    if not BODS_FEED_ID or not BODS_API_KEY:
+        raise LiveDataError("Hiányzik a BODS_FEED_ID / BODS_API_KEY környezeti változó.")
+
+    # Cache
     now = time.time()
-    if _cache["data"] is not None and (now - _cache["t"]) < CACHE_TTL:
-        age = int(now - _cache["t"])
-        logger.debug("BODS cache találat (%ss régi), elemek: %s", age, len(_cache["data"]))
-        return _cache["data"]
-    return None
+    if _cache["xml"] is not None and (now - _cache["t"] < CACHE_TTL):
+        return _cache["xml"]
 
-def _to_cache(rows: List[Dict[str, Any]]) -> None:
-    _cache["t"] = time.time()
-    _cache["data"] = rows
-    logger.debug("BODS cache frissítve: elemek=%s, ttl=%ss", len(rows), CACHE_TTL)
+    resp = requests.get(BODS_URL, timeout=30)
+    resp.raise_for_status()
 
-def _load_rows() -> List[Dict[str, Any]]:
-    """Letölti és feldolgozza az összes VehicleActivity-t egyszerű sorokká."""
-    cached = _from_cache()
-    if cached is not None:
-        return cached
+    # A feed ZIP fájlt ad – ki kell bontani, majd megkeresni benne az XML-t
+    zf = zipfile.ZipFile(io.BytesIO(resp.content))
+    xml_name = None
+    for n in zf.namelist():
+        if n.lower().endswith(".xml"):
+            xml_name = n
+            break
+    if not xml_name:
+        raise LiveDataError("A feed ZIP-ben nem találtam XML-t.")
 
-    xml_text = _fetch_xml()
-    data = _parse_vm(xml_text)
+    xml_text = zf.read(xml_name).decode("utf-8", errors="ignore")
 
+    _cache["xml"] = xml_text
+    _cache["t"] = now
+    return xml_text
+
+
+def _read_siri_doc() -> Dict[str, Any]:
+    """
+    Visszaad egy xmltodict-tel felolvasott SIRI-VM struktúrát.
+    A tipikus gyökér: 'Siri' → 'ServiceDelivery' → 'VehicleMonitoringDelivery' → 'VehicleActivity'
+    """
+    xml_text = _fetch_xml_text()
+    doc = xmltodict.parse(xml_text)
+    # Biztonság kedvéért lépjünk egyenesen lefelé – a kulcsok case-sensitive-k!
+    return doc
+
+
+# --- SIRI → egyszerűsített rekordok ------------------------------------------
+
+def _simplify_vehicle_activity(va: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Egy VehicleActivity csomópontból (xmltodict dict) csinál egy "flat" rekordot.
+    Ahol lehet, fallback-eljünk aimed/expected mezőkre.
+    """
+    mvj = _safe_get(["MonitoredVehicleJourney"], va) or {}
+    mc = _safe_get(["MonitoredVehicleJourney", "MonitoredCall"], va) or {}
+
+    line_name = (
+        mvj.get("PublishedLineName")
+        or mvj.get("LineRef")
+        or ""
+    )
+
+    destination = (
+        mvj.get("DestinationName")
+        or mvj.get("DestinationRef")
+        or ""
+    )
+
+    stop_ref = mc.get("StopPointRef") or ""
+    stop_name = mc.get("StopPointName") or mvj.get("DestinationName") or ""
+
+    # Times: próbáljunk ExpectedDepartureTime → AimedDepartureTime → ExpectedArrivalTime → AimedArrivalTime sorrendben
+    exp_dep = mc.get("ExpectedDepartureTime")
+    aim_dep = mc.get("AimedDepartureTime")
+    exp_arr = mc.get("ExpectedArrivalTime")
+    aim_arr = mc.get("AimedArrivalTime")
+
+    # Válasszunk egy "legjobb" időt (UTC dt)
+    dt = (
+        _parse_iso(exp_dep)
+        or _parse_iso(aim_dep)
+        or _parse_iso(exp_arr)
+        or _parse_iso(aim_arr)
+    )
+
+    # További, néha más névvel érkező mezők fallbackje:
+    if not dt:
+        # Idő esetleg máshol
+        dt = _parse_iso(mvj.get("OriginAimedDepartureTime") or mvj.get("OriginExpectedDepartureTime"))
+
+    if not dt:
+        # Ha semmi, akkor nincs értékelhető rekord
+        return None
+
+    return {
+        "route": str(line_name).strip(),
+        "destination": str(destination).strip(),
+        "stop_id": str(stop_ref).strip(),
+        "stop_name": str(stop_name).strip(),
+        "dt_utc": dt,                            # belső használatra
+        "departure_time": _fmt_hhmm(dt),         # HH:MM (helyi)
+        "realtime": True                         # élő forrás: SIRI-VM
+    }
+
+
+def _iter_vehicle_activities(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Kiveszi a VehicleActivity-ket és egyszerűsíti.
+    Többféle struktúrát próbál lekezelni (list / dict stb.)
+    """
     try:
-        sd = data.get("Siri", {}).get("ServiceDelivery", {})
-        vmd = sd.get("VehicleMonitoringDelivery", [])
-        if isinstance(vmd, dict):
-            vmd = [vmd]
+        siri = doc.get("Siri") or doc.get("siri")
+        if not siri:
+            return []
 
-        rows: List[Dict[str, Any]] = []
-        total_va = 0
+        sd = siri.get("ServiceDelivery") or {}
+        vmd = sd.get("VehicleMonitoringDelivery") or sd.get("VehicleMonitoringDeliveries") or {}
+        # vmd lehet lista vagy dict:
+        vmd_list = vmd if isinstance(vmd, list) else [vmd]
 
-        for block in vmd:
-            va_list = block.get("VehicleActivity", []) or []
+        out: List[Dict[str, Any]] = []
+        for one in vmd_list:
+            va_list = one.get("VehicleActivity") or []
             if isinstance(va_list, dict):
                 va_list = [va_list]
-            total_va += len(va_list)
-
             for va in va_list:
-                row = _simplify_vehicle_activity(va)
-                if row:
-                    rows.append(row)
+                flat = _simplify_vehicle_activity(va)
+                if flat:
+                    out.append(flat)
+        return out
+    except Exception:
+        return []
 
-        logger.info("SIRI-VM: összes VehicleActivity=%s, feldolgozott sorok=%s",
-                    total_va, len(rows))
-        _to_cache(rows)
-        return rows
-    except Exception as e:
-        logger.exception("SIRI-VM feldolgozási hiba: %s", e)
-        raise LiveDataError(f"SIRI-VM feldolgozási hiba: {e}") from e
 
-def get_live_departures(stop_id: str, minutes: int = 60) -> List[Dict[str, Any]]:
-    """Megadott StopPointRef-hez a következő indulások (élő)."""
-    rows = _load_rows()
+# --- Közeli indulások stop_id + időablak szerint -----------------------------
 
-    now_utc = datetime.now(timezone.utc)
-    future_utc = now_utc + timedelta(minutes=minutes)
+def _filter_by_stop_and_window(items: List[Dict[str, Any]], stop_id: str, minutes: int) -> List[Dict[str, Any]]:
+    """
+    Szűrés: adott stop_id és most→(most+minutes) időablak.
+    """
+    stop_id = (stop_id or "").strip()
+    if not stop_id:
+        return []
 
-    def _in_window(hhmm: Optional[str]) -> bool:
-        if not hhmm:
-            return False
-        try:
-            h, m = map(int, hhmm.split(":"))
-            candidate = now_utc.replace(hour=h, minute=m, second=0, microsecond=0)
-            if candidate < now_utc - timedelta(hours=12):
-                candidate += timedelta(days=1)
-            if candidate > now_utc + timedelta(hours=12):
-                candidate -= timedelta(days=1)
-            return now_utc <= candidate <= future_utc
-        except Exception:
-            return True
+    now = _now_utc()
+    latest = now.replace(microsecond=0) + (minutes * 60) * (datetime.fromtimestamp(0, tz=timezone.utc) - datetime.fromtimestamp(0, tz=timezone.utc))  # dummy; lentebb számolunk normálisan
 
-    before = len(rows)
-    filtered = [r for r in rows if r.get("stop_ref") == stop_id]
-    logger.info("SIRI-VM szűrés: stop_id=%s → %s/%s sor passzol",
-                stop_id, len(filtered), before)
+    # Fent egy fura hack lenne; inkább számoljunk külön:
+    latest = now + (minutes * 60) * (datetime.utcfromtimestamp(0).replace(tzinfo=timezone.utc) - datetime.utcfromtimestamp(0).replace(tzinfo=timezone.utc))
+    # Előbbi sem tetszik Python-nak 3.12 alatt. Legyen egyszerű:
+    latest = now + timedelta(minutes=minutes)  # egyszerű és tiszta
 
     out: List[Dict[str, Any]] = []
-    for r in filtered:
-        when = r.get("expected") or r.get("aimed")
-        if _in_window(when):
-            out.append({
-                "route": r.get("route", ""),
-                "destination": r.get("destination", ""),
-                "time": when or "",
-                "live": bool(r.get("expected")),
-            })
+    for it in items:
+        if it.get("stop_id") != stop_id:
+            continue
+        dt = it.get("dt_utc")
+        if not isinstance(dt, datetime):
+            continue
+        if now <= dt <= latest:
+            out.append(it)
 
-    logger.info("SIRI-VM eredmény: %s indulás a(z) %s megállóra (%s perc)",
-                len(out), stop_id, minutes)
-    out.sort(key=lambda x: x.get("time", ""))
+    # Rendezzük idő szerint
+    out.sort(key=lambda x: x.get("dt_utc"))
+    # A dt_utc belső mező – a külvilágnak nem kell
+    for it in out:
+        it.pop("dt_utc", None)
     return out
+
+
+# A fenti miatt kell:
+from datetime import timedelta
+
+
+# --- Publikus függvények ------------------------------------------------------
+
+def get_departures(stop_id: str, minutes: int = 60) -> List[Dict[str, Any]]:
+    """
+    Egyszerű lista az elkövetkező indulásokról adott megállóhoz.
+    Minden rekordon: route, destination, stop_id, stop_name, departure_time (HH:MM), realtime=True
+    """
+    doc = _read_siri_doc()
+    va_items = _iter_vehicle_activities(doc)
+    return _filter_by_stop_and_window(va_items, stop_id=stop_id, minutes=minutes)
+
+
+def build_departures(stop_id: str, minutes: int = 60) -> Dict[str, Any]:
+    """
+    Ugyanaz, mint get_departures, csak dict-ben, kompatibilis a frontenddel:
+    {"stop_id":..., "minutes":..., "departures":[...]}
+    """
+    return {
+        "stop_id": stop_id,
+        "minutes": minutes,
+        "departures": get_departures(stop_id=stop_id, minutes=minutes)
+    }
+
+
+# --- Kért wrap: ha a main.py valami mást hívna, ezzel biztos realtime lesz ----
+
+def _add_realtime_flag(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for it in items or []:
+        row = dict(it)
+        row["realtime"] = True
+        if not row.get("departure_time"):
+            # semmi értelmes idő – hagyjuk, vagy próbáljuk pótolni?
+            pass
+        out.append(row)
+    return out
+
+
+def get_departures_with_realtime(stop_id: str, minutes: int = 60):
+    """
+    Wrap – ha valahol ezt hívod, biztosan realtime flag-et kapsz.
+    (Itt egyébként a get_departures is már realtime=True-t ad.)
+    """
+    data = get_departures(stop_id=stop_id, minutes=minutes)
+    return _add_realtime_flag(data)
