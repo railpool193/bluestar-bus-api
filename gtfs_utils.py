@@ -1,76 +1,109 @@
-# gtfs_utils.py — csak helyi /data GTFS fájlokkal dolgozik (nincs letöltés)
+# gtfs_utils.py
+# ---------------------------------------
+# GTFS betöltés + megálló-keresés és stop_id <-> stop_code mappelés
+# ---------------------------------------
 
-import os
-import zipfile
-from io import TextIOWrapper
-from datetime import datetime, timedelta
+from __future__ import annotations
+from pathlib import Path
+from typing import List, Dict, Optional
+
 import pandas as pd
 
-DATA_DIR = os.getenv("DATA_DIR", "data")  # itt vannak a GTFS fájlok vagy a gtfs.zip
+# Betöltött GTFS táblák ide kerülnek
+_GTFS: Dict[str, pd.DataFrame] = {}
 
-def _available_mode():
-    """Megnézi, hogy TXT fájlok vannak-e a /data-ban, vagy egy gtfs.zip."""
-    needed = ["stops.txt", "stop_times.txt", "trips.txt", "routes.txt"]
-    if all(os.path.exists(os.path.join(DATA_DIR, f)) for f in needed):
-        return "folder"
-    zip_path = os.path.join(DATA_DIR, "gtfs.zip")
-    if os.path.exists(zip_path):
-        return "zip"
-    raise FileNotFoundError(
-        "GTFS not found. Upload TXT files into 'data/' or upload a ZIP as 'data/gtfs.zip'."
-    )
 
-def _read_csv(name: str) -> pd.DataFrame:
-    mode = _available_mode()
-    if mode == "folder":
-        return pd.read_csv(os.path.join(DATA_DIR, name))
-    else:
-        # beolvasás közvetlenül a ZIP-ből
-        with zipfile.ZipFile(os.path.join(DATA_DIR, "gtfs.zip")) as z:
-            with z.open(name, "r") as f:
-                return pd.read_csv(TextIOWrapper(f, encoding="utf-8"))
+def load_gtfs(folder: str | Path) -> None:
+    """GTFS fájlok betöltése (legalább stops.txt szükséges)."""
+    folder = Path(folder)
+    stops = pd.read_csv(folder / "stops.txt", dtype=str).fillna("")
+    _GTFS["stops"] = stops
 
-def _to_today_datetime(dep_time_str: str) -> datetime | None:
-    # dep_time lehet 24:xx:xx feletti is — kezeljük
-    try:
-        h, m, s = map(int, str(dep_time_str).split(":"))
-    except Exception:
+    # Ha mást is használsz (routes/trips/stop_times), itt töltsd be:
+    # _GTFS["routes"] = pd.read_csv(folder / "routes.txt", dtype=str).fillna("")
+    # _GTFS["trips"]  = pd.read_csv(folder / "trips.txt", dtype=str).fillna("")
+    # _GTFS["stop_times"] = pd.read_csv(folder / "stop_times.txt", dtype=str).fillna("")
+
+
+def search_stops_by_name(q: str, limit: int = 12) -> List[Dict]:
+    """
+    Név szerinti keresés. Visszaad:
+      - display_name: "Stop Name (code)"
+      - stop_code: ATCO/NaPTAN kód (ha nincs, stop_id)
+      - stop_id
+      - stop_name
+    """
+    df = _GTFS["stops"]
+    ql = q.strip().lower()
+    if not ql:
+        return []
+
+    hits = df[df["stop_name"].str.lower().str.contains(ql, na=False)].copy()
+
+    def make_display(row):
+        code = (row.get("stop_code", "") or row["stop_id"]).strip()
+        return f'{row["stop_name"]} ({code})'
+
+    hits["display_name"] = hits.apply(make_display, axis=1)
+
+    results: List[Dict] = []
+    for _, row in hits.head(limit).iterrows():
+        results.append(
+            {
+                "display_name": row["display_name"],
+                "stop_code": (row.get("stop_code", "") or row["stop_id"]).strip(),
+                "stop_id": row["stop_id"],
+                "stop_name": row["stop_name"],
+            }
+        )
+    return results
+
+
+def map_to_stop_code(stop_ref: str) -> Optional[str]:
+    """
+    Ha a bemenet nem ATCO/NaPTAN (stop_code), próbáljuk stop_id -> stop_code mappelni.
+    Ha nincs stop_code, fallback: maga a stop_id.
+    Ha nem találtuk, None.
+    """
+    if not stop_ref:
         return None
-    add_days = h // 24
-    h = h % 24
-    now = datetime.now()
-    dt = now.replace(hour=h, minute=m, second=s, microsecond=0)
-    if add_days:
-        dt += timedelta(days=add_days)
-    return dt
 
-def get_next_departures(stop_id: str, minutes_ahead: int = 60) -> list[dict]:
-    """Következő indulások a megadott megállóból a következő N percben."""
-    stop_times = _read_csv("stop_times.txt")
-    trips = _read_csv("trips.txt")
-    routes = _read_csv("routes.txt")
+    df = _GTFS["stops"]
 
-    # Csak az adott megálló
-    st = stop_times[stop_times["stop_id"] == stop_id].copy()
+    # 1) Ha már stop_code
+    if "stop_code" in df.columns:
+        m1 = df[df["stop_code"] == stop_ref]
+        if not m1.empty:
+            return stop_ref
 
-    # Dúsítás, hogy legyen viszonylatszám és cél
-    st = st.merge(trips[["trip_id", "route_id", "trip_headsign"]], on="trip_id", how="left")
-    st = st.merge(routes[["route_id", "route_short_name"]], on="route_id", how="left")
+    # 2) Ha stop_id
+    m2 = df[df["stop_id"] == stop_ref]
+    if not m2.empty:
+        sc = (m2.iloc[0].get("stop_code", "") or "").strip()
+        return sc if sc else stop_ref
 
-    now = datetime.now()
-    horizon = now + timedelta(minutes=minutes_ahead)
+    return None
 
-    out: list[dict] = []
-    for _, row in st.iterrows():
-        dep_dt = _to_today_datetime(row.get("departure_time", ""))
-        if dep_dt is None:
-            continue
-        if now <= dep_dt <= horizon:
-            out.append({
-                "route": str(row.get("route_short_name", "")),
-                "destination": str(row.get("trip_headsign", "")),
-                "departure_time": dep_dt.strftime("%H:%M"),
-            })
 
-    out.sort(key=lambda x: x["departure_time"])
+def sibling_stop_codes_by_name(stop_name: str) -> List[str]:
+    """
+    Azonos stop_name-hez tartozó összes stop_code (ha nincs, stop_id).
+    Hasznos A/B/C/CK/CM/CO peron-variánsokhoz.
+    """
+    df = _GTFS["stops"]
+    sib = df[df["stop_name"] == stop_name].copy()
+
+    codes: List[str] = []
+    for _, r in sib.iterrows():
+        code = (r.get("stop_code", "") or r["stop_id"]).strip()
+        if code:
+            codes.append(code)
+
+    # dedup
+    seen = set()
+    out: List[str] = []
+    for c in codes:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
     return out
