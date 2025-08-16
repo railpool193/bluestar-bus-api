@@ -47,3 +47,24 @@ def vincents_walk(minutes: int = 60):
         "ck": get_next_departures(CK, minutes_ahead=minutes),
         "cm": get_next_departures(CM, minutes_ahead=minutes)
     }
+# main.py (kiegészítés)
+from fastapi import FastAPI, Query
+from siri_live import get_live_json, LiveDataError
+
+# ... a meglévő app = FastAPI(...) megvan
+
+@app.get("/")
+def index():
+    return {"service": "Bluestar Bus API", "endpoints": ["/health", "/next_departures/{stop_id}", "/live", "/live?line=18"]}
+
+@app.get("/live")
+def live(line: str | None = Query(default=None, description="Opcionális vonalszűrő, pl. 18 vagy 19a")):
+    """
+    Élő járműpozíciók a BODS SIRI-VM feedből.
+    Opcionálisan szűrhető vonalra (?line=18).
+    """
+    try:
+        data = get_live_json(line_filter=line)
+        return {"count": len(data), "line": line, "vehicles": data}
+    except LiveDataError as e:
+        return {"error": str(e)}
