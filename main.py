@@ -1,38 +1,63 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
-from typing import Dict, Any
-import uvicorn
+# main.py
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional, Dict, Any
+import os
 
+# A saját GTFS segédfüggvényeid
 from gtfs_utils import get_next_departures
 
-app = FastAPI(title="Bluestar Bus API", version="1.0")
+app = FastAPI(
+    title="Bluestar Bus API",
+    version="1.0",
+    description="FastAPI backend that serves upcoming departures from Bluestar GTFS data.",
+)
 
-# --- Állandó buszmegálló ID-k (példák) ---
-VW_CK_STOP_ID = "1980SN12619E"  # Vincent’s Walk (ck)
-VW_CM_STOP_ID = "1980SN12620E"  # Vincent’s Walk (cm)
+# Ha a későbbiekben külön domain-ről jön a frontend, jól jöhet a CORS:
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # igény szerint szűkítsd
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-
-# Segédfüggvény a minutes ellenőrzésére
-def _validate_minutes(minutes: int) -> int:
-    if minutes <= 0 or minutes > 180:
-        raise HTTPException(status_code=400, detail="Minutes must be between 1 and 180")
-    return minutes
-
-
-# Egyedi JSON válasz építése
-def _json_departures(stop_id: str, minutes: int) -> JSONResponse:
-    try:
-        minutes = _validate_minutes(minutes)
-        deps = get_next_departures(stop_id, minutes)   # <-- csak pozicionális paraméter
-        return JSONResponse(content={"stop_id": stop_id, "minutes": minutes, "departures": deps})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# --- Hasznos konstansok / shortcut stop id-k (Vincents Walk) ---
+STOP_VINCENTS_WALK_CK = "1980SN12619E"   # Vincents Walk (CK oldal)
+STOP_VINCENTS_WALK_CM = "1980SN12619W"   # Vincents Walk (CM oldal) – ha más, cseréld erre a helyes ID-t
 
 
-# --- API végpontok ---
+# ---------------------------
+# Frontend (index.html) kiszolgálása
+# ---------------------------
+@app.get("/", include_in_schema=False)
+def serve_index_html():
+    """
+    A gyökéren az index.html-t szolgáljuk ki (egyszerű frontend).
+    """
+    file_path = os.path.join(os.path.dirname(__file__), "index.html")
+    if not os.path.exists(file_path):
+        # Ha valamiért nincs meg az index.html, adjunk vissza egy barátságos JSON-t.
+        return JSONResponse(
+            {
+                "message": "Bluestar Bus API",
+                "links": {
+                    "docs": "/docs",
+                    "health": "/health",
+                    "ck_next_60": "/vincents-walk/ck?minutes=60",
+                    "cm_next_60": "/vincents-walk/cm?minutes=60",
+                    "generic_example": "/next_departures/1980SN12619E?minutes=60",
+                },
+                "note": "index.html not found next to main.py – serving JSON index instead.",
+            }
+        )
+    return FileResponse(file_path)
 
-@app.get("/")
-def root() -> Dict[str, Any]:
+
+# (Opcionális) JSON index külön végponton, ha szeretnéd megtartani:
+@app.get("/api", tags=["Index"])
+def api_index():
     return {
         "message": "Bluestar Bus API",
         "links": {
@@ -40,43 +65,71 @@ def root() -> Dict[str, Any]:
             "health": "/health",
             "ck_next_60": "/vincents-walk/ck?minutes=60",
             "cm_next_60": "/vincents-walk/cm?minutes=60",
-            "generic_example": f"/next_departures/{VW_CK_STOP_ID}?minutes=60",
+            "generic_example": "/next_departures/1980SN12619E?minutes=60",
         },
     }
 
 
-@app.get("/health")
-def health() -> Dict[str, str]:
+# ---------------------------
+# Health
+# ---------------------------
+@app.get("/health", tags=["Health"])
+def health() -> Dict[str, Any]:
     return {"status": "ok"}
 
 
-@app.get("/next_departures/{stop_id}")
-def next_departures(stop_id: str, minutes: int = 60) -> JSONResponse:
-    return _json_departures(stop_id, minutes)
+# ---------------------------
+# Generic GTFS lekérdezés
+# ---------------------------
+@app.get("/next_departures/{stop_id}", tags=["Next Departures"])
+def next_departures(
+    stop_id: str,
+    minutes: Optional[int] = Query(60, ge=1, le=240, description="Előretekintés percekben"),
+):
+    """
+    Általános végpont: bármely GTFS stop_id-hez kiadja a következő indulásokat `minutes` perces ablakban.
+    """
+    try:
+        deps = get_next_departures(stop_id, minutes=minutes)
+        return {"stop_id": stop_id, "minutes": minutes, "departures": deps}
+    except TypeError as e:
+        # pl. ha a get_next_departures régi szignatúrája nem fogad 'minutes' kulcsot
+        raise HTTPException(status_code=500, detail=f"Failed to build departures (TypeError): {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to build departures: {e}")
 
 
-@app.get("/vincents-walk/ck")
-def vincents_walk_ck(minutes: int = 60) -> JSONResponse:
-    return _json_departures(VW_CK_STOP_ID, minutes)
+# ---------------------------
+# Vincents Walk shortcutok
+# ---------------------------
+@app.get("/vincents-walk/ck", tags=["Vincents Walk"])
+def vincents_walk_ck(minutes: Optional[int] = Query(60, ge=1, le=240)):
+    """
+    Vincents Walk – CK oldal (shortcut).
+    """
+    return next_departures(STOP_VINCENTS_WALK_CK, minutes=minutes)
 
 
-@app.get("/vincents-walk/cm")
-def vincents_walk_cm(minutes: int = 60) -> JSONResponse:
-    return _json_departures(VW_CM_STOP_ID, minutes)
+@app.get("/vincents-walk/cm", tags=["Vincents Walk"])
+def vincents_walk_cm(minutes: Optional[int] = Query(60, ge=1, le=240)):
+    """
+    Vincents Walk – CM oldal (shortcut).
+    """
+    return next_departures(STOP_VINCENTS_WALK_CM, minutes=minutes)
 
 
-@app.get("/vincents-walk")
-def vincents_walk(minutes: int = 60) -> Dict[str, Any]:
-    minutes = _validate_minutes(minutes)
-    ck = get_next_departures(VW_CK_STOP_ID, minutes)   # <-- itt is pozicionális
-    cm = get_next_departures(VW_CM_STOP_ID, minutes)   # <-- itt is pozicionális
-    return {
-        "minutes": minutes,
-        "ck": {"stop_id": VW_CK_STOP_ID, "departures": ck},
-        "cm": {"stop_id": VW_CM_STOP_ID, "departures": cm},
-    }
-
-
-# --- Lokális futtatás ---
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.get("/vincents-walk", tags=["Vincents Walk"])
+def vincents_walk(minutes: Optional[int] = Query(60, ge=1, le=240)):
+    """
+    Vincents Walk összesítve – mindkét oldal egy válaszban.
+    """
+    try:
+        ck = get_next_departures(STOP_VINCENTS_WALK_CK, minutes=minutes)
+        cm = get_next_departures(STOP_VINCENTS_WALK_CM, minutes=minutes)
+        return {
+            "minutes": minutes,
+            "ck": {"stop_id": STOP_VINCENTS_WALK_CK, "departures": ck},
+            "cm": {"stop_id": STOP_VINCENTS_WALK_CM, "departures": cm},
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to build Vincents Walk response: {e}")
