@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bluestar Bus – Live Departures</title>
+  <style>
+    :root{
+      --bg:#0f1115; --panel:#161a22; --muted:#8892a6; --txt:#e6eaf2;
+      --accent:#6ea8fe; --live:#30d158; --warn:#ffb020; --err:#ff6b6b; --sep:#232838;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;
+      background:var(--bg); color:var(--txt);
+      display:flex; justify-content:center; padding:24px;
+    }
+    .app{width:100%; max-width:900px}
+    .card{background:var(--panel); border:1px solid var(--sep); border-radius:14px; padding:18px}
+    h1{margin:0 0 12px; font-weight:700; font-size:22px; letter-spacing:.2px}
+    .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
+    .row + .row{margin-top:12px}
+    label{font-size:12px; color:var(--muted); display:block; margin:0 0 6px}
+    input,button,select{
+      border-radius:10px; border:1px solid var(--sep); background:#121620; color:var(--txt);
+      padding:10px 12px; font-size:15px; outline:none;
+    }
+    input:focus,select:focus{border-color:var(--accent)}
+    button{
+      background:var(--accent); border:none; color:#0b1020; font-weight:600; cursor:pointer;
+      padding:10px 14px;
+    }
+    button.secondary{background:#1c2333; color:var(--txt); border:1px solid var(--sep)}
+    .hint{color:var(--muted); font-size:13px; margin-top:6px}
+    .results{margin-top:16px; border-top:1px dashed var(--sep); padding-top:12px}
+    table{width:100%; border-collapse:collapse; margin-top:8px}
+    th,td{padding:10px 8px; border-bottom:1px solid var(--sep); font-size:14px}
+    th{color:var(--muted); text-align:left; font-weight:600}
+    .pill{font-size:12px; padding:3px 8px; border-radius:999px; display:inline-block}
+    .pill.live{background:rgba(48,209,88,.15); color:var(--live); border:1px solid rgba(48,209,88,.25)}
+    .pill.tt{background:rgba(255,176,32,.12); color:var(--warn); border:1px solid rgba(255,176,32,.25)}
+    .stop-list{margin:8px 0 0; border:1px solid var(--sep); border-radius:10px; overflow:hidden}
+    .stop-item{padding:10px 12px; background:#121620; cursor:pointer}
+    .stop-item + .stop-item{border-top:1px solid var(--sep)}
+    .stop-item:hover{background:#161c28}
+    .grid{display:grid; grid-template-columns:1fr 140px 120px; gap:12px}
+    @media (max-width:640px){ .grid{grid-template-columns:1fr 1fr} }
+    .badge{font-size:11px; letter-spacing:.3px; color:var(--muted)}
+    .error{color:var(--err); margin-top:8px}
+    .footer{margin-top:18px; color:var(--muted); font-size:12px}
+    .kicker{font-size:13px; color:var(--muted); margin-bottom:8px}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="card">
+      <h1>Bluestar Bus – Live Departures</h1>
+      <div class="kicker">Keresés megálló név szerint, majd indulások lekérése. Az <span class="pill live">ÉLŐ</span> jelzés a BODS SIRI-VM-ből származó valós idejű érkezést mutatja.</div>
+
+      <!-- Kereső -->
+      <div class="row grid">
+        <div>
+          <label for="q">Megálló neve</label>
+          <input id="q" placeholder="pl. Jasmine Road" autocomplete="off" />
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button id="btnSearch" class="secondary">Keresés</button>
+        </div>
+        <div>
+          <label for="minutes">Időablak (perc)</label>
+          <input id="minutes" type="number" min="5" max="240" value="60" />
+        </div>
+      </div>
+
+      <div id="searchError" class="error" style="display:none"></div>
+      <div id="stopsWrap" class="stop-list" style="display:none"></div>
+
+      <!-- Kiválasztott megálló + lekérés -->
+      <div class="row" style="margin-top:14px">
+        <div style="flex:1">
+          <label for="stopId">Stop ID</label>
+          <input id="stopId" placeholder="pl. 1980SN12619E" />
+          <div class="hint">Tipp: megálló választáskor automatikusan kitöltjük.</div>
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button id="btnFetch">Indulások lekérése</button>
+        </div>
+      </div>
+
+      <!-- Eredmények -->
+      <div class="results" id="results" style="display:none">
+        <div class="row" style="justify-content:space-between; align-items:baseline">
+          <div><strong id="titleStop"></strong> • következő <span id="titleMin"></span> perc</div>
+          <div class="badge" id="meta"></div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Route</th>
+              <th>Destination</th>
+              <th>Time</th>
+              <th>Forrás</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="footer">Powered by Bluestar GTFS (menetrend) és BODS (SIRI-VM) adatok.</div>
+    </div>
+  </div>
+
+  <script>
+    const $ = sel => document.querySelector(sel);
+    const q        = $('#q');
+    const btnSearch= $('#btnSearch');
+    const minutes  = $('#minutes');
+    const stopsWrap= $('#stopsWrap');
+    const searchErr= $('#searchError');
+
+    const stopId   = $('#stopId');
+    const btnFetch = $('#btnFetch');
+    const results  = $('#results');
+    const tbody    = $('#tbody');
+    const titleStop= $('#titleStop');
+    const titleMin = $('#titleMin');
+    const meta     = $('#meta');
+
+    // Debounce a kereséshez
+    let t;
+    q.addEventListener('input', () => {
+      clearTimeout(t);
+      t = setTimeout(runSearch, 250);
+    });
+    btnSearch.addEventListener('click', runSearch);
+
+    async function runSearch(){
+      const term = q.value.trim();
+      stopsWrap.style.display = 'none';
+      stopsWrap.innerHTML = '';
+      searchErr.style.display = 'none';
+
+      if(!term){ return; }
+      try{
+        const resp = await fetch(`/search_stops?q=${encodeURIComponent(term)}`);
+        if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        if(!data.results || data.results.length === 0){
+          searchErr.textContent = 'Nincs találat erre a névre.';
+          searchErr.style.display = 'block';
+          return;
+        }
+        data.results.slice(0,50).forEach(st => {
+          const div = document.createElement('div');
+          div.className = 'stop-item';
+          const name = st.stop_name || st.name || 'Ismeretlen';
+          const id   = st.stop_id || st.id || '';
+          const road = st.road || '';
+          const local= st.locality || '';
+          div.innerHTML = `<strong>${name}</strong><br/><span class="badge">${road}${road&&local?' • ':''}${local}</span><span class="badge" style="float:right">ID: ${id}</span>`;
+          div.addEventListener('click', () => {
+            stopId.value = id;
+            q.value = name;
+            stopsWrap.style.display = 'none';
+          });
+          stopsWrap.appendChild(div);
+        });
+        stopsWrap.style.display = 'block';
+      }catch(err){
+        searchErr.textContent = 'Hiba a keresés közben. Próbáld újra.';
+        searchErr.style.display = 'block';
+      }
+    }
+
+    btnFetch.addEventListener('click', loadDepartures);
+
+    async function loadDepartures(){
+      const id = (stopId.value || '').trim();
+      const min = Math.max(5, Math.min(240, parseInt(minutes.value||'60',10)));
+
+      if(!id){
+        alert('Először válassz megállót (Stop ID).');
+        return;
+      }
+
+      tbody.innerHTML = '';
+      results.style.display = 'none';
+
+      try{
+        const resp = await fetch(`/next_departures/${encodeURIComponent(id)}?minutes=${min}`);
+        if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        titleStop.textContent = `stop ${data.stop_id || id}`;
+        titleMin.textContent  = min.toString();
+        meta.textContent = new Date().toLocaleString();
+
+        const deps = data.departures || [];
+        if(deps.length === 0){
+          tbody.innerHTML = `<tr><td colspan="4" class="badge">Nincs indulás ebben az időablakban.</td></tr>`;
+        }else{
+          deps.forEach(d => {
+            const tr = document.createElement('tr');
+            const route = d.route || '';
+            const dest  = d.destination || '';
+            const time  = d.departure_time || '';
+            const live  = !!d.live;
+
+            tr.innerHTML = `
+              <td>${route}</td>
+              <td>${escapeHTML(dest)}</td>
+              <td>${fmtClock(time)}</td>
+              <td>${live ? '<span class="pill live">ÉLŐ</span>' : '<span class="pill tt">Menetrend</span>'}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+        }
+        results.style.display = 'block';
+      }catch(err){
+        alert('Hiba az indulások betöltése közben.');
+      }
+    }
+
+    function fmtClock(hhmm){
+      // "13:25" vagy "13:25:00" → "13:25"
+      if(!hhmm) return '';
+      const parts = hhmm.split(':');
+      return parts[0].padStart(2,'0') + ':' + parts[1].padStart(2,'0');
+    }
+    function escapeHTML(s){
+      return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    // Gyors teszthez (ha volt korábban beégetett ID)
+    // stopId.value = '1980SN12619E';
+  </script>
+</body>
+</html>
