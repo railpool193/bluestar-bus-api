@@ -108,3 +108,10 @@ def index():
     # A repo gyökerében lévő index.html-t szolgálja ki
     file_path = Path(__file__).with_name("index.html")
     return FileResponse(file_path)
+from pathlib import Path
+from fastapi.responses import HTMLResponse
+
+@app.get("/", include_in_schema=False, response_class=HTMLResponse)
+def serve_index():
+    html_path = Path(__file__).with_name("index.html")
+    return html_path.read_text(encoding="utf-8")
