@@ -1,106 +1,170 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="hu">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Bluestar Bus – Live Departures</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #111;
-      color: #eee;
-      margin: 0;
-      padding: 1rem;
+    body { background:#0b0d10; color:#e9eef4; font-family: system-ui, Arial, sans-serif; margin:0; }
+    .wrap { max-width: 900px; margin: 24px auto; padding: 0 16px; }
+    .card { background:#12161c; border:1px solid #1d2330; border-radius:12px; padding:20px; box-shadow: 0 10px 30px rgba(0,0,0,.25);}
+    h1 { margin:0 0 14px; font-size: 28px; }
+    label { display:block; margin:12px 0 6px; color:#aab4c0 }
+    input, select, button {
+      background:#0f1318; color:#e9eef4; border:1px solid #2a3140; border-radius:10px;
+      padding:10px 12px; font-size:16px; outline:none; width:100%;
     }
-    h1 { font-size: 1.4rem; }
-    input, button, select {
-      padding: .5rem;
-      margin: .2rem;
-      border-radius: 4px;
-      border: none;
-    }
-    button { background: #2c7be5; color: white; cursor: pointer; }
-    button:hover { background: #1a5cc6; }
-    .results { margin-top: 1rem; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 1rem;
-      background: #222;
-    }
-    th, td {
-      padding: .5rem;
-      border-bottom: 1px solid #333;
-      text-align: left;
-    }
-    .live { color: #4cff4c; font-weight: bold; }
+    button { cursor:pointer; background:#1f6feb; border-color:#1f6feb; }
+    button:disabled { opacity:.6; cursor:not-allowed }
+    .row { display:grid; grid-template-columns: 1fr 120px; gap:12px; }
+    .results { margin-top:14px; }
+    .results.hidden { display:none; }
+    table { width:100%; border-collapse: collapse; margin-top:16px; }
+    th, td { padding:10px 12px; border-bottom:1px solid #1d2330; }
+    th { text-align:left; color:#aab4c0; font-weight:600; }
+    .live-badge { display:inline-block; background:#0c7; color:#021; font-weight:700; border-radius:8px; padding:4px 8px; font-size:12px; vertical-align:middle; }
+    .hint { color:#9aa5b1; font-size:14px; }
   </style>
 </head>
 <body>
-  <h1>Bluestar Bus – Live Departures</h1>
+  <div class="wrap">
+    <div class="card">
+      <h1>Bluestar Bus – Live Departures</h1>
+      <p class="hint">Keresés megálló név szerint, majd indulások lekérése. Az
+        <span class="live-badge">ÉLŐ</span> jelzés a BODS SIRI-VM valós idejű érkezést mutatja.</p>
 
-  <div>
-    <input type="text" id="searchBox" placeholder="Search stop name (e.g. Vincents Walk)">
-    <button onclick="searchStops()">Search</button>
+      <!-- Megálló név -->
+      <label for="q">Megálló neve</label>
+      <div class="row">
+        <input id="q" type="text" placeholder="pl. Jasmine Road" />
+        <button id="btnSearch">Keresés</button>
+      </div>
+
+      <!-- Találati lista -->
+      <div id="resultBox" class="results hidden">
+        <label for="pick">Találatok</label>
+        <select id="pick" size="6"></select>
+      </div>
+
+      <!-- Percek + Stop ID -->
+      <div class="row" style="margin-top:14px; grid-template-columns: 140px 1fr;">
+        <div>
+          <label for="mins">Időablak (perc)</label>
+          <input id="mins" type="number" value="60" min="5" max="300" />
+        </div>
+        <div>
+          <label for="stopId">Stop ID</label>
+          <input id="stopId" type="text" placeholder="pl. 1980SN12619E" />
+        </div>
+      </div>
+
+      <div style="margin-top:14px">
+        <button id="btnGo">Indulások lekérése</button>
+      </div>
+
+      <div id="out"></div>
+    </div>
   </div>
-
-  <div id="stopResults"></div>
-
-  <div>
-    <label>Stop ID:</label>
-    <input type="text" id="stopId" value="1980SN12619E">
-    <label>Minutes:</label>
-    <input type="number" id="minutes" value="60" min="5" max="180">
-    <button onclick="loadDepartures()">OK</button>
-  </div>
-
-  <div id="departures" class="results"></div>
 
   <script>
-    async function searchStops() {
-      const q = document.getElementById("searchBox").value;
-      if (!q) return;
-      const res = await fetch(`/stops?q=${encodeURIComponent(q)}`);
-      if (!res.ok) { alert("Error searching stops"); return; }
-      const data = await res.json();
-      let html = "<ul>";
-      data.forEach(stop => {
-        html += `<li>
-          <a href="#" onclick="selectStop('${stop.stop_id}')">
-            ${stop.name} (${stop.stop_id})
-          </a>
-        </li>`;
-      });
-      html += "</ul>";
-      document.getElementById("stopResults").innerHTML = html;
+    const $ = (sel) => document.querySelector(sel);
+    const q = $("#q");
+    const btnSearch = $("#btnSearch");
+    const resultBox = $("#resultBox");
+    const pick = $("#pick");
+    const stopId = $("#stopId");
+    const mins = $("#mins");
+    const btnGo = $("#btnGo");
+    const out = $("#out");
+
+    function showResults(list) {
+      pick.innerHTML = "";
+      if (!list || !list.length) {
+        resultBox.classList.add("hidden");
+        alert("Nincs találat erre a névre.");
+        return;
+      }
+      for (const s of list) {
+        const opt = document.createElement("option");
+        opt.value = s.stop_id;
+        opt.textContent = `${s.name} (${s.stop_id})`;
+        pick.appendChild(opt);
+      }
+      resultBox.classList.remove("hidden");
+      pick.focus();
     }
 
-    function selectStop(stopId) {
-      document.getElementById("stopId").value = stopId;
-      document.getElementById("stopResults").innerHTML = "";
-      loadDepartures();
+    function clearTable() {
+      out.innerHTML = "";
     }
+
+    async function doSearch() {
+      clearTable();
+      const name = q.value.trim();
+      if (name.length < 2) { alert("Adj meg minimum 2 karaktert."); return; }
+      btnSearch.disabled = true;
+      try {
+        const resp = await fetch(`/search_stop?name=${encodeURIComponent(name)}&limit=20`);
+        if (!resp.ok) throw new Error("search HTTP " + resp.status);
+        const data = await resp.json();
+        showResults(data.results || []);
+      } catch (e) {
+        alert("Hiba a keresés közben. Próbáld újra.");
+      } finally {
+        btnSearch.disabled = false;
+      }
+    }
+
+    pick.addEventListener("change", () => {
+      if (pick.value) {
+        stopId.value = pick.value;
+        resultBox.classList.add("hidden");
+      }
+    });
+
+    btnSearch.addEventListener("click", doSearch);
+    q.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
 
     async function loadDepartures() {
-      const stopId = document.getElementById("stopId").value;
-      const minutes = document.getElementById("minutes").value;
-      const res = await fetch(`/next_departures/${stopId}?minutes=${minutes}`);
-      if (!res.ok) { alert("Error loading departures"); return; }
-      const data = await res.json();
+      clearTable();
+      const id = stopId.value.trim();
+      const m = Math.max(5, Math.min(300, parseInt(mins.value || "60", 10)));
+      if (!id) { alert("Előbb válassz megállót (Stop ID) a keresővel!"); return; }
 
-      let html = `<h3>Departures – stop ${data.stop_id}, next ${data.minutes} min</h3>`;
-      html += "<table><tr><th>Route</th><th>Destination</th><th>Time</th></tr>";
-      data.departures.forEach(dep => {
-        const live = dep.live ? `<span class="live">${dep.predicted_time || dep.departure_time}</span>` : dep.departure_time;
-        html += `<tr>
-          <td>${dep.route}</td>
-          <td>${dep.destination || ""}</td>
-          <td>${live}</td>
-        </tr>`;
-      });
-      html += "</table>";
-      document.getElementById("departures").innerHTML = html;
+      btnGo.disabled = true;
+      try {
+        const resp = await fetch(`/next_departures/${encodeURIComponent(id)}?minutes=${m}`);
+        if (!resp.ok) throw new Error("deps HTTP " + resp.status);
+        const data = await resp.json();
+        const deps = data.departures || [];
+
+        const tbl = document.createElement("table");
+        const thead = document.createElement("thead");
+        thead.innerHTML = `<tr><th>Route</th><th>Destination</th><th>Time</th></tr>`;
+        const tbody = document.createElement("tbody");
+
+        if (!deps.length) {
+          tbody.innerHTML = `<tr><td colspan="3" class="hint">Nincs indulás a következő ${m} percben.</td></tr>`;
+        } else {
+          for (const d of deps) {
+            const tr = document.createElement("tr");
+            const liveBadge = d.live ? ' <span class="live-badge">ÉLŐ</span>' : "";
+            tr.innerHTML = `
+              <td>${d.route || ""}</td>
+              <td>${(d.destination || "")}${liveBadge}</td>
+              <td>${d.departure_time || ""}</td>`;
+            tbody.appendChild(tr);
+          }
+        }
+        tbl.appendChild(thead); tbl.appendChild(tbody);
+        out.appendChild(tbl);
+      } catch (e) {
+        alert("Hiba az indulások lekérése közben.");
+      } finally {
+        btnGo.disabled = false;
+      }
     }
+    btnGo.addEventListener("click", loadDepartures);
   </script>
 </body>
 </html>
