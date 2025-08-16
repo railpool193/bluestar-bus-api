@@ -1,78 +1,45 @@
-# main.py
-from __future__ import annotations
-
-import os
-from typing import Any, Dict, List
-
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from typing import Dict, Any
+import uvicorn
 
-# A saját modulod, ami a GTFS fájlokból számolja a következő indulásokat
 from gtfs_utils import get_next_departures
 
+app = FastAPI(title="Bluestar Bus API", version="1.0")
 
-# ======= Konfigurálható, kényelmi stop ID-k (környezeti változóval is felülírhatók) =======
-# TIPP: állítsd be Railway-en, hogy ne kelljen a kódban módosítani:
-# VW_CK_STOP_ID, VW_CM_STOP_ID
-VW_CK_STOP_ID = os.getenv("VW_CK_STOP_ID", "1980SN12619E")  # Vincents Walk (CK) – cseréld valós ID-ra, ha más
-VW_CM_STOP_ID = os.getenv("VW_CM_STOP_ID", "1980SN12620E")  # Vincents Walk (CM) – cseréld valós ID-ra, ha más
-
-# Megengedett időablak (percben), hogy ne kérjünk véletlenül túl nagy intervallumot
-MIN_MINUTES = 1
-MAX_MINUTES = 720
-
-app = FastAPI(
-    title="Bluestar Bus API",
-    version="2.0.0",
-    contact={"name": "Bluestar Bus API"},
-)
+# --- Állandó buszmegálló ID-k (példák) ---
+VW_CK_STOP_ID = "1980SN12619E"  # Vincent’s Walk (ck)
+VW_CM_STOP_ID = "1980SN12620E"  # Vincent’s Walk (cm)
 
 
-# ==========================
-#        Segédfüggvény
-# ==========================
-def _validate_minutes(value: int) -> int:
-    if value is None:
-        raise HTTPException(status_code=400, detail="Missing 'minutes' query param")
-    if not isinstance(value, int):
-        raise HTTPException(status_code=400, detail="'minutes' must be integer")
-    if value < MIN_MINUTES or value > MAX_MINUTES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"'minutes' must be between {MIN_MINUTES} and {MAX_MINUTES}",
-        )
-    return value
+# Segédfüggvény a minutes ellenőrzésére
+def _validate_minutes(minutes: int) -> int:
+    if minutes <= 0 or minutes > 180:
+        raise HTTPException(status_code=400, detail="Minutes must be between 1 and 180")
+    return minutes
 
 
+# Egyedi JSON válasz építése
 def _json_departures(stop_id: str, minutes: int) -> JSONResponse:
     try:
-        if not stop_id:
-            raise HTTPException(status_code=400, detail="Missing 'stop_id'")
         minutes = _validate_minutes(minutes)
-        deps: List[Dict[str, Any]] = get_next_departures(stop_id, minutes=minutes)
+        deps = get_next_departures(stop_id, minutes)   # <-- csak pozicionális paraméter
         return JSONResponse(content={"stop_id": stop_id, "minutes": minutes, "departures": deps})
-    except HTTPException:
-        # már kidolgozott, “szép” hiba
-        raise
     except Exception as e:
-        # ideiglenes diagnosztika – ha gond van, a Railway HTTP logban látszik a részletes traceback
-        raise HTTPException(status_code=500, detail=f"Failed to build departures: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-# ==========================
-#           Routes
-# ==========================
+# --- API végpontok ---
 
 @app.get("/")
-def index() -> Dict[str, Any]:
-    """Kezdőoldal: gyors linkek és példa hívások."""
+def root() -> Dict[str, Any]:
     return {
         "message": "Bluestar Bus API",
         "links": {
             "docs": "/docs",
             "health": "/health",
-            "ck_next_60": f"/vincents-walk/ck?minutes=60",
-            "cm_next_60": f"/vincents-walk/cm?minutes=60",
+            "ck_next_60": "/vincents-walk/ck?minutes=60",
+            "cm_next_60": "/vincents-walk/cm?minutes=60",
             "generic_example": f"/next_departures/{VW_CK_STOP_ID}?minutes=60",
         },
     }
@@ -85,20 +52,9 @@ def health() -> Dict[str, str]:
 
 @app.get("/next_departures/{stop_id}")
 def next_departures(stop_id: str, minutes: int = 60) -> JSONResponse:
-    """Általános végpont: következő indulások tetszőleges megállóhoz."""
     return _json_departures(stop_id, minutes)
 
 
-@app.get("/siri-live")
-def siri_live(stop_id: str, minutes: int = 60) -> JSONResponse:
-    """
-    Alias a next_departures-hoz, kényelmes query paramokkal:
-    /siri-live?stop_id=1980SN12619E&minutes=60
-    """
-    return _json_departures(stop_id, minutes)
-
-
-# ---------- Vincents Walk kényelmi végpontok ----------
 @app.get("/vincents-walk/ck")
 def vincents_walk_ck(minutes: int = 60) -> JSONResponse:
     return _json_departures(VW_CK_STOP_ID, minutes)
@@ -109,18 +65,18 @@ def vincents_walk_cm(minutes: int = 60) -> JSONResponse:
     return _json_departures(VW_CM_STOP_ID, minutes)
 
 
-# (Opcionális) Egy összesítő, ami mindkét oldalt adja egyszerre:
 @app.get("/vincents-walk")
 def vincents_walk(minutes: int = 60) -> Dict[str, Any]:
     minutes = _validate_minutes(minutes)
-    ck = get_next_departures(VW_CK_STOP_ID, minutes=minutes)
-    cm = get_next_departures(VW_CM_STOP_ID, minutes=minutes)
-    return {"minutes": minutes, "ck": {"stop_id": VW_CK_STOP_ID, "departures": ck},
-            "cm": {"stop_id": VW_CM_STOP_ID, "departures": cm}}
+    ck = get_next_departures(VW_CK_STOP_ID, minutes)   # <-- itt is pozicionális
+    cm = get_next_departures(VW_CM_STOP_ID, minutes)   # <-- itt is pozicionális
+    return {
+        "minutes": minutes,
+        "ck": {"stop_id": VW_CK_STOP_ID, "departures": ck},
+        "cm": {"stop_id": VW_CM_STOP_ID, "departures": cm},
+    }
 
 
-# Helyi futtatáshoz (nem szükséges Railway-en)
+# --- Lokális futtatás ---
 if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
