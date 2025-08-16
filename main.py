@@ -1,78 +1,59 @@
-# main.py
 import os
 import csv
-from pathlib import Path
-from functools import lru_cache
 from typing import List, Dict, Any
-
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
+from datetime import datetime, timedelta
 
-# Ha van saját segédfájlod GTFS-hez, használjuk azt
-# (pozicionális paraméterekkel hívjuk, hogy ne legyen "unexpected keyword" hiba)
-try:
-    from gtfs_utils import get_next_departures as gtfs_get_next_departures  # type: ignore
-except Exception:
-    gtfs_get_next_departures = None  # fallback, ha nincs
+from gtfs_utils import get_next_departures  # a korábbi GTFS logikád
+import siri_live  # a korábbi “élő” adat logikád
 
+app = FastAPI(title="Bluestar Bus API")
 
-APP_DIR = Path(__file__).parent.resolve()
-DATA_DIR = APP_DIR / "data"
-STOPS_PATH = DATA_DIR / "stops.txt"
-INDEX_HTML = APP_DIR / "index.html"
-
-app = FastAPI(
-    title="Bluestar Bus API",
-    version="1.0",
-    docs_url="/docs",
-    redoc_url=None,
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+ROOT = Path(__file__).parent
+DATA_DIR = ROOT / "data"
+STOPS_FILE = DATA_DIR / "stops.txt"
 
 # ---------------------------
-# Helpers: megállók betöltése
+# Megálló-adatbázis (GTFS/stops.txt)
 # ---------------------------
-@lru_cache(maxsize=1)
-def _load_stops() -> List[Dict[str, str]]:
-    """Betölti egyszer a stops.txt-t és cache-eli."""
-    if not STOPS_PATH.exists():
-        return []
-    stops: List[Dict[str, str]] = []
-    with STOPS_PATH.open("r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            # minimális védelem: csak a szükséges kulcsok
-            stops.append(
-                {
-                    "stop_id": row.get("stop_id", ""),
-                    "stop_name": row.get("stop_name", ""),
-                }
-            )
-    return stops
+STOPS: List[Dict[str, Any]] = []
 
+def _norm(s: str) -> str:
+    return " ".join(s.lower().strip().split())
 
-def _search_stops_by_name(query: str, limit: int = 20) -> List[Dict[str, str]]:
-    """Egyszerű, kis/nagybetűt nem érzékeny részszavas keresés a stop_name mezőben."""
-    q = (query or "").strip().lower()
-    if not q:
-        return []
-    results = []
-    for s in _load_stops():
-        if q in s["stop_name"].lower():
-            results.append(s)
-            if len(results) >= limit:
-                break
-    return results
+def _load_stops() -> None:
+    global STOPS
+    STOPS = []
+    if not STOPS_FILE.exists():
+        return
+    with open(STOPS_FILE, newline="", encoding="utf-8") as f:
+        rdr = csv.DictReader(f)
+        for row in rdr:
+            # A GTFS tipikusan: stop_id, stop_name, stop_lat, stop_lon, ...
+            STOPS.append({
+                "stop_id": row.get("stop_id", "").strip(),
+                "name": row.get("stop_name", "").strip(),
+                "lat": row.get("stop_lat"),
+                "lon": row.get("stop_lon"),
+                "loc": row.get("stop_desc") or row.get("platform_code") or "",
+            })
+_load_stops()
 
-
-# -------------
-# Root + health
-# -------------
-@app.get("/")
+# ---------------------------
+# Root + egészségügy
+# ---------------------------
+@app.get("/", response_class=JSONResponse)
 def root():
-    """Ha van index.html, azt szolgáljuk ki. Egyébként JSON linkek."""
-    if INDEX_HTML.exists():
-        return FileResponse(str(INDEX_HTML), media_type="text/html")
     return {
         "message": "Bluestar Bus API",
         "links": {
@@ -84,78 +65,76 @@ def root():
         },
     }
 
-
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"ok": True, "time": datetime.utcnow().isoformat() + "Z"}
 
-
-# ----------------
-# Stop-keresés API
-# ----------------
+# ---------------------------
+# Megálló-keresés (kis/nagybetű független, több találatot ad vissza)
+# ---------------------------
 @app.get("/search_stop")
-def search_stop(name: str = Query(..., description="Megálló neve (vagy részlete)"), limit: int = Query(20, ge=1, le=50)):
-    """
-    Megálló keresése a GTFS `stops.txt` alapján.
-    Visszaad: stop_id, stop_name.
-    """
-    try:
-        if not STOPS_PATH.exists():
-            raise HTTPException(status_code=503, detail="Nincs GTFS stops.txt a /data mappában.")
-        matches = _search_stops_by_name(name, limit=limit)
-        return matches
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search error: {e}")
+def search_stop(
+    name: str = Query(..., description="Megálló neve (részlet is lehet)"),
+    limit: int = Query(15, ge=1, le=50),
+):
+    if not STOPS:
+        raise HTTPException(status_code=503, detail="Nincs GTFS stops.txt betöltve.")
+    q = _norm(name)
+    if len(q) < 2:
+        return {"query": name, "results": []}
 
+    results = []
+    for s in STOPS:
+        if q in _norm(s["name"]):
+            results.append({
+                "stop_id": s["stop_id"],
+                "name": s["name"],
+                "lat": s["lat"],
+                "lon": s["lon"],
+            })
+        if len(results) >= limit:
+            break
+    return {"query": name, "count": len(results), "results": results}
 
-# --------------------------
-# Indulások (GTFS / segédfgv)
-# --------------------------
+# ---------------------------
+# Következő indulások (GTFS)
+# ---------------------------
 @app.get("/next_departures/{stop_id}")
-def next_departures(stop_id: str, minutes: int = Query(60, ge=1, le=180)):
-    """
-    Következő indulások a megadott időablakban.
-    A `gtfs_utils.get_next_departures(stop_id, minutes)` függvényt hívjuk,
-    POZICIONÁLIS paraméterekkel (így nincs 'unexpected keyword' hiba).
-    """
+def next_departures(stop_id: str, minutes: int = 60):
     try:
-        if gtfs_get_next_departures is None:
-            raise HTTPException(status_code=503, detail="GTFS segédfüggvény (gtfs_utils.get_next_departures) nem elérhető.")
-
-        # FONTOS: pozicionális hívás
-        data = gtfs_get_next_departures(stop_id, minutes)  # type: ignore
-
-        # Válasz forma egységesítése
-        resp = {
-            "stop_id": stop_id,
-            "minutes": minutes,
-            "departures": data if isinstance(data, list) else data.get("departures", []),
-        }
-        return resp
-    except HTTPException:
-        raise
+        deps = get_next_departures(stop_id, minutes=minutes)
+        return {"stop_id": stop_id, "minutes": minutes, "departures": deps}
+    except TypeError:
+        # korábbi hibád: get_next_departures nem várt "minutes"-t → most már várt,
+        # de ha egy régi verzió futna, próbáljuk meg paraméter nélkül:
+        deps = get_next_departures(stop_id)
+        # opcionális: szűkítsük minutes ablakra, ha a régi függvény sokat ad vissza
+        # (ha a régi nem ad időt, ezt el is hagyhatod)
+        return {"stop_id": stop_id, "minutes": minutes, "departures": deps}
     except Exception as e:
-        # Hiba esetén egységes JSON
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"Failed to build departures: {e}"},
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to build departures ({type(e).__name__}): {e}")
 
-
-# ----------------------------------------------------
-# (Opcionális) régi demó linkek – ha használtátok őket
-# ----------------------------------------------------
+# ---------------------------
+# Vincents Walk gyorslinkek (ha használod)
+# ---------------------------
 @app.get("/vincents-walk/ck")
-def vw_ck(minutes: int = Query(60, ge=1, le=180)):
-    """Shortcut: Vincent Walk (CK) stop – állítsd be a helyes stop_id-t, ha szeretnéd használni."""
-    stop_id = "1980SN12619E"  # példa; cseréld arra a megállóra, amit szeretnél
-    return next_departures(stop_id=stop_id, minutes=minutes)
-
+def vw_ck(minutes: int = 60):
+    return next_departures("1980SN12619E", minutes=minutes)
 
 @app.get("/vincents-walk/cm")
-def vw_cm(minutes: int = Query(60, ge=1, le=180)):
-    """Shortcut: Vincent Walk (CM) stop – állítsd be a helyes stop_id-t, ha szeretnéd használni."""
-    stop_id = "1980SN12619E"  # példa; cseréld arra a megállóra, amit szeretnél
-    return next_departures(stop_id=stop_id, minutes=minutes)
+def vw_cm(minutes: int = 60):
+    return next_departures("1980SN12619W", minutes=minutes)
+
+# ---------------------------
+# Egyszerű index.html
+# ---------------------------
+@app.get("/index.html", response_class=HTMLResponse)
+def serve_index():
+    idx = ROOT / "index.html"
+    if idx.exists():
+        return idx.read_text(encoding="utf-8")
+    return HTMLResponse(
+        '<!doctype html><meta charset="utf-8"><title>Bluestar Bus</title>'
+        '<p>Hiányzik az <code>index.html</code> a gyökérből.</p>',
+        status_code=200,
+    )
