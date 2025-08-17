@@ -1,4 +1,42 @@
-from pathlib import Path
+# main.py
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
+
+app = FastAPI(title="Bluestar Bus – API", version="1.0.1")
+
+# --- CORS (frontend -> API) ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],   # ha szeretnéd szigorítani, ide írd a domain(eke)t
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Static frontend (index.html a / alatt) ---
+# Tegyél egy 'static' mappát a projekt gyökerébe (benne index.html, style.css stb.)
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+
+# --- (Opcionális) kis segítség végpont a fejlesztéshez ---
+@app.get("/api/ui", summary="Simple Ui Hint")
+def ui_hint():
+    return JSONResponse(
+        {
+            "hint": "A frontend a gyökéren érhető el (/) – próbáld megnyitni a kezdőoldalt.",
+            "routes": {
+                "search": "/api/stops/search?q=vincent",
+                "next_departures": "/api/stops/1980SN12618A/next_departures",
+                "status": "/api/status",
+            },
+        }
+    )
+
+# MEGJEGYZÉS:
+# A tényleges domain/railway URL-en a gyökér (/) mostantól a static/index.html-t szolgálja ki,
+# az API végpontok pedig továbbra is /api/... alatt érhetők el változatlanul.from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
