@@ -4,7 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bluestar Bus – megálló & élő indulások</title>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     :root { --bg:#0f172a; --card:#ffffff; --txt:#0f172a; --muted:#64748b; --brand:#2563eb; --ok:#16a34a; --bad:#ef4444; }
@@ -27,9 +26,9 @@
     ul.sugg li:hover{background:#f1f5f9}
     table{width:100%;border-collapse:collapse;margin-top:12px}
     th,td{padding:12px;border-bottom:1px solid #e5e7eb}
-    tfoot{color:var(--muted);font-size:12px}
     .muted{color:var(--muted)}
     .footer{margin-top:18px;color:#cbd5e1;font-size:12px;text-align:center}
+    .err{color:#b91c1c;margin-top:8px}
   </style>
 </head>
 <body>
@@ -42,6 +41,7 @@
           <label class="muted">Megálló név (pl. „Vincent”)</label>
           <input id="q" type="text" placeholder="Kezdj el írni…" autocomplete="off" />
           <ul id="sugg" class="sugg" hidden></ul>
+          <div id="qerr" class="err" hidden></div>
         </div>
 
         <div>
@@ -71,9 +71,8 @@
   <script>
   const API = location.origin;
   let picked = null;
-
   function el(id){return document.getElementById(id)}
-  const q = el('q'), sugg = el('sugg'), res = el('res');
+  const q = el('q'), sugg = el('sugg'), res = el('res'), qerr = el('qerr');
 
   async function status(){
     try{
@@ -82,28 +81,36 @@
       el('gtfs-dot').className = 'dot ' + (j.gtfs?'ok':'bad');
       el('live-dot').className = 'dot ' + (j.live?'ok':'bad');
       el('build').textContent = j.build || '{{BUILD_ID}}';
-    }catch(e){/* ignore */}
+    }catch(e){}
   }
 
   async function search(name){
     sugg.innerHTML = '';
     sugg.hidden = true;
+    qerr.hidden = true;
     picked = null;
     el('picked-name').textContent = '–';
     el('picked-id').textContent = '';
     if(!name || name.trim().length<2) return;
-    const data = await (await fetch(`${API}/api/stops/search?q=`+encodeURIComponent(name),{cache:'no-store'})).json();
-    if(!Array.isArray(data) || data.length===0){
-      const li = document.createElement('li'); li.textContent = 'Nincs találat.'; li.className='muted';
-      sugg.appendChild(li); sugg.hidden=false; return;
+    try{
+      const r = await fetch(`${API}/api/stops/search?q=`+encodeURIComponent(name),{cache:'no-store'});
+      if(!r.ok){ throw new Error(`HTTP ${r.status}`); }
+      const data = await r.json();
+      if(!Array.isArray(data) || data.length===0){
+        const li = document.createElement('li'); li.textContent = 'Nincs találat.'; li.className='muted';
+        sugg.appendChild(li); sugg.hidden=false; return;
+      }
+      data.forEach(s=>{
+        const li = document.createElement('li');
+        li.textContent = `${s.stop_name} • ${s.stop_id}`;
+        li.onclick = ()=>{ picked = s; q.value = s.stop_name; sugg.hidden=true; el('picked-name').textContent=s.stop_name; el('picked-id').textContent='(' + s.stop_id + ')'; };
+        sugg.appendChild(li);
+      });
+      sugg.hidden = false;
+    }catch(err){
+      qerr.textContent = 'Keresési hiba: ' + (err.message || err);
+      qerr.hidden = false;
     }
-    data.forEach(s=>{
-      const li = document.createElement('li');
-      li.textContent = `${s.stop_name} • ${s.stop_id}`;
-      li.onclick = ()=>{ picked = s; q.value = s.stop_name; sugg.hidden=true; el('picked-name').textContent=s.stop_name; el('picked-id').textContent='(' + s.stop_id + ')'; };
-      sugg.appendChild(li);
-    });
-    sugg.hidden = false;
   }
 
   async function loadDepartures(){
@@ -114,19 +121,14 @@
     if(!Array.isArray(data) || data.length===0){ res.innerHTML = '<div class="muted">Nincs megjeleníthető indulás.</div>'; return; }
     let html = '<table><thead><tr><th>Járat</th><th>Cél</th><th>Idő</th></tr></thead><tbody>';
     data.forEach(d=>{ html += `<tr><td>${d.route||'-'}</td><td>${d.destination||'-'}</td><td>${d.time||'-'}</td></tr>`; });
-    html += `</tbody><tfoot><tr><td colspan="3">Összes: ${data.length}</td></tr></tfoot></table>`;
+    html += `</tbody></table>`;
     res.innerHTML = html;
   }
 
-  // események
   q.addEventListener('input', e=> search(e.target.value));
   q.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); loadDepartures(); }});
   el('go').onclick = loadDepartures;
-
-  // első státusz frissítés
   status();
-
-  // beégetett build azonosító (cache-biztos)
   (function(){ const b='{{BUILD_ID}}'; if(b && b!=='{{'+'BUILD_ID'+'}}'){ el('build').textContent=b; }})();
   </script>
 </body>
