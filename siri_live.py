@@ -1,164 +1,87 @@
-# siri_live.py
-# ----------------------
-# SIRI VehicleMonitoring feed letöltése és stop szerinti "következő indulások" kinyerése.
-
-from __future__ import annotations
-
 import os
-import requests
+import asyncio
+from typing import List, Dict
+import aiohttp
 import xmltodict
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional
+from datetime import datetime, timezone
 
+BODS_API_KEY = os.getenv("BODS_API_KEY", "")
+BODS_FEED_ID = os.getenv("BODS_FEED_ID", "")
+# BODS SIRI-VM StopMonitoring végpont – a BODS a SIRI v1 datafeed útvonalat használja
+# A legtöbb üzemeltetőnél a paraméter neve "MonitoringRef". Ha nálatok "StopMonitoringRef",
+# elég az alábbit átírni stop_param = "StopMonitoringRef"-re.
+STOP_PARAM_NAME = os.getenv("BODS_STOP_PARAM_NAME", "MonitoringRef")
 
-class SiriLiveError(Exception):
-    """Belső kivétel a SIRI hibák jelzésére."""
+BASE_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/{BODS_FEED_ID}/"
 
+def _iso_now() -> datetime:
+    return datetime.now(timezone.utc)
 
-def _require_env(name: str) -> str:
-    val = os.getenv(name)
-    if not val:
-        raise SiriLiveError(f"Missing environment variable: {name}")
-    return val
-
-
-def _parse_iso(ts: str) -> datetime:
+async def get_live_departures(stop_id: str, minutes: int = 60, limit: int = 30) -> List[Dict]:
     """
-    ISO 8601 időpontok parse-olása (a BODS +00:00 / Z formátumokat is ad).
+    SIRI-VM StopMonitoring: élő indulások lekérése egy megállóra.
+    Visszatér: list[ {route, destination, time_iso, is_live=True} ]
     """
-    # Normálizáljuk: az xmltodict már stringet ad vissza
-    try:
-        # Python 3.11+: fromisoformat kezeli a +00:00 formát is
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-    except Exception as exc:
-        raise SiriLiveError(f"Bad timestamp in feed: {ts}") from exc
+    if not BODS_API_KEY or not BODS_FEED_ID:
+        return []
 
+    params = {
+        "api_key": BODS_API_KEY,
+        STOP_PARAM_NAME: stop_id,
+        "MaximumStopVisits": str(limit),
+        "PreviewInterval": f"PT{minutes}M",
+    }
 
-def _fetch_vm_xml(feed_id: str, api_key: str) -> Dict[str, Any]:
-    """
-    BODS datafeed letöltése (VehicleMonitoring XML).
-    A datafeed végpont NEM támogatja a StopMonitoring query paramétereket,
-    csak az api_key-t – a többit nekünk kell szűrni a kliens oldalon.
-    """
-    url = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/{feed_id}/"
-    params = {"api_key": api_key}
+    # A BODS szerver XML-lel válaszol
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as sess:
+        async with sess.get(BASE_URL, params=params) as resp:
+            if resp.status != 200:
+                # ha 400/404: nincs StopMonitoring ezen a feeden → üres lista (fallback a GTFS-re)
+                return []
+            text = await resp.text()
 
     try:
-        resp = requests.get(url, params=params, timeout=20)
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        raise SiriLiveError(f"Network error while calling BODS: {exc}") from exc
+        siri = xmltodict.parse(text)
+    except Exception:
+        return []
 
-    # XML → dict
-    try:
-        data = xmltodict.parse(resp.text)
-        return data
-    except Exception as exc:
-        raise SiriLiveError("Failed to parse SIRI XML") from exc
+    # Navigálunk a SIRI StopMonitoring ágig
+    # Vannak feedek, ahol VehicleMonitoringDelivery jön – azt itt nem dolgozzuk fel.
+    service = siri.get("Siri", {}).get("ServiceDelivery", {})
+    smd = service.get("StopMonitoringDelivery")
+    if not smd:
+        # egyes feedek listát adnak:
+        deliveries = service.get("StopMonitoringDelivery", [])
+        if isinstance(deliveries, list) and deliveries:
+            smd = deliveries[0]
+    if not smd:
+        return []
 
+    visits = smd.get("MonitoredStopVisit", [])
+    if isinstance(visits, dict):
+        visits = [visits]
 
-def _iter_vehicle_activity(vm_dict: Dict[str, Any]):
-    """
-    Biztonságos iterátor a VehicleActivity elemekre.
-    """
-    try:
-        svc = vm_dict["Siri"]["ServiceDelivery"]
-        vmd = svc["VehicleMonitoringDelivery"]
-        # A feed lehet listás vagy egy elemű – normalizáljuk
-        if isinstance(vmd, list):
-            # Vegyük az első (legfrissebb) delivery-t
-            vmd = vmd[0]
-        va = vmd.get("VehicleActivity", [])
-        if isinstance(va, dict):
-            va = [va]
-        for item in va:
-            yield item
-    except KeyError:
-        # Üres / nincs aktivitás
-        return
+    out: List[Dict] = []
+    for v in visits:
+        mvj = v.get("MonitoredVehicleJourney", {})
+        line = mvj.get("LineRef") or ""
+        dest = (mvj.get("DestinationName") or mvj.get("DestinationRef") or "").strip()
 
+        # Időpontok: ExpectedDepartureTime > AimedDepartureTime
+        expected = mvj.get("MonitoredCall", {}).get("ExpectedDepartureTime")
+        aimed = mvj.get("MonitoredCall", {}).get("AimedDepartureTime") or mvj.get("OriginAimedDepartureTime")
 
-def get_live_departures(
-    stop_id: str,
-    minutes: int,
-    api_key: Optional[str] = None,
-    feed_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """
-    Élő indulások adott megállóra a SIRI VehicleMonitoring feedből.
-
-    Logika:
-    - letöltjük a feedet;
-    - végigmegyünk a VehicleActivity elemeken;
-    - azokat vesszük, ahol MonitoredCall/StopPointRef == stop_id;
-    - kivesszük az ExpectedDepartureTime | AimedDepartureTime értéket;
-    - csak a 'minutes' időablakba esőket adjuk vissza.
-    """
-    if not stop_id:
-        raise SiriLiveError("stop_id is required")
-
-    api_key = api_key or _require_env("BODS_API_KEY")
-    feed_id = feed_id or _require_env("BODS_FEED_ID")
-
-    vm = _fetch_vm_xml(feed_id=feed_id, api_key=api_key)
-
-    now = datetime.now(timezone.utc)
-    horizon = now + timedelta(minutes=int(minutes))
-
-    results: List[Dict[str, Any]] = []
-
-    for act in _iter_vehicle_activity(vm):
-        mj = act.get("MonitoredVehicleJourney", {}) or {}
-
-        # A megálló, ahol most várható megállás
-        mc = mj.get("MonitoredCall", {}) or {}
-        stop_ref = mc.get("StopPointRef")
-
-        if not stop_ref or str(stop_ref).strip().upper() != str(stop_id).strip().upper():
+        time_iso = expected or aimed
+        if not time_iso:
             continue
 
-        # Idő – prefer ExpectedDepartureTime, fallback AimedDepartureTime/ExpectedArrivalTime
-        ts = (
-            mc.get("ExpectedDepartureTime")
-            or mc.get("AimedDepartureTime")
-            or mc.get("ExpectedArrivalTime")
-            or mc.get("AimedArrivalTime")
-        )
-        if not ts:
-            continue
+        out.append({
+            "route": str(line),
+            "destination": str(dest),
+            "time_iso": str(time_iso),
+            "is_live": True
+        })
 
-        dep = _parse_iso(ts)
-        if not (now <= dep <= horizon):
-            continue
-
-        # Adatok: vonalszám, cél
-        route = mj.get("PublishedLineName") or mj.get("LineRef") or ""
-        dest = mj.get("DestinationName") or mj.get("DestinationRef") or ""
-
-        results.append(
-            {
-                "route": str(route),
-                "destination": str(dest),
-                "time": dep.isoformat(),
-            }
-        )
-
-    # rendezés idő szerint
-    results.sort(key=lambda x: x["time"])
-    return results
-
-
-# --- Visszafelé kompatibilis alias (ha a frontend ezt hívja) ---
-def get_next_departures(
-    stop_id: str,
-    minutes: int,
-    api_key: Optional[str] = None,
-    feed_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """
-    Alias a régi névre – ugyanazt csinálja, mint get_live_departures.
-    """
-    return get_live_departures(stop_id=stop_id, minutes=minutes, api_key=api_key, feed_id=feed_id)
+    # idő szerint rendezzük
+    out.sort(key=lambda x: x["time_iso"])
+    return out[:limit]
