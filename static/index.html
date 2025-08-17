@@ -2,64 +2,34 @@
 <html lang="hu">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bluestar Bus – megálló & járat kereső</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='80'>🚌</text></svg>">
   <style>
-    :root {
-      --bg: #0f172a;
-      --card: #111827;
-      --muted: #9ca3af;
-      --text: #e5e7eb;
-      --accent: #22c55e;
-      --danger: #ef4444;
-      --brand: #60a5fa;
-      --row: #0b1222;
+    :root{
+      --bg:#0b1220; --card:#111a2b; --text:#eaf2ff; --muted:#b8c3d9;
+      --ok:#29d; --bad:#e74c3c; --btn:#4e8df5; --btn-h:#6aa3ff; --chip:#1b2740;
     }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans",
-      "Apple Color Emoji", "Segoe UI Emoji"; background: var(--bg); color: var(--text);
-    }
-    .wrap { max-width: 900px; margin: 40px auto; padding: 0 16px; }
-    h1 { font-weight: 800; letter-spacing: .2px; }
-    .card {
-      background: linear-gradient(180deg, #0f172a 0%, #0a1325 100%);
-      border: 1px solid #1f2937; border-radius: 14px; padding: 20px 20px 8px 20px;
-      box-shadow: 0 10px 30px rgba(0,0,0,.35);
-    }
-    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-    input[type=text], input[type=number]{
-      background:#0b1222;border:1px solid #24324a; color:var(--text);
-      padding:12px 14px;border-radius:10px; font-size:18px; width:100%;
-    }
-    .btn{
-      background:#16a34a;border:none;color:white;padding:12px 18px;border-radius:12px;
-      font-weight:700; font-size:18px; cursor:pointer; transition: transform .05s ease;
-      box-shadow: 0 8px 22px rgba(34,197,94,.22);
-    }
-    .btn:active{ transform: translateY(1px); }
-    .badges{ display:flex; gap:12px; margin:12px 4px 0 4px; }
-    .badge{
-      display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:999px;
-      background:#0b1222; border:1px solid #24324a; color:var(--muted); font-weight:600;
-    }
-    .dot{ width:10px; height:10px; border-radius:999px; background:#374151; box-shadow:0 0 0 2px rgba(0,0,0,.2) inset; }
-    .dot.ok{ background: var(--accent); }
-    .dot.no{ background: var(--danger); }
-    .hint{ color:var(--muted); font-size:14px; margin-top:6px; }
-    .results{ margin-top:18px; border-top:1px solid #1f2937; }
-    table{ width:100%; border-collapse: collapse; margin-top:8px; }
-    th, td{ padding:14px 10px; border-bottom:1px solid #1f2937; text-align:left; }
-    th{ color:#cbd5e1; font-size:14px; text-transform:uppercase; letter-spacing:.03em; }
-    tr:nth-child(even) td{ background: #0d162a; }
-    .selectList{
-      margin-top:10px; background:#0b1222; border:1px solid #24324a; border-radius:10px; overflow:hidden;
-    }
-    .selectItem{
-      padding:12px 14px; border-bottom:1px solid #1f2937; cursor:pointer;
-    }
-    .selectItem:hover{ background:#0f1a31; }
-    .footer{ text-align:center; color:#9ca3af; margin:30px 0 10px; }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    .wrap{max-width:980px;margin:32px auto;padding:0 16px}
+    h1{font-weight:800;margin:0 0 16px}
+    .card{background:var(--card);border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    input[type=text],input[type=number]{width:100%;padding:14px 16px;border-radius:12px;border:1px solid #26324b;background:#0e1628;color:var(--text)}
+    .btn{background:var(--btn);color:#fff;border:0;border-radius:12px;padding:14px 18px;font-weight:700;cursor:pointer}
+    .btn:hover{background:var(--btn-h)}
+    .chips{display:flex;gap:8px;margin-top:12px}
+    .chip{background:var(--chip);border-radius:999px;padding:6px 10px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+    .dot{width:10px;height:10px;border-radius:50%}
+    .ok{background:#24d164}.bad{background:#e74c3c}.warn{background:#f1c40f}
+    .list{margin-top:14px}
+    .item{padding:10px 12px;border-radius:10px;background:#0e1628;margin:6px 0;cursor:pointer}
+    .item:hover{background:#12203a}
+    table{width:100%;border-collapse:collapse;margin-top:14px}
+    th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #1a2944}
+    th{opacity:.9}
+    .pill{display:inline-flex;align-items:center;gap:6px;background:#0e1628;border:1px solid #253354;border-radius:999px;padding:6px 10px}
   </style>
 </head>
 <body>
@@ -68,127 +38,112 @@
 
     <div class="card">
       <div class="row">
-        <input id="q" type="text" placeholder="Megálló neve (pl. Hanover, Vincent…)" />
-        <button id="go" class="btn">Keresés</button>
+        <div style="flex:1 1 520px">
+          <label>Megálló név</label>
+          <input id="q" type="text" placeholder='pl. "Vincent"' />
+          <div id="multi" class="list" style="display:none"></div>
+        </div>
+
+        <div>
+          <label>Időablak (perc)</label>
+          <input id="win" type="number" min="5" max="240" value="60" style="width:130px" />
+        </div>
+
+        <div>
+          <label style="opacity:0"> </label>
+          <button id="go" class="btn">Keresés</button>
+        </div>
       </div>
 
-      <div class="badges">
-        <div class="badge"><span class="dot" id="apiDot"></span> API</div>
-        <div class="badge"><span class="dot" id="gtfsDot"></span> GTFS</div>
-        <div class="badge"><span class="dot" id="liveDot"></span> Live</div>
+      <div class="chips">
+        <span class="chip"><span id="apiDot" class="dot bad"></span> API</span>
+        <span class="chip"><span id="gtfsDot" class="dot bad"></span> GTFS</span>
+        <span class="chip"><span id="liveDot" class="dot bad"></span> Live</span>
       </div>
 
-      <div class="hint" id="hint">Írj be legalább 2 karaktert, majd nyomd meg a Keresés gombot vagy Entert.</div>
-
-      <div id="choose" class="selectList" style="display:none;"></div>
-
-      <div id="result" class="results" style="display:none;">
-        <h3 id="stopTitle" class="hint" style="margin:10px 0 0 2px;"></h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Járat</th>
-              <th>Cél</th>
-              <th>Indulás</th>
-              <th>Élő</th>
-            </tr>
-          </thead>
-          <tbody id="tbody"></tbody>
-        </table>
-      </div>
+      <div id="hint" style="margin-top:10px;color:var(--muted)">Írj be egy megállónevet, majd kattints egy találatra.</div>
     </div>
 
-    <div class="footer">UI & API: te – ❤️</div>
+    <div id="result" class="card" style="display:none;margin-top:16px"></div>
   </div>
 
-  <script>
-    const $ = s => document.querySelector(s);
-    const api = p => fetch(p).then(r => r.json());
+<script>
+const api = (p)=>fetch(p).then(r=>r.json());
 
-    // státusz pöttyök
-    async function refreshStatus(){
-      try{
-        const s = await api('/api/status');
-        $('#apiDot').classList.add('ok');
-        (s.gtfs ? $('#gtfsDot').classList.add('ok') : $('#gtfsDot').classList.add('no'));
-        (s.live ? $('#liveDot').classList.add('ok')  : $('#liveDot').classList.add('no'));
-      }catch(e){
-        $('#apiDot').classList.add('no');
-        $('#gtfsDot').classList.add('no');
-        $('#liveDot').classList.add('no');
-      }
-    }
+async function refreshStatus(){
+  try{
+    const s = await api('/api/status');
+    setDot('apiDot', true);
+    setDot('gtfsDot', !!s.gtfs);
+    setDot('liveDot', !!s.live);
+  }catch{ setDot('apiDot', false); setDot('gtfsDot', false); setDot('liveDot', false); }
+}
+function setDot(id, ok){ const el=document.getElementById(id); el.classList.remove('ok','bad'); el.classList.add(ok?'ok':'bad'); }
 
-    function showChoices(stops){
-      const box = $('#choose');
-      box.innerHTML = '';
-      if (!stops || !stops.length){
-        box.style.display = 'none';
-        alert('Nincs találat erre a névre.');
-        return;
-      }
-      for (const s of stops){
-        const div = document.createElement('div');
-        div.className = 'selectItem';
-        div.textContent = `${s.stop_name} • (${s.stop_id})`;
-        div.onclick = () => loadDepartures(s);
-        box.appendChild(div);
-      }
-      box.style.display = 'block';
-      $('#result').style.display = 'none';
-    }
+async function doSearch(){
+  const q = document.getElementById('q').value.trim();
+  const win = +document.getElementById('win').value || 60;
+  if(q.length < 2){ alert('Írj be legalább 2 karaktert.'); return; }
 
-    async function search(){
-      const q = $('#q').value.trim();
-      if (q.length < 2){
-        alert('Írj be legalább 2 karaktert.');
-        return;
-      }
-      $('#hint').textContent = 'Keresés…';
-      $('#choose').style.display = 'none';
-      $('#result').style.display = 'none';
-      const stops = await api(`/api/stops/search?q=${encodeURIComponent(q)}`);
-      if (stops.length === 1){
-        await loadDepartures(stops[0]);
-      }else{
-        showChoices(stops);
-      }
-      $('#hint').textContent = 'Válassz megállót a listából, vagy pontosíts a néven.';
-    }
+  const listBox = document.getElementById('multi');
+  listBox.innerHTML=''; listBox.style.display='none';
+  document.getElementById('result').style.display='none';
 
-    async function loadDepartures(stop){
-      $('#choose').style.display = 'none';
-      $('#result').style.display = 'block';
-      $('#stopTitle').textContent = `Megálló: ${stop.stop_name} • (${stop.stop_id})`;
-      const data = await api(`/api/stops/${encodeURIComponent(stop.stop_id)}/next_departures?minutes=60`);
-      const tbody = $('#tbody');
-      tbody.innerHTML = '';
-      if (!data.results || !data.results.length){
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td colspan="4" class="hint">Nincs indulás a következő 60 percben.</td>`;
-        tbody.appendChild(tr);
-        return;
-      }
-      for (const r of data.results){
-        const tr = document.createElement('tr');
-        const liveDot = r.is_live ? '<span class="dot ok"></span>' : '–';
-        // time_iso -> HH:MM
-        const hhmm = (r.time_iso || '').slice(11, 16);
-        tr.innerHTML = `
-          <td>${r.route || ''}</td>
-          <td>${r.destination || ''}</td>
-          <td>${hhmm || ''}</td>
-          <td>${liveDot}</td>`;
-        tbody.appendChild(tr);
-      }
-    }
+  let arr = [];
+  try { arr = await api('/api/stops/search?q='+encodeURIComponent(q)); }
+  catch { alert('Hiba a keresés közben.'); return; }
 
-    // események
-    $('#go').onclick = search;
-    $('#q').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+  if(!arr || arr.length === 0){
+    listBox.style.display='block';
+    listBox.innerHTML = '<div class="item" style="cursor:default;opacity:.8">Nincs találat erre a névre.</div>';
+    return;
+  }
+  if(arr.length === 1){
+    fetchStop(arr[0].stop_id, arr[0].stop_name, win);
+    return;
+  }
 
-    // induláskor státusz frissítés
-    refreshStatus();
-  </script>
+  listBox.style.display='block';
+  listBox.innerHTML = '<div class="item" style="cursor:default;opacity:.8">Több megálló is van erre a névre. Válassz egyet:</div>' +
+    arr.map(s=>`<div class="item" data-id="${s.stop_id}" data-name="${s.stop_name}">${s.stop_name} <span class="pill" style="float:right">${s.stop_id}</span></div>`).join('');
+  listBox.querySelectorAll('.item[data-id]').forEach(el=>{
+    el.addEventListener('click', ()=> fetchStop(el.dataset.id, el.dataset.name, win));
+  });
+}
+
+async function fetchStop(id, name, win){
+  const resBox = document.getElementById('result');
+  resBox.style.display='block';
+  resBox.innerHTML = `<h3>Megálló: ${name} <span class="pill" style="margin-left:8px">${id}</span></h3><div style="opacity:.8">Betöltés…</div>`;
+
+  let data=null;
+  try{ data = await api(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${win}`); }
+  catch{ resBox.innerHTML='<div>Hiba történt az adatok letöltésekor.</div>'; return; }
+
+  const deps = (data && data.departures) ? data.departures : [];
+  if(deps.length===0){
+    resBox.innerHTML = `<h3>Megálló: ${name} <span class="pill" style="margin-left:8px">${id}</span></h3>
+                        <div style="opacity:.8">Nincs indulás ebben az időablakban.</div>`;
+    return;
+  }
+  const rows = deps.map(d=>`<tr>
+    <td style="width:80px;font-weight:700">${d.route||''}</td>
+    <td>${(d.destination||'').replaceAll('<','&lt;')}</td>
+    <td style="width:90px">${d.time}</td>
+    <td style="width:70px;text-align:center">${d.live===true?'<span class="dot ok"></span>': d.live===false?'<span class="dot bad"></span>':'–'}</td>
+  </tr>`).join('');
+
+  resBox.innerHTML = `<h3>Megálló: ${name} <span class="pill" style="margin-left:8px">${id}</span></h3>
+  <table>
+    <thead><tr><th>Járat</th><th>Cél</th><th>Indulás</th><th>Élő</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+document.getElementById('go').addEventListener('click', doSearch);
+document.getElementById('q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') doSearch(); });
+
+refreshStatus();
+</script>
 </body>
 </html>
