@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bluestar Bus – Megálló keresés</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Bluestar Bus – Megálló keresés</h1>
+
+    <section class="card">
+      <label for="q">Megálló neve</label>
+      <input id="q" type="text" placeholder="pl. Vincents Walk, Hanover, ..." />
+      <div class="hint">Írj be pár betűt, nyomj Entert, majd kattints a listából.</div>
+
+      <div class="row">
+        <label for="mins">Időablak (perc)</label>
+        <input id="mins" type="number" value="60" min="5" max="240"/>
+        <button id="btnSearch">Keresés</button>
+      </div>
+
+      <ul id="results"></ul>
+      <div id="noResults" class="note hidden">Nincs találat erre a névre.</div>
+      <div id="needGtfs" class="note hidden">A név szerinti kereséshez töltsd be a GTFS-t az <code>/api/admin/load_gtfs</code> végponton.</div>
+    </section>
+
+    <section class="card">
+      <h2 id="selTitle">Nincs kiválasztott megálló</h2>
+      <table>
+        <thead><tr><th>Route</th><th>Destination</th><th>Time</th><th>Forrás</th></tr></thead>
+        <tbody id="deps"><tr><td colspan="4" class="muted">Nincs indulás ebben az időablakban.</td></tr></tbody>
+      </table>
+    </section>
+  </div>
+
+<script>
+const $ = (sel)=>document.querySelector(sel);
+const $$ = (sel)=>document.querySelectorAll(sel);
+
+async function getStatus() {
+  const r = await fetch('/api/status');
+  return await r.json();
+}
+
+function isoToLocal(iso){
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+
+function setDeps(list){
+  const tb = $('#deps');
+  tb.innerHTML = '';
+  if(!list || !list.length){
+    tb.innerHTML = '<tr><td colspan="4" class="muted">Nincs indulás ebben az időablakban.</td></tr>';
+    return;
+  }
+  for(const it of list){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${it.route||''}</td><td>${it.destination||''}</td><td>${isoToLocal(it.time_iso)}</td><td>${it.is_live ? 'élő' : 'menetrend'}</td>`;
+    tb.appendChild(tr);
+  }
+}
+
+async function fetchDeps(stop_id, stop_name){
+  const mins = parseInt($('#mins').value||'60', 10);
+  $('#selTitle').textContent = `${stop_name} – következő indulások (${mins}p)`;
+  setDeps([]);
+  try{
+    const r = await fetch(`/api/stops/${encodeURIComponent(stop_id)}/next_departures?minutes=${mins}`);
+    if(!r.ok){ throw new Error(await r.text()); }
+    const data = await r.json();
+    setDeps(data.results||[]);
+  }catch(e){
+    setDeps([]);
+    alert('Hiba az indulásoknál.');
+  }
+}
+
+async function doSearch(){
+  const q = ($('#q').value||'').trim();
+  if(!q){ return; }
+  $('#results').innerHTML = '';
+  $('#noResults').classList.add('hidden');
+  $('#needGtfs').classList.add('hidden');
+
+  const st = await getStatus();
+  if(!st.gtfs_loaded){
+    $('#needGtfs').classList.remove('hidden');
+    return;
+  }
+  try{
+    const r = await fetch(`/api/stops/search?q=${encodeURIComponent(q)}`);
+    if(!r.ok){ throw new Error(await r.text()); }
+    const data = await r.json();
+    if(!data.results || !data.results.length){
+      $('#noResults').classList.remove('hidden');
+      return;
+    }
+    const ul = $('#results');
+    for(const s of data.results){
+      const li = document.createElement('li');
+      const label = `${s.name}${s.code ? ' ['+s.code+']' : ''}`;
+      li.textContent = label;
+      li.addEventListener('click', ()=>fetchDeps(s.stop_id, label));
+      ul.appendChild(li);
+    }
+  }catch(e){
+    $('#noResults').classList.remove('hidden');
+  }
+}
+
+$('#btnSearch').addEventListener('click', doSearch);
+$('#q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') doSearch(); });
+</script>
+</body>
+</html>
