@@ -1,87 +1,93 @@
 import os
-import asyncio
-from typing import List, Dict
-import aiohttp
-import xmltodict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import httpx
+import xml.etree.ElementTree as ET
 
-BODS_API_KEY = os.getenv("BODS_API_KEY", "")
-BODS_FEED_ID = os.getenv("BODS_FEED_ID", "")
-# BODS SIRI-VM StopMonitoring végpont – a BODS a SIRI v1 datafeed útvonalat használja
-# A legtöbb üzemeltetőnél a paraméter neve "MonitoringRef". Ha nálatok "StopMonitoringRef",
-# elég az alábbit átírni stop_param = "StopMonitoringRef"-re.
-STOP_PARAM_NAME = os.getenv("BODS_STOP_PARAM_NAME", "MonitoringRef")
+BODS_API = "https://data.bus-data.dft.gov.uk/api/v1/datafeed/{feed_id}/?api_key={api_key}"
 
-BASE_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/{BODS_FEED_ID}/"
+def _text(node, tag):
+    n = node.find(tag)
+    return n.text.strip() if n is not None and n.text else None
 
-def _iso_now() -> datetime:
-    return datetime.now(timezone.utc)
+def _parse_time(s: str) -> str:
+    # normalizáljuk ISO-ra (mindig UTC-re hagyjuk)
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return dt.astimezone(timezone.utc).isoformat()
+    except Exception:
+        return s
 
-async def get_live_departures(stop_id: str, minutes: int = 60, limit: int = 30) -> List[Dict]:
-    """
-    SIRI-VM StopMonitoring: élő indulások lekérése egy megállóra.
-    Visszatér: list[ {route, destination, time_iso, is_live=True} ]
-    """
-    if not BODS_API_KEY or not BODS_FEED_ID:
+async def get_next_departures(stop_id: str, minutes: int):
+    """SIRI-VM feedből (BODS) élő indulások adott megállóra."""
+    feed_id = os.environ.get("BODS_SIRI_FEED_ID")
+    api_key = os.environ.get("BODS_API_KEY")
+    if not feed_id or not api_key:
         return []
 
-    params = {
-        "api_key": BODS_API_KEY,
-        STOP_PARAM_NAME: stop_id,
-        "MaximumStopVisits": str(limit),
-        "PreviewInterval": f"PT{minutes}M",
+    url = BODS_API.format(feed_id=feed_id, api_key=api_key)
+    async with httpx.AsyncClient(timeout=40) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        xml = r.text
+
+    root = ET.fromstring(xml)
+    ns = {
+        "s": "http://www.siri.org.uk/siri"
     }
 
-    # A BODS szerver XML-lel válaszol
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as sess:
-        async with sess.get(BASE_URL, params=params) as resp:
-            if resp.status != 200:
-                # ha 400/404: nincs StopMonitoring ezen a feeden → üres lista (fallback a GTFS-re)
-                return []
-            text = await resp.text()
+    now_utc = datetime.now(timezone.utc)
+    limit = now_utc + timedelta(minutes=minutes)
 
-    try:
-        siri = xmltodict.parse(text)
-    except Exception:
-        return []
+    out = []
 
-    # Navigálunk a SIRI StopMonitoring ágig
-    # Vannak feedek, ahol VehicleMonitoringDelivery jön – azt itt nem dolgozzuk fel.
-    service = siri.get("Siri", {}).get("ServiceDelivery", {})
-    smd = service.get("StopMonitoringDelivery")
-    if not smd:
-        # egyes feedek listát adnak:
-        deliveries = service.get("StopMonitoringDelivery", [])
-        if isinstance(deliveries, list) and deliveries:
-            smd = deliveries[0]
-    if not smd:
-        return []
+    # VehicleMonitoringDelivery / VehicleActivity
+    for vmd in root.findall(".//s:VehicleMonitoringDelivery", ns):
+        for va in vmd.findall("s:VehicleActivity", ns):
+            mvj = va.find("s:MonitoredVehicleJourney", ns)
+            if mvj is None:
+                continue
 
-    visits = smd.get("MonitoredStopVisit", [])
-    if isinstance(visits, dict):
-        visits = [visits]
+            # 1) Közvetlen MonitoredCall
+            mc = mvj.find("s:MonitoredCall", ns)
+            if mc is not None:
+                sp = _text(mc, "s:StopPointRef")
+                if sp and sp.upper() == stop_id.upper():
+                    line = _text(mvj, "s:PublishedLineName") or _text(mvj, "s:LineRef") or "?"
+                    dest = _text(mvj, "s:DestinationName") or "?"
+                    when = _text(mc, "s:ExpectedDepartureTime") or _text(mc, "s:AimedDepartureTime")
+                    if when:
+                        iso = _parse_time(when)
+                        try:
+                            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+                        except Exception:
+                            dt = None
+                        if dt and now_utc <= dt <= limit:
+                            out.append({"route": line, "destination": dest, "time_iso": iso})
+                    continue
 
-    out: List[Dict] = []
-    for v in visits:
-        mvj = v.get("MonitoredVehicleJourney", {})
-        line = mvj.get("LineRef") or ""
-        dest = (mvj.get("DestinationName") or mvj.get("DestinationRef") or "").strip()
+            # 2) OnwardCalls bejárása
+            oc_container = mvj.find("s:OnwardCalls", ns)
+            if oc_container is not None:
+                for oc in oc_container.findall("s:OnwardCall", ns):
+                    sp = _text(oc, "s:StopPointRef")
+                    if sp and sp.upper() == stop_id.upper():
+                        line = _text(mvj, "s:PublishedLineName") or _text(mvj, "s:LineRef") or "?"
+                        dest = _text(mvj, "s:DestinationName") or "?"
+                        when = _text(oc, "s:ExpectedDepartureTime") or _text(oc, "s:AimedDepartureTime")
+                        if when:
+                            iso = _parse_time(when)
+                            try:
+                                dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+                            except Exception:
+                                dt = None
+                            if dt and now_utc <= dt <= limit:
+                                out.append({"route": line, "destination": dest, "time_iso": iso})
 
-        # Időpontok: ExpectedDepartureTime > AimedDepartureTime
-        expected = mvj.get("MonitoredCall", {}).get("ExpectedDepartureTime")
-        aimed = mvj.get("MonitoredCall", {}).get("AimedDepartureTime") or mvj.get("OriginAimedDepartureTime")
-
-        time_iso = expected or aimed
-        if not time_iso:
-            continue
-
-        out.append({
-            "route": str(line),
-            "destination": str(dest),
-            "time_iso": str(time_iso),
-            "is_live": True
-        })
-
-    # idő szerint rendezzük
+    # idő szerint rendezés
     out.sort(key=lambda x: x["time_iso"])
-    return out[:limit]
+    # route/destination üres értékek tisztítása
+    for d in out:
+        d["route"] = (d["route"] or "").strip()
+        d["destination"] = (d["destination"] or "").strip()
+
+    return out
