@@ -1,86 +1,162 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="hu">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bluestar Bus – megálló & járat kereső</title>
-    <style>
-        body { background: #111; color: #fff; font-family: Arial, sans-serif; text-align: center; }
-        .card { background: #222; padding: 20px; margin: 20px auto; border-radius: 12px; max-width: 500px; }
-        input { width: 80%; padding: 10px; border-radius: 8px; border: none; }
-        button { padding: 10px 20px; border-radius: 8px; background: green; color: white; border: none; cursor: pointer; margin-top: 10px; }
-        .status { margin-top: 10px; }
-        .dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-        .green { background-color: #00ff00; }
-        .red { background-color: #ff0000; }
-        .stop { padding: 8px; margin: 6px; background: #333; border-radius: 6px; cursor: pointer; }
-        .departures { margin-top: 15px; }
-    </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bluestar Bus – megálló & járat kereső</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #111827;
+      --muted: #9ca3af;
+      --ok: #22c55e;
+      --bad: #ef4444;
+      --acc: #10b981;
+      --txt: #e5e7eb;
+    }
+    html,body{background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu; margin:0}
+    .wrap{max-width:900px;margin:40px auto;padding:0 16px}
+    .title{font-size:clamp(24px,4vw,40px);font-weight:800;display:flex;gap:.6rem;align-items:center}
+    .bus{font-size:32px}
+    .card{background:linear-gradient(180deg,#0b1222,#0a0f1a);border:1px solid #1f2937;border-radius:16px;padding:18px 18px 8px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    input[type=text]{flex:1;min-width:220px;background:#0b1222;color:var(--txt);
+      border:1px solid #1f2937;border-radius:10px;padding:12px 14px;font-size:16px;outline: none}
+    button{background:var(--acc);color:#06281e;border:0;border-radius:12px;padding:12px 18px;
+      font-weight:700;cursor:pointer;box-shadow:0 0 0 0 rgba(16,185,129,.6);transition:.2s}
+    button:hover{transform:translateY(-1px)}
+    .dot{width:10px;height:10px;border-radius:999px;display:inline-block;margin-right:.5rem;vertical-align:middle}
+    .ok{background:var(--ok)} .bad{background:var(--bad)}
+    .hint{color:var(--muted);margin:10px 2px 0}
+    .list{margin-top:14px;border-top:1px solid #1f2937}
+    .pill{display:inline-block;background:#0b1222;border:1px solid #1f2937;border-radius:999px;
+      padding:6px 10px;margin:8px 8px 0 0;cursor:pointer}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{padding:12px 8px;border-bottom:1px solid #1f2937;text-align:left}
+    th{color:#cbd5e1;font-weight:700}
+    .liveDot{display:inline-block;width:8px;height:8px;border-radius:999px;background:#22c55e}
+    .muted{color:#9ca3af}
+    .footer{opacity:.8;text-align:center;margin:28px 0}
+  </style>
 </head>
 <body>
-    <h1>🚌 Bluestar Bus – megálló & járat kereső</h1>
+  <div class="wrap">
+    <div class="title"><span class="bus">🚌</span> Bluestar Bus – megálló & járat kereső</div>
+
     <div class="card">
-        <input type="text" id="query" placeholder="Írd be a megálló nevét...">
-        <button onclick="searchStops()">Keresés</button>
-        <div class="status">
-            <span class="dot" id="api"></span> API
-            <span class="dot" id="gtfs"></span> GTFS
-            <span class="dot" id="live"></span> Live
-        </div>
-        <div id="results"></div>
-        <div class="departures" id="departures"></div>
+      <div class="row">
+        <input id="q" type="text" placeholder="Írj be megállónevet (pl. Hanover, Shirley…)" />
+        <button id="go">Keresés</button>
+      </div>
+
+      <div class="row" style="gap:18px;margin-top:10px">
+        <div><span id="apiDot" class="dot bad"></span>API</div>
+        <div><span id="gtfsDot" class="dot bad"></span>GTFS</div>
+        <div><span id="liveDot" class="dot bad"></span>Live</div>
+      </div>
+
+      <div id="multiWrap" class="list" style="display:none">
+        <div class="hint">Több megálló illeszkedik. Válassz egyet:</div>
+        <div id="multi"></div>
+      </div>
+
+      <div id="resWrap" class="list" style="display:none">
+        <div id="stopTitle" class="hint"></div>
+        <table>
+          <thead>
+            <tr><th>Járat</th><th>Cél</th><th>Indulás</th><th>Élő</th></tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
     </div>
 
-    <script>
-        async function checkStatus() {
-            let res = await fetch('/api/status');
-            let data = await res.json();
-            document.getElementById("api").className = "dot " + (data.status === "ok" ? "green" : "red");
-            document.getElementById("gtfs").className = "dot " + (data.gtfs ? "green" : "red");
-            document.getElementById("live").className = "dot " + (data.live ? "green" : "red");
-        }
+    <div class="footer">UI & API: te – ❤️</div>
+  </div>
 
-        async function searchStops() {
-            let q = document.getElementById("query").value;
-            let res = await fetch(`/api/stops/search?q=${q}`);
-            let data = await res.json();
-            let resultsDiv = document.getElementById("results");
-            resultsDiv.innerHTML = "";
+  <script>
+    const $ = sel => document.querySelector(sel);
+    const api = (p, opt={}) => fetch(p, opt).then(r => r.json());
 
-            if (data.length === 0) {
-                resultsDiv.innerHTML = "<p>Nincs találat.</p>";
-                return;
-            }
+    // státusz
+    async function refreshStatus(){
+      try{
+        const s = await api('/api/status');
+        $('#apiDot').className = 'dot ok';
+        $('#gtfsDot').className = 'dot ' + (s.gtfs ? 'ok' : 'bad');
+        $('#liveDot').className = 'dot ' + (s.live ? 'ok' : 'bad');
+      }catch(_){
+        $('#apiDot').className = 'dot bad';
+        $('#gtfsDot').className = 'dot bad';
+        $('#liveDot').className = 'dot bad';
+      }
+    }
+    refreshStatus();
 
-            if (data.length > 1) {
-                resultsDiv.innerHTML = "<p>Több megálló is van erre a névre. Válassz egyet:</p>";
-                data.forEach(stop => {
-                    let div = document.createElement("div");
-                    div.className = "stop";
-                    div.textContent = stop.stop_name;
-                    div.onclick = () => getDepartures(stop.stop_id, stop.stop_name);
-                    resultsDiv.appendChild(div);
-                });
-            } else {
-                getDepartures(data[0].stop_id, data[0].stop_name);
-            }
-        }
+    // keresés
+    async function search(){
+      const q = $('#q').value.trim();
+      if(q.length < 2){
+        alert('Írj be legalább 2 karaktert.');
+        return;
+      }
+      const stops = await api('/api/stops/search?q='+encodeURIComponent(q));
+      $('#rows').innerHTML = '';
+      $('#resWrap').style.display = 'none';
+      const mw = $('#multi'), mwrap = $('#multiWrap');
+      mw.innerHTML = '';
+      mwrap.style.display = 'none';
 
-        async function getDepartures(stop_id, stop_name) {
-            let res = await fetch(`/api/departures/${stop_id}`);
-            let data = await res.json();
-            let depDiv = document.getElementById("departures");
-            depDiv.innerHTML = `<h3>${stop_name} – indulások</h3>`;
-            if (data.departures.length === 0) {
-                depDiv.innerHTML += "<p>Nincs élő adat.</p>";
-            } else {
-                data.departures.forEach(dep => {
-                    depDiv.innerHTML += `<p>${dep.line} → ${dep.destination} (${dep.time})</p>`;
-                });
-            }
-        }
+      if(!stops.length){
+        alert('Nincs találat erre a névre.');
+        return;
+      }
+      if(stops.length === 1){
+        loadStop(stops[0].stop_id, stops[0].stop_name);
+        return;
+      }
+      // több találat: lista
+      mwrap.style.display = 'block';
+      stops.slice(0, 30).forEach(s => {
+        const b = document.createElement('span');
+        b.className = 'pill';
+        b.textContent = `${s.stop_name} • (${s.stop_id})`;
+        b.onclick = () => loadStop(s.stop_id, s.stop_name);
+        mw.appendChild(b);
+      });
+    }
 
-        checkStatus();
-    </script>
+    async function loadStop(stopId, stopName){
+      $('#multiWrap').style.display = 'none';
+      $('#rows').innerHTML = '';
+      $('#resWrap').style.display = 'block';
+      $('#stopTitle').textContent = `Megálló: ${stopName} • (${stopId})`;
+
+      const data = await api(`/api/stops/${encodeURIComponent(stopId)}/next_departures?minutes=60`);
+      const tbody = $('#rows');
+      if(!data.results || !data.results.length){
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td class="muted" colspan="4">Nincs közelgő indulás.</td>`;
+        tbody.appendChild(tr);
+        return;
+      }
+      data.results.forEach(r => {
+        const t = new Date(r.time_iso);
+        const hh = String(t.getHours()).padStart(2,'0');
+        const mm = String(t.getMinutes()).padStart(2,'0');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${r.route || '-'}</td>
+          <td>${r.destination || '-'}</td>
+          <td>${hh}:${mm}</td>
+          <td>${r.is_live ? '<span class="liveDot"></span>' : '–'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    $('#go').onclick = search;
+    $('#q').addEventListener('keydown', e => { if(e.key === 'Enter') search(); });
+  </script>
 </body>
 </html>
