@@ -1,242 +1,86 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="hu">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Bluestar Bus – megálló & járat kereső</title>
-  <style>
-    :root{
-      --bg:#0f172a;       /* háttér */
-      --card:#111827;     /* kártya */
-      --text:#e5e7eb;     /* szöveg */
-      --muted:#94a3b8;    /* halvány */
-      --accent:#22c55e;   /* gomb zöld */
-      --accent-2:#2563eb; /* kék */
-      --danger:#ef4444;   /* piros */
-      --dot-green:#22c55e;
-      --dot-red:#ef4444;
-      --row:#0b1222;      /* sötétebb sor */
-    }
-    *{box-sizing:border-box}
-    body{
-      margin:0; background:var(--bg); color:var(--text);
-      font-family: system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji";
-      line-height:1.35;
-    }
-    .wrap{max-width:980px;margin:0 auto;padding:24px 16px 64px}
-    h1{font-size:clamp(22px,4.5vw,36px);margin:0 0 18px;display:flex;gap:12px;align-items:center}
-    h1 .bus{font-size:1.2em}
-    .panel{
-      background:var(--card);
-      border-radius:16px;
-      padding:16px;
-      box-shadow:0 8px 30px rgba(0,0,0,.35);
-      margin-bottom:18px;
-    }
-    .search-row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-    input[type="text"]{
-      flex:1 1 260px;
-      background:#0b1020;border:1px solid #1f2937;color:var(--text);
-      border-radius:12px;padding:14px 16px;font-size:16px;outline:none;
-    }
-    button.primary{
-      background:var(--accent); color:#03210e; border:0; border-radius:12px;
-      padding:14px 18px; font-weight:700; font-size:16px; cursor:pointer;
-      box-shadow:0 6px 16px rgba(34,197,94,.35);
-    }
-    button.primary:active{transform:translateY(1px)}
-    .badges{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
-    .badge{
-      background:#0b1020; border:1px solid #1f2937; color:var(--text);
-      border-radius:999px; padding:8px 12px; font-size:14px; display:inline-flex;align-items:center;gap:8px
-    }
-    .dot{width:10px;height:10px;border-radius:50%}
-    .dot.green{background:var(--dot-green)}
-    .dot.red{background:var(--dot-red)}
-    .muted{color:var(--muted)}
-    /* választó lista több megállóhoz */
-    .choices{margin-top:10px;display:grid;gap:8px}
-    .choice{
-      background:#0b1020;border:1px solid #1f2937;border-radius:12px;padding:12px;
-      display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:pointer;
-    }
-    .choice:hover{border-color:#394150}
-    .choice small{color:var(--muted)}
-    /* Eredménytábla */
-    .table{width:100%;border-collapse:collapse;overflow:hidden;border-radius:12px;margin-top:8px}
-    .table th,.table td{padding:12px 14px;text-align:left}
-    .table thead{background:#0b1020}
-    .table tbody tr:nth-child(odd){background:var(--row)}
-    .table tbody tr:nth-child(even){background:#0c1426}
-    .center{text-align:center}
-    .footer{color:var(--muted);text-align:center;margin-top:28px}
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bluestar Bus – megálló & járat kereső</title>
+    <style>
+        body { background: #111; color: #fff; font-family: Arial, sans-serif; text-align: center; }
+        .card { background: #222; padding: 20px; margin: 20px auto; border-radius: 12px; max-width: 500px; }
+        input { width: 80%; padding: 10px; border-radius: 8px; border: none; }
+        button { padding: 10px 20px; border-radius: 8px; background: green; color: white; border: none; cursor: pointer; margin-top: 10px; }
+        .status { margin-top: 10px; }
+        .dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+        .green { background-color: #00ff00; }
+        .red { background-color: #ff0000; }
+        .stop { padding: 8px; margin: 6px; background: #333; border-radius: 6px; cursor: pointer; }
+        .departures { margin-top: 15px; }
+    </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1><span class="bus">🚌</span> Bluestar Bus – megálló & járat kereső</h1>
-
-    <div class="panel" id="searchPanel">
-      <div class="search-row">
-        <input id="q" type="text" placeholder="Írj be egy megállónevet… (pl. Hanover, Vincent, Shirley)" />
-        <button class="primary" id="btnSearch">Keresés</button>
-      </div>
-
-      <div class="badges" id="badges">
-        <div class="badge"><span class="dot" id="apiDot"></span><span id="apiTxt">API: …</span></div>
-        <div class="badge"><span class="dot" id="gtfsDot"></span><span id="gtfsTxt">GTFS: …</span></div>
-        <div class="badge"><span class="dot" id="liveDot"></span><span id="liveTxt">Live: …</span></div>
-      </div>
-
-      <!-- több megálló választó -->
-      <div id="choices" class="choices" style="display:none"></div>
-      <div id="choiceHint" class="muted" style="display:none;margin-top:8px">
-        Több megálló van erre a névre. Válassz egyet:
-      </div>
-      <div id="msg" class="muted" style="margin-top:8px"></div>
+    <h1>🚌 Bluestar Bus – megálló & járat kereső</h1>
+    <div class="card">
+        <input type="text" id="query" placeholder="Írd be a megálló nevét...">
+        <button onclick="searchStops()">Keresés</button>
+        <div class="status">
+            <span class="dot" id="api"></span> API
+            <span class="dot" id="gtfs"></span> GTFS
+            <span class="dot" id="live"></span> Live
+        </div>
+        <div id="results"></div>
+        <div class="departures" id="departures"></div>
     </div>
 
-    <!-- eredmény panel -->
-    <div class="panel" id="resultPanel" style="display:none">
-      <div id="resultTitle" style="font-weight:700;margin-bottom:8px"></div>
-      <table class="table" id="tbl">
-        <thead>
-          <tr>
-            <th>Járat</th>
-            <th>Cél</th>
-            <th>Indulás</th>
-            <th class="center">Élő</th>
-          </tr>
-        </thead>
-        <tbody id="tbody"></tbody>
-      </table>
-    </div>
-
-    <div class="footer">UI &amp; API: te – ❤️</div>
-  </div>
-
-  <script>
-    const $ = (id)=>document.getElementById(id);
-
-    // --- Státusz betöltés ---
-    async function loadStatus(){
-      try{
-        const r = await fetch('/api/status');
-        const s = await r.json();
-        // API
-        setBadge('api', true, 'API: ok');
-        // GTFS
-        setBadge('gtfs', !!s.gtfs_loaded, `GTFS: ${s.gtfs_loaded ? 'betöltve' : 'nincs'}`);
-        // Live
-        setBadge('live', !!s.siri_configured, `Live: ${s.siri_configured ? 'elérhető' : 'nincs'}`);
-      }catch{
-        setBadge('api', false, 'API: hiba');
-        setBadge('gtfs', false, 'GTFS: nincs');
-        setBadge('live', false, 'Live: nincs');
-      }
-    }
-    function setBadge(kind, ok, text){
-      $(kind+'Dot').className = 'dot ' + (ok ? 'green' : 'red');
-      $(kind+'Txt').textContent = text;
-    }
-
-    // --- Keresés ---
-    $('btnSearch').addEventListener('click', onSearch);
-    $('q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') onSearch(); });
-
-    async function onSearch(){
-      clearUI();
-      const q = $('q').value.trim();
-      if(q.length < 2){ alert('Írj be legalább 2 karaktert.'); return; }
-
-      // keresés
-      const url = '/api/stops/search?q=' + encodeURIComponent(q);
-      try{
-        const r = await fetch(url);
-        const arr = await r.json(); // [{stop_id, stop_name}]
-        if(!Array.isArray(arr) || arr.length===0){
-          $('msg').textContent = 'Nincs találat erre a névre.';
-          return;
+    <script>
+        async function checkStatus() {
+            let res = await fetch('/api/status');
+            let data = await res.json();
+            document.getElementById("api").className = "dot " + (data.status === "ok" ? "green" : "red");
+            document.getElementById("gtfs").className = "dot " + (data.gtfs ? "green" : "red");
+            document.getElementById("live").className = "dot " + (data.live ? "green" : "red");
         }
-        if(arr.length === 1){
-          const s = arr[0];
-          loadDepartures(s.stop_id, s.stop_name);
-          return;
+
+        async function searchStops() {
+            let q = document.getElementById("query").value;
+            let res = await fetch(`/api/stops/search?q=${q}`);
+            let data = await res.json();
+            let resultsDiv = document.getElementById("results");
+            resultsDiv.innerHTML = "";
+
+            if (data.length === 0) {
+                resultsDiv.innerHTML = "<p>Nincs találat.</p>";
+                return;
+            }
+
+            if (data.length > 1) {
+                resultsDiv.innerHTML = "<p>Több megálló is van erre a névre. Válassz egyet:</p>";
+                data.forEach(stop => {
+                    let div = document.createElement("div");
+                    div.className = "stop";
+                    div.textContent = stop.stop_name;
+                    div.onclick = () => getDepartures(stop.stop_id, stop.stop_name);
+                    resultsDiv.appendChild(div);
+                });
+            } else {
+                getDepartures(data[0].stop_id, data[0].stop_name);
+            }
         }
-        // több találat
-        $('choiceHint').style.display = '';
-        const box = $('choices');
-        box.style.display = '';
-        arr.forEach((s)=>{
-          const div = document.createElement('button');
-          div.className = 'choice';
-          div.innerHTML = `<span>${escapeHtml(s.stop_name)}</span><small>${s.stop_id}</small>`;
-          div.onclick = ()=>{ loadDepartures(s.stop_id, s.stop_name); window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}); };
-          box.appendChild(div);
-        });
-      }catch(err){
-        $('msg').textContent = 'Hiba történt a keresés közben.';
-        console.error(err);
-      }
-    }
 
-    // --- Indulások betöltése ---
-    async function loadDepartures(stopId, stopName){
-      $('resultPanel').style.display = 'none';
-      $('tbody').innerHTML = '';
-      $('resultTitle').textContent = `Megálló: ${stopName} • (${stopId})`;
-
-      try{
-        const r = await fetch(`/api/stops/${encodeURIComponent(stopId)}/next_departures`);
-        if(!r.ok){ $('msg').textContent = 'Nem sikerült lekérni az indulásokat.'; return; }
-        const data = await r.json(); // {stop_id, minutes, results:[{route,destination,time_iso,is_live}]}
-        const rows = data.results || [];
-        const body = $('tbody');
-        if(rows.length===0){
-          body.innerHTML = `<tr><td colspan="4" class="center muted">Nincs közelgő indulás.</td></tr>`;
-        }else{
-          for(const it of rows){
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td>${escapeHtml(it.route ?? '')}</td>
-              <td>${escapeHtml(it.destination ?? '')}</td>
-              <td>${fmtTime(it.time_iso)}</td>
-              <td class="center">${liveCell(it.is_live)}</td>
-            `;
-            body.appendChild(tr);
-          }
+        async function getDepartures(stop_id, stop_name) {
+            let res = await fetch(`/api/departures/${stop_id}`);
+            let data = await res.json();
+            let depDiv = document.getElementById("departures");
+            depDiv.innerHTML = `<h3>${stop_name} – indulások</h3>`;
+            if (data.departures.length === 0) {
+                depDiv.innerHTML += "<p>Nincs élő adat.</p>";
+            } else {
+                data.departures.forEach(dep => {
+                    depDiv.innerHTML += `<p>${dep.line} → ${dep.destination} (${dep.time})</p>`;
+                });
+            }
         }
-        $('resultPanel').style.display = '';
-      }catch(err){
-        $('msg').textContent = 'Hiba történt az indulások betöltése közben.';
-        console.error(err);
-      }
-    }
 
-    // --- segédek ---
-    function fmtTime(iso){
-      try{
-        const d = new Date(iso);
-        const hh = String(d.getHours()).padStart(2,'0');
-        const mm = String(d.getMinutes()).padStart(2,'0');
-        return `${hh}:${mm}`;
-      }catch{return iso || '';}
-    }
-    function liveCell(isLive){
-      return isLive ? `<span class="dot green" title="Élő adat"></span>` : '–';
-    }
-    function clearUI(){
-      $('msg').textContent='';
-      $('choices').style.display='none';
-      $('choices').innerHTML='';
-      $('choiceHint').style.display='none';
-    }
-    function escapeHtml(s){
-      return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-    }
-
-    // induláskor
-    loadStatus();
-  </script>
+        checkStatus();
+    </script>
 </body>
 </html>
