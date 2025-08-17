@@ -1,4 +1,23 @@
-# main.py
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from starlette.responses import FileResponse
+
+app = FastAPI(title="Bluestar Bus – API", version="1.0.1")
+
+# ---- statikus fájlok kiszolgálása ----
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+
+# /static/... útvonalon menjen minden statikus asset (css, js, képek)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# Főoldal: adja vissza a static/index.html-t
+@app.get("/", include_in_schema=False)
+async def root():
+    return FileResponse(STATIC_DIR / "index.html")
+
 import io
 import os
 import csv
