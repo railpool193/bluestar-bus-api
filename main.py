@@ -1,145 +1,333 @@
+# main.py
+import io
 import os
 import csv
-import io
 import zipfile
 import sqlite3
-from datetime import datetime, timedelta, timezone
+import tempfile
+import datetime as dt
+from typing import Optional, List
 
-from fastapi import FastAPI, Query, HTTPException, Request, Body
-from fastapi.responses import JSONResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 import httpx
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, AnyHttpUrl
 
-import siri_live
-import gtfs
+# ---- Beállítások
+DB_PATH = os.environ.get("GTFS_DB_PATH", "/data/gtfs.sqlite")
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-APP_TITLE = "Bluestar Bus – API"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.environ.get("DATA_DIR", "/data")
-os.makedirs(DATA_DIR, exist_ok=True)
-DB_PATH = os.path.join(DATA_DIR, "gtfs.sqlite")
+app = FastAPI(title="Bluestar Bus – API", version="0.1.0")
 
-app = FastAPI(title=APP_TITLE, version="0.1.0", docs_url="/", openapi_url="/openapi.json")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# templates
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
-app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static"), html=True), name="static")
+# ---- Segédfüggvények DB-hez
+def get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
+def db_init(conn: sqlite3.Connection):
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS meta(
+            k TEXT PRIMARY KEY,
+            v TEXT NOT NULL
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS stops(
+            stop_id TEXT PRIMARY KEY,
+            stop_name TEXT,
+            stop_lat REAL,
+            stop_lon REAL,
+            searchable_name TEXT
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS routes(
+            route_id TEXT PRIMARY KEY,
+            route_short_name TEXT,
+            route_long_name TEXT
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS trips(
+            trip_id TEXT PRIMARY KEY,
+            route_id TEXT,
+            trip_headsign TEXT
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS stop_times(
+            trip_id TEXT,
+            arrival_time TEXT,
+            departure_time TEXT,
+            stop_id TEXT
+        );
+    """)
+    conn.commit()
 
-# --------- helpers ---------
-def db_exists() -> bool:
-    return os.path.exists(DB_PATH)
+def time_to_seconds(t: str) -> Optional[int]:
+    # GTFS-ben 24+ órát is enged (pl. 25:10:00), ezt is támogatjuk
+    try:
+        parts = t.split(":")
+        if len(parts) != 3:
+            return None
+        h, m, s = map(int, parts)
+        return h*3600 + m*60 + s
+    except Exception:
+        return None
 
-def siri_configured() -> bool:
-    return bool(os.environ.get("BODS_SIRI_FEED_ID")) and bool(os.environ.get("BODS_API_KEY"))
+def seconds_to_hhmm(ss: int) -> str:
+    h = ss // 3600
+    m = (ss % 3600) // 60
+    return f"{h:02d}:{m:02d}"
 
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+def set_meta(conn, k, v):
+    conn.execute("REPLACE INTO meta(k,v) VALUES (?,?)", (k, v))
+    conn.commit()
 
+def get_meta(conn, k, default=None):
+    cur = conn.execute("SELECT v FROM meta WHERE k=?", (k,))
+    row = cur.fetchone()
+    return row["v"] if row else default
 
-# --------- pages ---------
-@app.get("/ui", response_class=HTMLResponse)
-async def ui(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+# ---- Modellek
+class LoadGtfsRequest(BaseModel):
+    url: AnyHttpUrl
 
+class SearchResult(BaseModel):
+    stop_id: str
+    stop_name: str
 
-# --------- api ---------
+class Departure(BaseModel):
+    route: str
+    destination: Optional[str]
+    time_iso: str
+    is_live: bool = False
+
+class NextDeparturesResponse(BaseModel):
+    stop_id: str
+    minutes: int
+    results: List[Departure]
+
+# ---- Endpontok
 @app.get("/api/status")
-async def api_status():
-    return {
-        "status": "ok",
-        "gtfs_loaded": db_exists(),
-        "siri_configured": siri_configured(),
-    }
+def status():
+    conn = get_conn()
+    db_init(conn)
+    loaded = bool(get_meta(conn, "gtfs_loaded", "0") == "1")
+    return {"status": "ok", "gtfs_loaded": loaded, "siri_configured": False}
 
+@app.get("/api/stops/search", response_model=List[SearchResult])
+def search_stops(q: str):
+    q = q.strip()
+    if not q:
+        return []
+    conn = get_conn()
+    cur = conn.execute(
+        """
+        SELECT stop_id, stop_name
+        FROM stops
+        WHERE searchable_name LIKE ?
+        ORDER BY stop_name
+        LIMIT 50
+        """,
+        (f"%{q.lower()}%",),
+    )
+    return [{"stop_id": r["stop_id"], "stop_name": r["stop_name"]} for r in cur.fetchall()]
 
-@app.get("/api/stops/search")
-async def search_stops(q: str = Query(..., min_length=1, description="Megálló részlete (pl. 'vincent')"), limit: int = 12):
-    if not db_exists():
-        # üres lista, de jelezzük, mi hiányzik
-        return {"query": q, "results": [], "hint": "GTFS database not found"}
-    rows = gtfs.search_stops(DB_PATH, q, limit)
-    return {
-        "query": q,
-        "results": [
-            {
-                "stop_id": r["stop_id"],
-                "name": r["stop_name"],
-                "code": r.get("stop_code"),
-                "lat": r.get("stop_lat"),
-                "lon": r.get("stop_lon"),
-            }
-            for r in rows
-        ],
-    }
+@app.get("/api/stops/{stop_id}/next_departures", response_model=NextDeparturesResponse)
+def next_departures(stop_id: str, minutes: int = 60):
+    now = dt.datetime.utcnow()
+    # csak az időt használjuk (napfüggetlen), demó célra elegendő
+    now_secs = now.hour*3600 + now.minute*60 + now.second
+    end_secs = now_secs + minutes*60
 
+    conn = get_conn()
+    cur = conn.execute("""
+        SELECT st.departure_time, r.route_short_name AS route, COALESCE(t.trip_headsign, r.route_long_name) AS dest
+        FROM stop_times st
+        JOIN trips t ON t.trip_id = st.trip_id
+        LEFT JOIN routes r ON r.route_id = t.route_id
+        WHERE st.stop_id = ?
+    """, (stop_id,))
+    rows = cur.fetchall()
 
-@app.get("/api/stops/{stop_id}/next_departures")
-async def next_departures(stop_id: str, minutes: int = 60):
-    minutes = max(5, min(minutes, 240))
-
-    # 1) próbáljuk SIRI-t (ha be van állítva)
-    live_results = []
-    used_source = None
-    if siri_configured():
-        try:
-            live_results = await siri_live.get_next_departures(stop_id, minutes)
-            if live_results:
-                used_source = "live"
-        except Exception:
-            # ne dőljön el az endpoint – csendben visszaesünk GTFS-re
-            live_results = []
-
-    # 2) GTFS menetrend fallback
-    schedule_results = []
-    if db_exists():
-        schedule_results = gtfs.get_scheduled_departures(DB_PATH, stop_id, minutes)
-
-    # ha van élő, előre tesszük; különben menetrend
     results = []
-    for it in live_results:
-        results.append({
-            "route": it["route"],
-            "destination": it["destination"],
-            "time_iso": it["time_iso"],
-            "is_live": True
-        })
-    for it in schedule_results:
-        # ne duplikáljunk ugyanarra az időpontra
-        key = (it["route"], it["destination"], it["time_iso"])
-        if not any((r["route"], r["destination"], r["time_iso"]) == key for r in results):
-            results.append({
-                "route": it["route"],
-                "destination": it["destination"],
-                "time_iso": it["time_iso"],
-                "is_live": False
-            })
+    for r in rows:
+        secs = time_to_seconds(r["departure_time"])
+        if secs is None:
+            continue
+        # ablakba eső indulások (egyszerű, napfüggetlen logika)
+        if now_secs <= secs <= end_secs:
+            dep_time = dt.datetime.combine(now.date(), dt.time()) + dt.timedelta(seconds=secs)
+            results.append(Departure(
+                route=r["route"] or "",
+                destination=r["dest"],
+                time_iso=dep_time.isoformat(),
+                is_live=False
+            ))
+    # idő szerint rendezés és limit
+    results.sort(key=lambda d: d.time_iso)
+    return NextDeparturesResponse(stop_id=stop_id, minutes=minutes, results=results[:50])
 
-    return {
-        "stop_id": stop_id,
-        "minutes": minutes,
-        "results": results
-    }
-
-
-# --- admin: GTFS betöltés ---
+# ---- GTFS betöltés: URL vagy feltöltött fájl
 @app.post("/api/admin/load_gtfs")
-async def load_gtfs(url: str = Body(embed=True, media_type="application/json")):
+async def load_gtfs_json(payload: Optional[LoadGtfsRequest] = None, file: UploadFile = File(None)):
     """
-    Töltsd be a GTFS zipet URL-ről (pl. BODS 'Timetables - GTFS' letöltési link).
+    Két mód:
+    - JSON: {"url": "https://.../gtfs.zip"}
+    - multipart/form-data: file=<gtfs.zip>
     """
-    if not url or not (url.startswith("http://") or url.startswith("https://")):
-        raise HTTPException(status_code=400, detail="Invalid URL")
+    # Honnan jön a zip?
+    zip_bytes: bytes
+    source = ""
+    if payload and payload.url:
+        source = "url"
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                r = await client.get(str(payload.url), follow_redirects=True)
+                r.raise_for_status()
+                zip_bytes = r.content
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"GTFS letöltési hiba: {e}")
+    elif file is not None:
+        source = "upload"
+        try:
+            zip_bytes = await file.read()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Fájlolvasási hiba: {e}")
+    else:
+        raise HTTPException(status_code=400, detail="Adj meg egy 'url'-t JSON-ban VAGY tölts fel egy 'file' ZIP-et.")
 
-    # letöltés
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        content = resp.content
+    # Ellenőrzés: zip-e?
+    if not zipfile.is_zipfile(io.BytesIO(zip_bytes)):
+        raise HTTPException(status_code=400, detail="A kapott tartalom nem ZIP.")
 
-    # bontás és import
-    with zipfile.ZipFile(io.BytesIO(content)) as zf:
-        gtfs.import_from_zip_to_sqlite(zf, DB_PATH)
+    # Ideiglenes kicsomagolás
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+                z.extractall(td)
 
-    return {"status": "ok", "db_path": DB_PATH}
+            # Szükséges fájlok
+            stops_p = None
+            routes_p = None
+            trips_p = None
+            stop_times_p = None
+            for name in os.listdir(td):
+                low = name.lower()
+                p = os.path.join(td, name)
+                if low == "stops.txt":
+                    stops_p = p
+                elif low == "routes.txt":
+                    routes_p = p
+                elif low == "trips.txt":
+                    trips_p = p
+                elif low == "stop_times.txt":
+                    stop_times_p = p
+
+            if not all([stops_p, routes_p, trips_p, stop_times_p]):
+                raise HTTPException(status_code=400, detail="Hiányzó GTFS fájl(ok): szükséges stops.txt, routes.txt, trips.txt, stop_times.txt")
+
+            # DB init + feltöltés
+            conn = get_conn()
+            db_init(conn)
+            cur = conn.cursor()
+            # ürítjük a táblákat
+            cur.execute("DELETE FROM stops")
+            cur.execute("DELETE FROM routes")
+            cur.execute("DELETE FROM trips")
+            cur.execute("DELETE FROM stop_times")
+            conn.commit()
+
+            # stops
+            with open(stops_p, newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                rows = []
+                for r in reader:
+                    stop_id = r.get("stop_id")
+                    stop_name = r.get("stop_name") or ""
+                    stop_lat = r.get("stop_lat") or None
+                    stop_lon = r.get("stop_lon") or None
+                    if not stop_id:
+                        continue
+                    rows.append((stop_id, stop_name, float(stop_lat) if stop_lat else None,
+                                 float(stop_lon) if stop_lon else None, stop_name.lower()))
+                cur.executemany("INSERT OR REPLACE INTO stops VALUES (?,?,?,?,?)", rows)
+
+            # routes
+            with open(routes_p, newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                rows = []
+                for r in reader:
+                    route_id = r.get("route_id")
+                    if not route_id:
+                        continue
+                    rows.append((
+                        route_id,
+                        r.get("route_short_name"),
+                        r.get("route_long_name"),
+                    ))
+                cur.executemany("INSERT OR REPLACE INTO routes VALUES (?,?,?)", rows)
+
+            # trips
+            with open(trips_p, newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                rows = []
+                for r in reader:
+                    trip_id = r.get("trip_id")
+                    route_id = r.get("route_id")
+                    if not trip_id:
+                        continue
+                    rows.append((
+                        trip_id,
+                        route_id,
+                        r.get("trip_headsign"),
+                    ))
+                cur.executemany("INSERT OR REPLACE INTO trips VALUES (?,?,?)", rows)
+
+            # stop_times
+            batch = []
+            with open(stop_times_p, newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                for r in reader:
+                    trip_id = r.get("trip_id")
+                    stop_id = r.get("stop_id")
+                    dep = r.get("departure_time") or r.get("arrival_time")
+                    arr = r.get("arrival_time") or dep
+                    if not (trip_id and stop_id and (dep or arr)):
+                        continue
+                    batch.append((trip_id, arr or "", dep or "", stop_id))
+                    if len(batch) >= 20_000:
+                        cur.executemany("INSERT INTO stop_times VALUES (?,?,?,?)", batch)
+                        batch = []
+            if batch:
+                cur.executemany("INSERT INTO stop_times VALUES (?,?,?,?)", batch)
+
+            conn.commit()
+            set_meta(conn, "gtfs_loaded", "1")
+
+        return {
+            "status": "ok",
+            "method": source,
+            "message": "GTFS betöltve az adatbázisba.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Részletes hiba a logban, a kliensnek biztonságos üzenet
+        print("GTFS load error:", repr(e))
+        raise HTTPException(status_code=500, detail="GTFS feldolgozási hiba. Nézd meg a szerver logokat.")
+
+# ---- Egyszerű UI (opcionális)
+@app.get("/api/ui")
+def simple_ui_hint():
+    return {"open": "/docs vagy /redoc a böngészőben a teszteléshez."}
