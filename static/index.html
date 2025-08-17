@@ -1,88 +1,159 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="hu">
 <head>
-  <meta charset="UTF-8">
-  <title>Bluestar Bus – Indulások</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bluestar Bus – Megálló keresés és indulások</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    h1 { color: #003366; }
-    #searchBox { padding: 8px; width: 300px; }
-    #results, #departures { margin-top: 20px; }
-    ul { list-style: none; padding: 0; }
-    li { padding: 6px; border-bottom: 1px solid #ddd; cursor: pointer; }
-    li:hover { background: #f0f0f0; }
-    table { border-collapse: collapse; margin-top: 15px; width: 100%; max-width: 600px; }
-    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-    th { background: #f9f9f9; }
-    .live { color: green; font-weight: bold; }
-    .timetable { color: gray; }
+    :root{--fg:#0b0b0c;--muted:#6a6f76;--ok:#0aa84f;--warn:#e67e22;--err:#c0392b;--bg:#ffffff}
+    *{box-sizing:border-box} body{margin:0;font:16px/1.4 system-ui,Segoe UI,Roboto,Arial;background:#f5f7fb;color:var(--fg)}
+    header{background:#0d1b2a;color:#fff;padding:14px 16px;font-weight:700}
+    main{max-width:860px;margin:20px auto;padding:0 16px}
+    .card{background:var(--bg);border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.06);padding:14px 14px;margin-bottom:16px}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    .row > *{flex:1 1 240px}
+    input,button{padding:10px 12px;border:1px solid #d9dde4;border-radius:8px;font:inherit}
+    input:focus{outline:none;border-color:#4c7af1;box-shadow:0 0 0 3px rgba(76,122,241,.18)}
+    button{background:#2d6cdf;color:#fff;border-color:#2d6cdf;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .hint{color:var(--muted);font-size:13px;margin-top:6px}
+    ul.results{list-style:none;margin:10px 0 0;padding:0;border:1px solid #e4e7ee;border-radius:8px;overflow:hidden}
+    ul.results li{padding:10px 12px;border-top:1px solid #e9ecf3;background:#fff;display:flex;justify-content:space-between;gap:12px;align-items:center}
+    ul.results li:first-child{border-top:none}
+    ul.results li small{color:var(--muted)}
+    ul.results li:hover{background:#f3f6ff;cursor:pointer}
+    ul.results li.active{background:#e9f3ff}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
+    .badge-live{background:#e8fff2;color:#0a7a43;border:1px solid #a8e7c9}
+    .badge-tt{background:#fff8e6;color:#8d5800;border:1px solid #f0d195}
+    .err{color:var(--err);margin-top:8px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px;border-bottom:1px solid #eef1f6;text-align:left}
+    th{color:#475062;font-weight:600}
+    .muted{color:var(--muted)}
   </style>
 </head>
 <body>
-  <h1>Bluestar Bus – Megálló keresés</h1>
+  <header>Bluestar Bus – Megálló keresés</header>
 
-  <input type="text" id="searchBox" placeholder="Írd be a megálló nevét...">
-  <button onclick="searchStops()">Keresés</button>
+  <main>
+    <section class="card">
+      <div class="row">
+        <div>
+          <label for="q">Megálló neve</label>
+          <input id="q" placeholder="pl. Hanover, Vincents Walk, West Quay..." />
+          <div class="hint">Írj be pár betűt, Enter, majd kattints a listából.</div>
+        </div>
+        <div style="max-width:160px">
+          <label for="minutes">Időablak (perc)</label>
+          <input id="minutes" type="number" min="5" max="360" value="60" />
+        </div>
+        <div style="align-self:end;max-width:140px">
+          <button id="searchBtn">Keresés</button>
+        </div>
+      </div>
 
-  <div id="results"></div>
-  <div id="departures"></div>
+      <ul id="results" class="results" aria-live="polite"></ul>
+      <div id="searchError" class="err" role="alert" hidden></div>
+    </section>
+
+    <section class="card">
+      <h3 id="selTitle" class="muted" style="margin:0 0 10px">Nincs kiválasztott megálló</h3>
+      <table>
+        <thead>
+          <tr><th>Route</th><th>Destination</th><th>Time</th><th>Forrás</th></tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="4" class="muted">Nincs indulás ebben az időablakban.</td></tr>
+        </tbody>
+      </table>
+      <div id="depError" class="err" role="alert" hidden></div>
+    </section>
+  </main>
 
   <script>
-    const API_BASE = "/api"; // ugyanazon domainen, mint a backend
+    const $ = id => document.getElementById(id);
+    const q = $('q'), minutes = $('minutes'), results = $('results');
+    const searchBtn = $('searchBtn'), selTitle = $('selTitle'), tbody = $('tbody');
+    const searchError = $('searchError'), depError = $('depError');
+    let activeLi = null;
 
-    async function searchStops() {
-      const q = document.getElementById("searchBox").value.trim();
-      if (!q) return;
-      document.getElementById("results").innerHTML = "Keresés...";
-      document.getElementById("departures").innerHTML = "";
+    function showSearchError(msg){ searchError.textContent = msg; searchError.hidden = !msg; }
+    function showDepError(msg){ depError.textContent = msg; depError.hidden = !msg; }
 
-      try {
-        const res = await fetch(`${API_BASE}/stops/search?q=${encodeURIComponent(q)}`);
-        if (!res.ok) throw new Error("Hiba a keresésnél");
-        const data = await res.json();
+    async function searchStops(){
+      showSearchError('');
+      results.innerHTML = '';
+      activeLi = null;
 
-        if (!data.results || data.results.length === 0) {
-          document.getElementById("results").innerHTML = "<p>Nincs találat.</p>";
+      const term = q.value.trim();
+      if(!term){ showSearchError('Adj meg legalább 2 karaktert.'); return; }
+
+      try{
+        searchBtn.disabled = true;
+        const r = await fetch(`/api/stops/search?q=${encodeURIComponent(term)}`);
+        if(!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json(); // vár: [{stop_id, stop_name}]
+        if(!Array.isArray(data) || !data.length){
+          showSearchError('Nincs találat erre a névre.');
           return;
         }
-
-        let html = "<ul>";
-        data.results.forEach(stop => {
-          html += `<li onclick="loadDepartures('${stop.stop_id}', '${stop.stop_name}')">${stop.stop_name}</li>`;
-        });
-        html += "</ul>";
-        document.getElementById("results").innerHTML = html;
-
-      } catch (err) {
-        document.getElementById("results").innerHTML = `<p style="color:red">${err}</p>`;
+        // Listázás – stop_name + stop_id látható
+        for(const stop of data){
+          const li = document.createElement('li');
+          li.innerHTML = `<span>${stop.stop_name}</span><small>[${stop.stop_id}]</small>`;
+          li.addEventListener('click', ()=> {
+            if(activeLi) activeLi.classList.remove('active');
+            li.classList.add('active');
+            activeLi = li;
+            loadDepartures(stop.stop_id, stop.stop_name);
+          });
+          results.appendChild(li);
+        }
+      }catch(err){
+        showSearchError(`Keresési hiba: ${err.message}`);
+      }finally{
+        searchBtn.disabled = false;
       }
     }
 
-    async function loadDepartures(stop_id, stop_name) {
-      document.getElementById("departures").innerHTML = `<h2>${stop_name}</h2><p>Betöltés...</p>`;
-      try {
-        const res = await fetch(`${API_BASE}/stops/${stop_id}/next_departures?minutes=60`);
-        if (!res.ok) throw new Error("Hiba az indulásoknál");
-        const data = await res.json();
+    async function loadDepartures(stopId, stopName){
+      showDepError('');
+      selTitle.textContent = `${stopName} — ${stopId}`;
+      tbody.innerHTML = `<tr><td colspan="4" class="muted">Betöltés…</td></tr>`;
 
-        if (!data.results || data.results.length === 0) {
-          document.getElementById("departures").innerHTML = `<h2>${stop_name}</h2><p>Nincs indulás a következő órában.</p>`;
-          return;
-        }
+      try{
+        const mins = Math.max(5, Math.min(360, Number(minutes.value)||60));
+        const r = await fetch(`/api/stops/${encodeURIComponent(stopId)}/next_departures?minutes=${mins}`);
+        if(!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json(); // {stop_id, minutes, results:[{route,destination,time_iso,is_live}]}
 
-        let table = `<h2>${stop_name}</h2><table><tr><th>Járat</th><th>Cél</th><th>Idő</th><th>Forrás</th></tr>`;
-        data.results.forEach(dep => {
-          const time = new Date(dep.time_iso).toLocaleTimeString("hu-HU", {hour: "2-digit", minute:"2-digit"});
-          const source = dep.is_live ? `<span class="live">Élő</span>` : `<span class="timetable">Menetrend</span>`;
-          table += `<tr><td>${dep.route}</td><td>${dep.destination}</td><td>${time}</td><td>${source}</td></tr>`;
+        const rows = (data.results||[]).map(item=>{
+          const t = new Date(item.time_iso);
+          const time = isNaN(t) ? item.time_iso : t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+          const src = item.is_live
+            ? `<span class="badge badge-live" title="Élő adat (SIRI-VM)">ÉLŐ</span>`
+            : `<span class="badge badge-tt" title="Menetrendi (GTFS)">Menetrend</span>`;
+          return `<tr>
+            <td>${item.route||''}</td>
+            <td>${item.destination||''}</td>
+            <td>${time}</td>
+            <td>${src}</td>
+          </tr>`;
         });
-        table += "</table>";
-        document.getElementById("departures").innerHTML = table;
 
-      } catch (err) {
-        document.getElementById("departures").innerHTML = `<p style="color:red">${err}</p>`;
+        tbody.innerHTML = rows.length ? rows.join('') :
+          `<tr><td colspan="4" class="muted">Nincs indulás ebben az időablakban.</td></tr>`;
+
+      }catch(err){
+        showDepError(`Hiba az indulásoknál: ${err.message}`);
+        tbody.innerHTML = `<tr><td colspan="4" class="muted">–</td></tr>`;
       }
     }
+
+    // Enterre keresés
+    q.addEventListener('keydown', e => { if(e.key === 'Enter') searchStops(); });
+    searchBtn.addEventListener('click', searchStops);
   </script>
 </body>
 </html>
