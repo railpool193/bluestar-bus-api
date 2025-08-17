@@ -218,3 +218,7 @@ def get_live_departures(
     # Rendezés idő szerint
     results.sort(key=lambda x: x["timestamp_unix"])
     return results
+# --- a siri_live.py legvégére tedd ---
+def get_next_departures(stop_id: str, minutes: int, api_key=None, feed_id=None):
+    """Visszafelé kompatibilis alias a régi hívásnévhez."""
+    return get_live_departures(stop_id=stop_id, minutes=minutes, api_key=api_key, feed_id=feed_id)
