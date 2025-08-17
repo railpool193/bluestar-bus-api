@@ -1,80 +1,80 @@
+# main.py
+# ----------------------
+# FastAPI app, szinkron endpointokkal (nincs await szinkron függvényre),
+# és egyszerű statikus index.html kiszolgálással.
+
 import os
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict, Any
-import uvicorn
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
-# ------- opcionális: GTFS megálló-kereső (egyszerű, memóriás példa) -------
-# Ha nincs GTFS-ed betöltve, ez csak "látszat" keresőt ad.
-# Ha korábban volt saját GTFS loadered, ide illesztheted.
-STOPS: List[Dict[str, str]] = []   # töltsd fel saját adataiddal (stop_name, stop_id)
+from siri_live import get_next_departures, SiriLiveError  # a régi névhez tartozó alias
 
-def search_stops_local(q: str) -> List[Dict[str, str]]:
-    ql = q.strip().lower()
-    if not ql:
-        return []
-    hits = [s for s in STOPS if ql in s.get("stop_name","").lower()]
-    return hits[:10]
 
-# ---------------- SIRI élő ----------------
-import siri_live
+app = FastAPI(title="Bluestar Bus – Live API")
 
-app = FastAPI(title="Bluestar Bus API", version="2.0")
-
+# CORS – ha kell máshonnan is hívni
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ha szeretnéd, szűkítsd a domainjeidre
-    allow_methods=["*"],
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
+
+# --- Egyszerű index kiszolgálás (a repo gyökerében lévő index.html) ---
+ROOT = Path(__file__).resolve().parent
+INDEX = ROOT / "index.html"
+
+if (ROOT / "static").exists():
+    app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
+
+
+@app.get("/", response_class=FileResponse)
+def serve_index():
+    if INDEX.exists():
+        return FileResponse(str(INDEX))
+    # ha nincs index.html, adjunk egyszerű választ
+    return PlainTextResponse("Bluestar Bus – Live API", media_type="text/plain")
+
+
+# --- Egyszerű health/status ---
 @app.get("/health")
-async def health():
+def health():
     return {
         "status": "ok",
-        "gtfs_loaded": bool(STOPS),
+        "gtfs_loaded": True,          # ha van külön GTFS betöltés, itt jelezheted
         "siri_available": True,
         "gtfs_error": None,
         "siri_error": None,
     }
 
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    # statikus index.html kiszolgálása (ha a fájl a projekt gyökerében van)
+
+# --- Élő indulások adott megállóra (SIRI VM alapján) ---
+@app.get("/api/siri/next_departures/{stop_id}")
+def next_departures(
+    stop_id: str,
+    minutes: int = Query(60, ge=1, le=360),
+):
     try:
-        with open("index.html", "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read(), status_code=200)
-    except Exception:
-        return HTMLResponse("<h1>Bluestar Bus API</h1>", status_code=200)
-
-@app.get("/search_stops")
-async def search_stops(name: str = Query(..., min_length=2)):
-    try:
-        results = search_stops_local(name)
-        # Válasz egységes formában
-        out = [
-            {
-                "display_name": f"{s.get('stop_name','')} ({s.get('stop_id','')})",
-                "stop_id": s.get("stop_id","")
-            }
-            for s in results
-        ]
-        return {"query": name, "results": out}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/siri/next_departures/{stop_id}")
-async def siri_next_departures(stop_id: str, minutes: int = Query(60, ge=1, le=480)):
-    try:
-        data = await siri_live.get_next_departures(stop_id, minutes=minutes)
-        return {"stop_id": stop_id, "minutes": minutes, "results": data}
-    except Exception as e:
-        # továbbítjuk a hiba részleteit, hogy a frontend ki tudja írni
-        raise HTTPException(status_code=500, detail=str(e))
+        results = get_next_departures(
+            stop_id=stop_id,
+            minutes=minutes,
+            api_key=os.getenv("BODS_API_KEY"),
+            feed_id=os.getenv("BODS_FEED_ID"),
+        )
+        return {"query": {"stop_id": stop_id, "minutes": minutes}, "results": results}
+    except SiriLiveError as e:
+        # SIRI/BODS oldali vagy feldolgozási hiba
+        raise HTTPException(status_code=502, detail=str(e))
 
 
-if __name__ == "__main__":
-    # Railway/Render esetén a PORT környezeti változót érdemes használni
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+# --- Opcionális: egyszerű státusz, hogy az env be van-e állítva ---
+@app.get("/api/status")
+def api_status():
+    return {
+        "BODS_API_KEY": bool(os.getenv("BODS_API_KEY")),
+        "BODS_FEED_ID": bool(os.getenv("BODS_FEED_ID")),
+    }
