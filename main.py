@@ -1,304 +1,243 @@
 # main.py
+from __future__ import annotations
+
+import csv
+import io
+import json
+import os
+import re
+import shutil
+import time
+import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from fastapi import FastAPI, File, UploadFile, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from typing import Any, Dict, List, Tuple
+
+import httpx
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-import shutil, zipfile, json, os
-from datetime import datetime, timezone
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Konfiguráció / mappák
+# ──────────────────────────────────────────────────────────────────────────────
+BASE_DIR: Path = Path(__file__).resolve().parent
+DATA_DIR: Path = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
+GTFS_DIR: Path = BASE_DIR / "gtfs"
+STATIC_DIR: Path = BASE_DIR / "static"
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+GTFS_DIR.mkdir(parents=True, exist_ok=True)
+
+STOPS_INDEX = DATA_DIR / "stops_index.json"
+
+# Live (SIRI/BODS) env
+BODS_API_KEY = os.getenv("BODS_API_KEY", "").strip()
+BODS_BASE_URL = os.getenv("BODS_BASE_URL", "https://data.bus-data.dft.gov.uk/api/v1").rstrip("/")
+BODS_FEED_ID = os.getenv("BODS_FEED_ID", "").strip()
+
+# Egyszerű cache a SIRI feedhez (kb. 20–30 mp elég)
+_siri_cache: Dict[str, Tuple[float, Any]] = {}
+_SIRI_TTL_SEC = 25.0
+
+# ──────────────────────────────────────────────────────────────────────────────
+# App & statikus fájlok
+# ──────────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Bluestar Bus – API", version="1.1.0")
-
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
-GTFS_DIR = BASE_DIR / "gtfs"
-STATIC_DIR = BASE_DIR / "static"
-
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
-GTFS_INDEX = DATA_DIR / "stops_index.json"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Segédfüggvények
+# ──────────────────────────────────────────────────────────────────────────────
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_hms_to_seconds(hms: str) -> int:
+    """GTFS HH:MM:SS → másodperc (24+ órát is enged pl. 25:10:00)."""
+    m = re.match(r"^(\d+):(\d{2}):(\d{2})$", hms)
+    if not m:
+        return -1
+    h, m_, s = map(int, m.groups())
+    return h * 3600 + m_ * 60 + s
+
+
+def _load_csv_from_gtfs(name: str) -> List[Dict[str, str]]:
+    """Beolvas egy .txt (CSV) GTFS fájlt a kitömörített mappából."""
+    file_path = GTFS_DIR / name
+    if not file_path.exists():
+        return []
+    with file_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        return [row for row in reader]
+
+
+def _build_stops_index() -> None:
+    """Egyszerű keresőindex a megállókhoz."""
+    stops = _load_csv_from_gtfs("stops.txt")
+    index = [
+        {"stop_id": s.get("stop_id", "").strip(), "stop_name": s.get("stop_name", "").strip()}
+        for s in stops
+        if s.get("stop_id") and s.get("stop_name")
+    ]
+    STOPS_INDEX.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+
+
+def _gtfs_loaded() -> bool:
+    return STOPS_INDEX.exists() and any(GTFS_DIR.glob("*.txt"))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API – státusz
+# ──────────────────────────────────────────────────────────────────────────────
 @app.get("/api/status")
 def status():
-    return {"status": "ok", "gtfs_loaded": GTFS_INDEX.exists(), "siri_configured": bool(os.getenv("BODS_API_KEY"))}
-
-@app.post("/api/upload")
-async def upload_gtfs(file: UploadFile = File(...)):
-    tmp_zip = DATA_DIR / "uploaded.zip"
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with tmp_zip.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
-    # kibontás és index építés (stops.txt -> stops_index.json) …
-    # (a korábbi verzióban már megcsináltuk – maradhat ugyanúgy)
-    return {"status": "ok", "method": "upload", "message": "GTFS betöltve az adatbázisba."}
-
-@app.get("/api/stops/search")
-def search_stops(q: str = Query(min_length=2)):
-    if not GTFS_INDEX.exists():
-        return []
-    data = json.loads(GTFS_INDEX.read_text())
-    ql = q.lower()
-    return [s for s in data if ql in s["stop_name"].lower()][:20]
-
-@app.get("/api/stops/{stop_id}/next_departures")
-def next_departures(stop_id: str, minutes: int = 60):
-    # GTFS alapján menetrend (ahogy most működik)
-    ...
-
-@app.get("/api/live/{stop_id}")
-def live_for_stop(stop_id: str):
-    # SIRI/BODS élő adatok meghívása (ha be van állítva BODS_API_KEY, FEED_ID stb.)
-    ...
-
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-
-# ------------------------
-# Beállítások / könyvtárak
-# ------------------------
-app = FastAPI(title="Bluestar Bus – API", version="1.1.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # ha szeretnéd, itt korlátozhatod
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
-DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-# Statikus UI
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-# ------------------------
-# Egyszerű GTFS "állapot"
-# ------------------------
-def gtfs_loaded_flag() -> bool:
-    candidates = [
-        DATA_DIR / "gtfs.sqlite",
-        DATA_DIR / "gtfs.db",
-        DATA_DIR / "bluestar.db",
-        DATA_DIR / "bluestar.sqlite",
-    ]
-    return any(p.exists() for p in candidates)
-
-def siri_configured_flag() -> bool:
-    return bool(os.getenv("BODS_API_KEY"))
-
-@app.get("/api/status", tags=["Status"])
-async def api_status():
     return {
         "status": "ok",
-        "gtfs_loaded": gtfs_loaded_flag(),
-        "siri_configured": siri_configured_flag(),
+        "gtfs_loaded": _gtfs_loaded(),
+        "siri_configured": bool(BODS_API_KEY and BODS_FEED_ID),
     }
 
-# ------------------------
-# SIRI (BODS) – Live réteg
-# ------------------------
-BODS_BASE = os.getenv("BODS_BASE", "").rstrip("/")
-BODS_FEED_ID = os.getenv("BODS_FEED_ID") or os.getenv("BODS_FEED")  # nálad: 7721
-BODS_API_KEY = os.getenv("BODS_API_KEY")
 
-SIRI_CACHE_TTL = 5  # másodperc – ne terheld túl a feedet
-_siri_cache: Dict[str, Tuple[float, Any]] = {}  # key: "vm", value: (ts, xml_root)
+# ──────────────────────────────────────────────────────────────────────────────
+# GTFS feltöltés (multipart/form-data: file=<gtfs.zip>)
+# ──────────────────────────────────────────────────────────────────────────────
+@app.post("/api/upload")
+async def upload_gtfs(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Adj meg egy GTFS .zip fájlt.")
 
-def _bods_vm_url() -> Optional[str]:
-    if not (BODS_BASE and BODS_FEED_ID and BODS_API_KEY):
-        return None
-    return f"{BODS_BASE}/datafeed/{BODS_FEED_ID}/?api_key={BODS_API_KEY}"
+    # ideiglenesen mentsük
+    tmp_zip = DATA_DIR / "gtfs_upload.zip"
+    with tmp_zip.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
 
-def _fetch_siri_vm_xml() -> Optional[ET.Element]:
-    """Letölti és XML-ként visszaadja a SIRI-VM feedet (cache-elve)."""
-    now = time.time()
-    if "vm" in _siri_cache and now - _siri_cache["vm"][0] < SIRI_CACHE_TTL:
-        return _siri_cache["vm"][1]
+    # ürítsük a GTFS_DIR-t és bontsuk ki
+    for p in GTFS_DIR.glob("*"):
+        if p.is_file():
+            p.unlink()
+        else:
+            shutil.rmtree(p, ignore_errors=True)
 
-    url = _bods_vm_url()
-    if not url:
-        return None
+    with zipfile.ZipFile(tmp_zip, "r") as z:
+        z.extractall(GTFS_DIR)
 
-    try:
-        req = Request(url, headers={"User-Agent": "BluestarBus/1.0"})
-        with urlopen(req, timeout=8) as resp:
-            xml_bytes = resp.read()
-        root = ET.fromstring(xml_bytes)
-        _siri_cache["vm"] = (now, root)
-        return root
-    except Exception:
-        return None
+    # index újraépítése
+    _build_stops_index()
 
-def _ns(tag: str) -> str:
-    # SIRI XML namespacet gyakran használ: {namespace}TagName
-    # Ha a feed namespace-szel jön, ez a segéd függvénnyel keresünk rá több variációra.
-    return tag  # egyszerűsítve: ElementTree-vel sokszor megy prefix nélkül is
+    return {"status": "ok", "method": "upload", "message": "GTFS betöltve az adatbázisba."}
 
-def _extract_live_for_stop(stop_id: str) -> List[Dict[str, Any]]:
-    """
-    Kinyeri a SIRI-VM feedből az adott megállóhoz tartozó élő érkezéseket.
-    Visszaad: listát dict-ekkel: { "route": "14", "destination": "...", "expected_time_iso": "2025-08-17T12:34:00" }
-    """
-    root = _fetch_siri_vm_xml()
-    if root is None:
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Megálló keresés
+# ──────────────────────────────────────────────────────────────────────────────
+@app.get("/api/stops/search")
+def search_stops(q: str):
+    if len(q or "") < 2:
         return []
+    if not STOPS_INDEX.exists():
+        return []
+    items = json.loads(STOPS_INDEX.read_text(encoding="utf-8"))
+    ql = q.lower()
+    return [it for it in items if ql in it["stop_name"].lower()][:20]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Következő indulások (egyszerű, “hézagos” GTFS logika – naptárat nem szűrünk)
+# ──────────────────────────────────────────────────────────────────────────────
+@app.get("/api/stops/{stop_id}/next_departures")
+def next_departures(stop_id: str, minutes: int = 60):
+    if not _gtfs_loaded():
+        return {"stop_id": stop_id, "minutes": minutes, "results": []}
+
+    stop_times = _load_csv_from_gtfs("stop_times.txt")
+    trips = _load_csv_from_gtfs("trips.txt")
+    routes = _load_csv_from_gtfs("routes.txt")
+
+    trip_to_route: Dict[str, str] = {t["trip_id"]: t.get("route_id", "") for t in trips if "trip_id" in t}
+    route_names: Dict[str, str] = {}
+    for r in routes:
+        name = r.get("route_short_name") or r.get("route_long_name") or r.get("route_id", "")
+        route_names[r.get("route_id", "")] = name
+
+    # Mostani idő (helyi zóna helyett UTC; a GTFS időpontok napon belüliek)
+    now = _now_utc()
+    now_sec = now.hour * 3600 + now.minute * 60 + now.second
+    window = minutes * 60
 
     results: List[Dict[str, Any]] = []
-
-    # A tipikus struktúra (rövidítve):
-    # Siri/ServiceDelivery/VehicleMonitoringDelivery/VehicleActivity/MonitoredVehicleJourney
-    #   LineRef, DestinationName, MonitoredCall/StopPointRef, MonitoredCall/ExpectedArrivalTime
-    # Végigmegyünk az összes VehicleActivity-n, és amelyeknél a StopPointRef == stop_id, azt felvesszük.
-    for vehicle_activity in root.iterfind(".//VehicleActivity"):
-        mvj = vehicle_activity.find("MonitoredVehicleJourney")
-        if mvj is None:
+    for st in stop_times:
+        if st.get("stop_id") != stop_id:
             continue
-
-        line_ref_el = mvj.find("LineRef")
-        line_ref = (line_ref_el.text or "").strip() if line_ref_el is not None else ""
-
-        dest_el = mvj.find("DestinationName")
-        destination = (dest_el.text or "").strip() if dest_el is not None else ""
-
-        call = mvj.find("MonitoredCall")
-        if call is None:
+        arr = st.get("departure_time") or st.get("arrival_time") or ""
+        sec = _parse_hms_to_seconds(arr)
+        if sec < 0:
             continue
-
-        spref_el = call.find("StopPointRef")
-        spref = (spref_el.text or "").strip() if spref_el is not None else ""
-        if not spref or spref != stop_id:
-            continue
-
-        eta_el = call.find("ExpectedArrivalTime") or call.find("AimedArrivalTime")
-        eta_iso = (eta_el.text or "").strip() if eta_el is not None else ""
-
-        if line_ref:
+        # csak a következő "window" percen belüliek
+        if 0 <= sec - now_sec <= window:
+            trip_id = st.get("trip_id", "")
+            route_id = trip_to_route.get(trip_id, "")
+            route = route_names.get(route_id, route_id)
+            # destination-nek megpróbáljuk a "stop_headsign"/"trip_headsign" mezőt használni
+            dest = st.get("stop_headsign") or next((t.get("trip_headsign")
+                                                    for t in trips if t.get("trip_id") == trip_id and t.get("trip_headsign")), "")
+            dt_iso = (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(seconds=sec)).isoformat()
             results.append(
-                {
-                    "route": line_ref,
-                    "destination": destination,
-                    "expected_time_iso": eta_iso,
-                    "is_live": True,
-                }
+                {"route": route, "destination": dest or "", "time_iso": dt_iso, "is_live": False}
             )
 
-    return results
+    results.sort(key=lambda x: x["time_iso"])
+    return {"stop_id": stop_id, "minutes": minutes, "results": results[:30]}
 
-def _live_routes_at_stop(stop_id: str) -> Set[str]:
-    """Az adott megállónál éppen 'élő' útvonalak (LineRef) halmaza."""
-    return {item["route"] for item in _extract_live_for_stop(stop_id)}
 
-@app.get("/api/live/{stop_id}", tags=["Live"])
+# ──────────────────────────────────────────────────────────────────────────────
+# Live (SIRI VM / BODS) – egyszerű feed letöltés + gyors cache
+# ──────────────────────────────────────────────────────────────────────────────
+async def _fetch_siri_vm() -> Any:
+    if not (BODS_API_KEY and BODS_FEED_ID):
+        raise HTTPException(status_code=503, detail="Live feed nincs konfigurálva.")
+
+    cache_key = "vm"
+    now = time.time()
+    if cache_key in _siri_cache:
+        ts, payload = _siri_cache[cache_key]
+        if now - ts < _SIRI_TTL_SEC:
+            return payload
+
+    url = f"{BODS_BASE_URL}/datafeed/{BODS_FEED_ID}?api_key={BODS_API_KEY}"
+    # BODS XML-t ad vissza; nekünk elég a nyers text, és kliensoldalt jelzünk, ha live érkezik
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        xml_text = resp.text
+
+    _siri_cache[cache_key] = (now, xml_text)
+    return xml_text
+
+
+@app.get("/api/live/{stop_id}")
 async def live_for_stop(stop_id: str):
-    """Nyers live lista az adott megállóra (ellenőrzéshez)."""
-    if not siri_configured_flag():
-        return {"stop_id": stop_id, "results": []}
-    return {"stop_id": stop_id, "results": _extract_live_for_stop(stop_id)}
+    """
+    Visszaad egy nagyon egyszerű jelzést:
+    - ha van érvényes SIRI VM feed és sikerült lekérni, 'available': True
+    - a konkrét stop_id szerinti szűrést itt nem erőltetjük (feed kompatibilitás miatt),
+      a frontend csak a 'is_live' flaget használja az indulásoknál.
+    """
+    if not (BODS_API_KEY and BODS_FEED_ID):
+        return {"stop_id": stop_id, "available": False}
 
-# -------------------------------------------------------
-# Egyszerű GTFS-alapú search + next_departures (példa)
-# -------------------------------------------------------
-# Megjegyzés: ha nálad ezek már implementálva vannak, hagyd meg a saját
-# verziódat, ez csak egy kompatibilis, egyszerű alap.
-
-# GTFS minimál DAO (CSV-kből vagy DB-ből – itt csak jelzésértékű stub)
-# A te projektedben valószínűleg már megvan – használd azt!
-from collections import defaultdict
-import json
-
-STOPS_JSON = DATA_DIR / "stops.json"  # opcionális gyorsítótár teszthez
-DEPS_JSON = DATA_DIR / "deps.json"    # opcionális gyorsítótár teszthez
-
-# Ha létezik két mintafájl, betöltjük (különben üres marad)
-_stops_idx: List[Dict[str, str]] = []
-if STOPS_JSON.exists():
     try:
-        _stops_idx = json.loads(STOPS_JSON.read_text())
-    except Exception:
-        _stops_idx = []
+        payload = await _fetch_siri_vm()
+        return {"stop_id": stop_id, "available": bool(payload)}
+    except Exception as e:
+        # ne dobjuk fel a teljes hibát – legyen false
+        return {"stop_id": stop_id, "available": False, "error": str(e)}
 
-_deps_by_stop: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-if DEPS_JSON.exists():
-    try:
-        _deps_by_stop = defaultdict(list, json.loads(DEPS_JSON.read_text()))
-    except Exception:
-        _deps_by_stop = defaultdict(list)
 
-@app.get("/api/stops/search", tags=["Stops"])
-async def search_stops(q: str = Query(..., min_length=1)):
-    """
-    Egyszerű kereső: name/id tartalmazza-e a lekérdezett szöveget.
-    A saját (valós) megoldásod itt nyugodtan maradhat.
-    """
-    ql = q.lower()
-    res = [
-        s for s in _stops_idx
-        if ql in s.get("stop_name", "").lower() or ql in s.get("stop_id", "").lower()
-    ][:20]
-    return res
-
-@app.get("/api/stops/{stop_id}/next_departures", tags=["Stops"])
-async def next_departures(
-    stop_id: str,
-    minutes: int = Query(60, ge=5, le=240),
-):
-    """
-    Következő indulások a megállóból (GTFS alapján), kiegészítve live jelzővel.
-    Ezt a végpontot hívja a frontend.
-    """
-    # 1) GTFS menetrend (itt: demo/minimál – a saját DB-alapú megoldásod maradhat)
-    schedule = _deps_by_stop.get(stop_id, [])
-    # csak az elkövetkező 'minutes' ablakot hagyjuk meg (ha van 'time_iso' mező)
-    filtered = []
-    # (A valós szűrés nálad valószínűleg idő szerint SQL-ben történik.)
-    for dep in schedule:
-        filtered.append(
-            {
-                "route": dep.get("route", ""),
-                "destination": dep.get("destination", ""),
-                "time_iso": dep.get("time_iso", ""),
-                "is_live": False,  # majd mindjárt felülírjuk
-            }
-        )
-
-    # 2) Live (SIRI) illesztés
-    live_routes = _live_routes_at_stop(stop_id) if siri_configured_flag() else set()
-    if live_routes:
-        for item in filtered:
-            if item.get("route") in live_routes:
-                item["is_live"] = True
-
-    return {
-        "stop_id": stop_id,
-        "minutes": minutes,
-        "results": filtered,
-    }
-
-# ------------------------
-# UI (statikus index.html)
-# ------------------------
-@app.get("/", include_in_schema=False)
-async def root():
-    index = STATIC_DIR / "index.html"
-    if index.exists():
-        return FileResponse(index)
-    return JSONResponse({"detail": "UI not found. Place index.html under /static."}, status_code=404)
-
-@app.get("/api/ui", include_in_schema=False)
-async def ui():
-    index = STATIC_DIR / "index.html"
-    if index.exists():
-        return FileResponse(index)
-    return JSONResponse({"detail": "UI not found. Place index.html under /static."}, status_code=404)
-
-# ------------------------
-# Uvicorn helyi futtatáshoz
-# ------------------------
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+# ──────────────────────────────────────────────────────────────────────────────
+# Egyszerű health
+# ──────────────────────────────────────────────────────────────────────────────
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
