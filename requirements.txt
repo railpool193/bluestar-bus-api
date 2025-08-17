@@ -6,3 +6,5 @@ xmltodict
 uvicorn[standard]
 aiohttp
 python-dateutil
+jinja2
+httpx
