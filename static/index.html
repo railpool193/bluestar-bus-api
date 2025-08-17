@@ -9,64 +9,91 @@
       --bg: #0f172a;
       --card: #111827;
       --muted: #9ca3af;
-      --ok: #22c55e;
-      --bad: #ef4444;
-      --acc: #10b981;
-      --txt: #e5e7eb;
+      --text: #e5e7eb;
+      --accent: #22c55e;
+      --danger: #ef4444;
+      --brand: #60a5fa;
+      --row: #0b1222;
     }
-    html,body{background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu; margin:0}
-    .wrap{max-width:900px;margin:40px auto;padding:0 16px}
-    .title{font-size:clamp(24px,4vw,40px);font-weight:800;display:flex;gap:.6rem;align-items:center}
-    .bus{font-size:32px}
-    .card{background:linear-gradient(180deg,#0b1222,#0a0f1a);border:1px solid #1f2937;border-radius:16px;padding:18px 18px 8px}
-    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-    input[type=text]{flex:1;min-width:220px;background:#0b1222;color:var(--txt);
-      border:1px solid #1f2937;border-radius:10px;padding:12px 14px;font-size:16px;outline: none}
-    button{background:var(--acc);color:#06281e;border:0;border-radius:12px;padding:12px 18px;
-      font-weight:700;cursor:pointer;box-shadow:0 0 0 0 rgba(16,185,129,.6);transition:.2s}
-    button:hover{transform:translateY(-1px)}
-    .dot{width:10px;height:10px;border-radius:999px;display:inline-block;margin-right:.5rem;vertical-align:middle}
-    .ok{background:var(--ok)} .bad{background:var(--bad)}
-    .hint{color:var(--muted);margin:10px 2px 0}
-    .list{margin-top:14px;border-top:1px solid #1f2937}
-    .pill{display:inline-block;background:#0b1222;border:1px solid #1f2937;border-radius:999px;
-      padding:6px 10px;margin:8px 8px 0 0;cursor:pointer}
-    table{width:100%;border-collapse:collapse;margin-top:10px}
-    th,td{padding:12px 8px;border-bottom:1px solid #1f2937;text-align:left}
-    th{color:#cbd5e1;font-weight:700}
-    .liveDot{display:inline-block;width:8px;height:8px;border-radius:999px;background:#22c55e}
-    .muted{color:#9ca3af}
-    .footer{opacity:.8;text-align:center;margin:28px 0}
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans",
+      "Apple Color Emoji", "Segoe UI Emoji"; background: var(--bg); color: var(--text);
+    }
+    .wrap { max-width: 900px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-weight: 800; letter-spacing: .2px; }
+    .card {
+      background: linear-gradient(180deg, #0f172a 0%, #0a1325 100%);
+      border: 1px solid #1f2937; border-radius: 14px; padding: 20px 20px 8px 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    input[type=text], input[type=number]{
+      background:#0b1222;border:1px solid #24324a; color:var(--text);
+      padding:12px 14px;border-radius:10px; font-size:18px; width:100%;
+    }
+    .btn{
+      background:#16a34a;border:none;color:white;padding:12px 18px;border-radius:12px;
+      font-weight:700; font-size:18px; cursor:pointer; transition: transform .05s ease;
+      box-shadow: 0 8px 22px rgba(34,197,94,.22);
+    }
+    .btn:active{ transform: translateY(1px); }
+    .badges{ display:flex; gap:12px; margin:12px 4px 0 4px; }
+    .badge{
+      display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:999px;
+      background:#0b1222; border:1px solid #24324a; color:var(--muted); font-weight:600;
+    }
+    .dot{ width:10px; height:10px; border-radius:999px; background:#374151; box-shadow:0 0 0 2px rgba(0,0,0,.2) inset; }
+    .dot.ok{ background: var(--accent); }
+    .dot.no{ background: var(--danger); }
+    .hint{ color:var(--muted); font-size:14px; margin-top:6px; }
+    .results{ margin-top:18px; border-top:1px solid #1f2937; }
+    table{ width:100%; border-collapse: collapse; margin-top:8px; }
+    th, td{ padding:14px 10px; border-bottom:1px solid #1f2937; text-align:left; }
+    th{ color:#cbd5e1; font-size:14px; text-transform:uppercase; letter-spacing:.03em; }
+    tr:nth-child(even) td{ background: #0d162a; }
+    .selectList{
+      margin-top:10px; background:#0b1222; border:1px solid #24324a; border-radius:10px; overflow:hidden;
+    }
+    .selectItem{
+      padding:12px 14px; border-bottom:1px solid #1f2937; cursor:pointer;
+    }
+    .selectItem:hover{ background:#0f1a31; }
+    .footer{ text-align:center; color:#9ca3af; margin:30px 0 10px; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="title"><span class="bus">🚌</span> Bluestar Bus – megálló & járat kereső</div>
+    <h1>🚌 Bluestar Bus – megálló & járat kereső</h1>
 
     <div class="card">
       <div class="row">
-        <input id="q" type="text" placeholder="Írj be megállónevet (pl. Hanover, Shirley…)" />
-        <button id="go">Keresés</button>
+        <input id="q" type="text" placeholder="Megálló neve (pl. Hanover, Vincent…)" />
+        <button id="go" class="btn">Keresés</button>
       </div>
 
-      <div class="row" style="gap:18px;margin-top:10px">
-        <div><span id="apiDot" class="dot bad"></span>API</div>
-        <div><span id="gtfsDot" class="dot bad"></span>GTFS</div>
-        <div><span id="liveDot" class="dot bad"></span>Live</div>
+      <div class="badges">
+        <div class="badge"><span class="dot" id="apiDot"></span> API</div>
+        <div class="badge"><span class="dot" id="gtfsDot"></span> GTFS</div>
+        <div class="badge"><span class="dot" id="liveDot"></span> Live</div>
       </div>
 
-      <div id="multiWrap" class="list" style="display:none">
-        <div class="hint">Több megálló illeszkedik. Válassz egyet:</div>
-        <div id="multi"></div>
-      </div>
+      <div class="hint" id="hint">Írj be legalább 2 karaktert, majd nyomd meg a Keresés gombot vagy Entert.</div>
 
-      <div id="resWrap" class="list" style="display:none">
-        <div id="stopTitle" class="hint"></div>
+      <div id="choose" class="selectList" style="display:none;"></div>
+
+      <div id="result" class="results" style="display:none;">
+        <h3 id="stopTitle" class="hint" style="margin:10px 0 0 2px;"></h3>
         <table>
           <thead>
-            <tr><th>Járat</th><th>Cél</th><th>Indulás</th><th>Élő</th></tr>
+            <tr>
+              <th>Járat</th>
+              <th>Cél</th>
+              <th>Indulás</th>
+              <th>Élő</th>
+            </tr>
           </thead>
-          <tbody id="rows"></tbody>
+          <tbody id="tbody"></tbody>
         </table>
       </div>
     </div>
@@ -75,88 +102,93 @@
   </div>
 
   <script>
-    const $ = sel => document.querySelector(sel);
-    const api = (p, opt={}) => fetch(p, opt).then(r => r.json());
+    const $ = s => document.querySelector(s);
+    const api = p => fetch(p).then(r => r.json());
 
-    // státusz
+    // státusz pöttyök
     async function refreshStatus(){
       try{
         const s = await api('/api/status');
-        $('#apiDot').className = 'dot ok';
-        $('#gtfsDot').className = 'dot ' + (s.gtfs ? 'ok' : 'bad');
-        $('#liveDot').className = 'dot ' + (s.live ? 'ok' : 'bad');
-      }catch(_){
-        $('#apiDot').className = 'dot bad';
-        $('#gtfsDot').className = 'dot bad';
-        $('#liveDot').className = 'dot bad';
+        $('#apiDot').classList.add('ok');
+        (s.gtfs ? $('#gtfsDot').classList.add('ok') : $('#gtfsDot').classList.add('no'));
+        (s.live ? $('#liveDot').classList.add('ok')  : $('#liveDot').classList.add('no'));
+      }catch(e){
+        $('#apiDot').classList.add('no');
+        $('#gtfsDot').classList.add('no');
+        $('#liveDot').classList.add('no');
       }
     }
-    refreshStatus();
 
-    // keresés
-    async function search(){
-      const q = $('#q').value.trim();
-      if(q.length < 2){
-        alert('Írj be legalább 2 karaktert.');
-        return;
-      }
-      const stops = await api('/api/stops/search?q='+encodeURIComponent(q));
-      $('#rows').innerHTML = '';
-      $('#resWrap').style.display = 'none';
-      const mw = $('#multi'), mwrap = $('#multiWrap');
-      mw.innerHTML = '';
-      mwrap.style.display = 'none';
-
-      if(!stops.length){
+    function showChoices(stops){
+      const box = $('#choose');
+      box.innerHTML = '';
+      if (!stops || !stops.length){
+        box.style.display = 'none';
         alert('Nincs találat erre a névre.');
         return;
       }
-      if(stops.length === 1){
-        loadStop(stops[0].stop_id, stops[0].stop_name);
-        return;
+      for (const s of stops){
+        const div = document.createElement('div');
+        div.className = 'selectItem';
+        div.textContent = `${s.stop_name} • (${s.stop_id})`;
+        div.onclick = () => loadDepartures(s);
+        box.appendChild(div);
       }
-      // több találat: lista
-      mwrap.style.display = 'block';
-      stops.slice(0, 30).forEach(s => {
-        const b = document.createElement('span');
-        b.className = 'pill';
-        b.textContent = `${s.stop_name} • (${s.stop_id})`;
-        b.onclick = () => loadStop(s.stop_id, s.stop_name);
-        mw.appendChild(b);
-      });
+      box.style.display = 'block';
+      $('#result').style.display = 'none';
     }
 
-    async function loadStop(stopId, stopName){
-      $('#multiWrap').style.display = 'none';
-      $('#rows').innerHTML = '';
-      $('#resWrap').style.display = 'block';
-      $('#stopTitle').textContent = `Megálló: ${stopName} • (${stopId})`;
+    async function search(){
+      const q = $('#q').value.trim();
+      if (q.length < 2){
+        alert('Írj be legalább 2 karaktert.');
+        return;
+      }
+      $('#hint').textContent = 'Keresés…';
+      $('#choose').style.display = 'none';
+      $('#result').style.display = 'none';
+      const stops = await api(`/api/stops/search?q=${encodeURIComponent(q)}`);
+      if (stops.length === 1){
+        await loadDepartures(stops[0]);
+      }else{
+        showChoices(stops);
+      }
+      $('#hint').textContent = 'Válassz megállót a listából, vagy pontosíts a néven.';
+    }
 
-      const data = await api(`/api/stops/${encodeURIComponent(stopId)}/next_departures?minutes=60`);
-      const tbody = $('#rows');
-      if(!data.results || !data.results.length){
+    async function loadDepartures(stop){
+      $('#choose').style.display = 'none';
+      $('#result').style.display = 'block';
+      $('#stopTitle').textContent = `Megálló: ${stop.stop_name} • (${stop.stop_id})`;
+      const data = await api(`/api/stops/${encodeURIComponent(stop.stop_id)}/next_departures?minutes=60`);
+      const tbody = $('#tbody');
+      tbody.innerHTML = '';
+      if (!data.results || !data.results.length){
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td class="muted" colspan="4">Nincs közelgő indulás.</td>`;
+        tr.innerHTML = `<td colspan="4" class="hint">Nincs indulás a következő 60 percben.</td>`;
         tbody.appendChild(tr);
         return;
       }
-      data.results.forEach(r => {
-        const t = new Date(r.time_iso);
-        const hh = String(t.getHours()).padStart(2,'0');
-        const mm = String(t.getMinutes()).padStart(2,'0');
+      for (const r of data.results){
         const tr = document.createElement('tr');
+        const liveDot = r.is_live ? '<span class="dot ok"></span>' : '–';
+        // time_iso -> HH:MM
+        const hhmm = (r.time_iso || '').slice(11, 16);
         tr.innerHTML = `
-          <td>${r.route || '-'}</td>
-          <td>${r.destination || '-'}</td>
-          <td>${hh}:${mm}</td>
-          <td>${r.is_live ? '<span class="liveDot"></span>' : '–'}</td>
-        `;
+          <td>${r.route || ''}</td>
+          <td>${r.destination || ''}</td>
+          <td>${hhmm || ''}</td>
+          <td>${liveDot}</td>`;
         tbody.appendChild(tr);
-      });
+      }
     }
 
+    // események
     $('#go').onclick = search;
-    $('#q').addEventListener('keydown', e => { if(e.key === 'Enter') search(); });
+    $('#q').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+
+    // induláskor státusz frissítés
+    refreshStatus();
   </script>
 </body>
 </html>
