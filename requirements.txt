@@ -3,3 +3,6 @@ uvicorn
 requests
 pandas
 xmltodict
+uvicorn[standard]
+aiohttp
+python-dateutil
