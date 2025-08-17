@@ -1,136 +1,84 @@
-# -*- coding: utf-8 -*-
-"""
-siri_live.py
--------------
-BODS SIRI-VM (VehicleMonitoring) feed feldolgozó.
-A feed XML-jét letölti, megkeresi az adott Stop ID-hoz tartozó közelgő indulásokat,
-és rendezett JSON-szerű listát ad vissza.
-
-Használat (példa):
-    from siri_live import get_live_departures
-    deps = get_live_departures(
-        stop_id="1980SN12619A",
-        minutes=60,
-        api_key=os.environ["BODS_API_KEY"],
-        feed_id=os.environ.get("BODS_FEED_ID", "7721"),
-    )
-"""
+# siri_live.py
+# ----------------------
+# SIRI VehicleMonitoring feed letöltése és stop szerinti "következő indulások" kinyerése.
 
 from __future__ import annotations
+
 import os
 import requests
 import xmltodict
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Iterable, Union
+from datetime import datetime, timedelta, timezone
+from typing import List, Dict, Any, Optional
 
 
 class SiriLiveError(Exception):
-    """Általános hiba a SIRI-VM feldolgozás során."""
+    """Belső kivétel a SIRI hibák jelzésére."""
 
 
-def _parse_dt(s: Optional[str]) -> Optional[datetime]:
-    """ISO idő (pl. 2025-08-16T18:10:00+00:00) -> aware UTC datetime."""
-    if not s:
-        return None
+def _require_env(name: str) -> str:
+    val = os.getenv(name)
+    if not val:
+        raise SiriLiveError(f"Missing environment variable: {name}")
+    return val
+
+
+def _parse_iso(ts: str) -> datetime:
+    """
+    ISO 8601 időpontok parse-olása (a BODS +00:00 / Z formátumokat is ad).
+    """
+    # Normálizáljuk: az xmltodict már stringet ad vissza
     try:
-        # Python 3.11+ tudja ezt közvetlenül is, de biztosra megyünk:
-        # cseréljük a 'Z'-t +00:00-ra, ha lenne
-        s = s.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(s)
-        # biztosítsuk, hogy aware legyen (ha netán nincs tz info)
+        # Python 3.11+: fromisoformat kezeli a +00:00 formát is
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        else:
-            dt = dt.astimezone(timezone.utc)
-        return dt
-    except Exception:
-        return None
+        return dt.astimezone(timezone.utc)
+    except Exception as exc:
+        raise SiriLiveError(f"Bad timestamp in feed: {ts}") from exc
 
 
-def _as_list(x: Union[List[Any], Any, None]) -> List[Any]:
-    """xmltodict gyakran dict-et ad list helyett; normalizáljuk listára."""
-    if x is None:
-        return []
-    if isinstance(x, list):
-        return x
-    return [x]
-
-
-def _best_time(call: Dict[str, Any]) -> Optional[datetime]:
+def _fetch_vm_xml(feed_id: str, api_key: str) -> Dict[str, Any]:
     """
-    MonitoredCall/OnwardCall elemből válasszunk időt: ExpectedDepartureTime,
-    aztán AimedDepartureTime, aztán ExpectedArrivalTime/AimedArrivalTime.
+    BODS datafeed letöltése (VehicleMonitoring XML).
+    A datafeed végpont NEM támogatja a StopMonitoring query paramétereket,
+    csak az api_key-t – a többit nekünk kell szűrni a kliens oldalon.
     """
-    keys = [
-        "ExpectedDepartureTime",
-        "AimedDepartureTime",
-        "ExpectedArrivalTime",
-        "AimedArrivalTime",
-    ]
-    for k in keys:
-        if k in call:
-            dt = _parse_dt(call.get(k))
-            if dt:
-                return dt
-    return None
+    url = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/{feed_id}/"
+    params = {"api_key": api_key}
+
+    try:
+        resp = requests.get(url, params=params, timeout=20)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise SiriLiveError(f"Network error while calling BODS: {exc}") from exc
+
+    # XML → dict
+    try:
+        data = xmltodict.parse(resp.text)
+        return data
+    except Exception as exc:
+        raise SiriLiveError("Failed to parse SIRI XML") from exc
 
 
-def _extract_calls_for_stop(journey: Dict[str, Any], stop_id: str) -> List[datetime]:
+def _iter_vehicle_activity(vm_dict: Dict[str, Any]):
     """
-    Egy MonitoredVehicleJourney-ből kiszedi az adott StopPointRef-hez tartozó időpontokat.
-    - MonitoredCall (aktuális)
-    - OnwardCalls/OnwardCall (következő megállók)
-    - fallback: ha OriginRef == stop_id, akkor OriginAimedDepartureTime/ExpectedDepartureTime
+    Biztonságos iterátor a VehicleActivity elemekre.
     """
-    times: List[datetime] = []
-
-    # MonitoredCall
-    mc = journey.get("MonitoredCall")
-    if isinstance(mc, dict) and mc.get("StopPointRef") == stop_id:
-        t = _best_time(mc)
-        if t:
-            times.append(t)
-
-    # OnwardCalls
-    oc_root = journey.get("OnwardCalls")
-    if isinstance(oc_root, dict):
-        onward_calls = _as_list(oc_root.get("OnwardCall"))
-        for oc in onward_calls:
-            if isinstance(oc, dict) and oc.get("StopPointRef") == stop_id:
-                t = _best_time(oc)
-                if t:
-                    times.append(t)
-
-    # Fallback: ha épp a kiinduló megálló az adott stop
-    if journey.get("OriginRef") == stop_id:
-        # Előnyben a "Expected..." ha van, különben "Aimed..."
-        cand = (
-            journey.get("OriginExpectedDepartureTime")
-            or journey.get("OriginAimedDepartureTime")
-        )
-        t = _parse_dt(cand)
-        if t:
-            times.append(t)
-
-    return times
-
-
-def _pick_destination(journey: Dict[str, Any]) -> str:
-    """Cél meghatározása emberbarát módon."""
-    return (
-        journey.get("DestinationName")
-        or journey.get("DestinationRef")
-        or "—"
-    )
-
-
-def _pick_route(journey: Dict[str, Any]) -> str:
-    """Járatszám/published line name kiválasztása."""
-    return (
-        journey.get("PublishedLineName")
-        or journey.get("LineRef")
-        or "?"
-    )
+    try:
+        svc = vm_dict["Siri"]["ServiceDelivery"]
+        vmd = svc["VehicleMonitoringDelivery"]
+        # A feed lehet listás vagy egy elemű – normalizáljuk
+        if isinstance(vmd, list):
+            # Vegyük az első (legfrissebb) delivery-t
+            vmd = vmd[0]
+        va = vmd.get("VehicleActivity", [])
+        if isinstance(va, dict):
+            va = [va]
+        for item in va:
+            yield item
+    except KeyError:
+        # Üres / nincs aktivitás
+        return
 
 
 def get_live_departures(
@@ -138,87 +86,79 @@ def get_live_departures(
     minutes: int,
     api_key: Optional[str] = None,
     feed_id: Optional[str] = None,
-    session: Optional[requests.Session] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Visszaadja az indulásokat az adott Stop ID-hoz.
-    - stop_id: pl. '1980SN12619A'
-    - minutes: időablak (0..N perc a jelentéstől számítva)
-    - api_key: BODS API kulcs
-    - feed_id: BODS feed id (Bluestarhoz tipikusan '7721')
+    Élő indulások adott megállóra a SIRI VehicleMonitoring feedből.
+
+    Logika:
+    - letöltjük a feedet;
+    - végigmegyünk a VehicleActivity elemeken;
+    - azokat vesszük, ahol MonitoredCall/StopPointRef == stop_id;
+    - kivesszük az ExpectedDepartureTime | AimedDepartureTime értéket;
+    - csak a 'minutes' időablakba esőket adjuk vissza.
     """
-    api_key = api_key or os.environ.get("BODS_API_KEY")
-    feed_id = feed_id or os.environ.get("BODS_FEED_ID")
+    if not stop_id:
+        raise SiriLiveError("stop_id is required")
 
-    if not api_key:
-        raise SiriLiveError("Hiányzik a BODS_API_KEY (környezeti változó).")
-    if not feed_id:
-        raise SiriLiveError("Hiányzik a BODS_FEED_ID (környezeti változó).")
+    api_key = api_key or _require_env("BODS_API_KEY")
+    feed_id = feed_id or _require_env("BODS_FEED_ID")
 
-    url = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/{feed_id}/"
-    params = {"api_key": api_key}
+    vm = _fetch_vm_xml(feed_id=feed_id, api_key=api_key)
 
-    sess = session or requests.Session()
-    try:
-        r = sess.get(url, params=params, timeout=30)
-        r.raise_for_status()
-    except requests.HTTPError as e:
-        # A BODS időnként HTML hibát ad; továbbítjuk a részleteket
-        raise SiriLiveError(f"HTTP hiba a BODS felől: {e} – {getattr(e.response, 'text', '')[:500]}") from e
-    except Exception as e:
-        raise SiriLiveError(f"Hálózati hiba a BODS hívásban: {e}") from e
-
-    try:
-        siri = xmltodict.parse(r.content)
-    except Exception as e:
-        raise SiriLiveError(f"Nem sikerült XML-t parse-olni: {e}") from e
-
-    # Navigáljunk a VehicleActivity-ig
-    try:
-        sd = siri["Siri"]["ServiceDelivery"]
-        vmd = sd["VehicleMonitoringDelivery"]
-        activities = _as_list(vmd.get("VehicleActivity"))
-    except Exception as e:
-        # Ha nincs activity, térjünk vissza üres listával
-        activities = []
-
-    now_utc = datetime.now(timezone.utc)
-    window_end = now_utc + timedelta(minutes=max(0, minutes))
+    now = datetime.now(timezone.utc)
+    horizon = now + timedelta(minutes=int(minutes))
 
     results: List[Dict[str, Any]] = []
 
-    for act in activities:
-        if not isinstance(act, dict):
+    for act in _iter_vehicle_activity(vm):
+        mj = act.get("MonitoredVehicleJourney", {}) or {}
+
+        # A megálló, ahol most várható megállás
+        mc = mj.get("MonitoredCall", {}) or {}
+        stop_ref = mc.get("StopPointRef")
+
+        if not stop_ref or str(stop_ref).strip().upper() != str(stop_id).strip().upper():
             continue
 
-        journey = act.get("MonitoredVehicleJourney")
-        if not isinstance(journey, dict):
+        # Idő – prefer ExpectedDepartureTime, fallback AimedDepartureTime/ExpectedArrivalTime
+        ts = (
+            mc.get("ExpectedDepartureTime")
+            or mc.get("AimedDepartureTime")
+            or mc.get("ExpectedArrivalTime")
+            or mc.get("AimedArrivalTime")
+        )
+        if not ts:
             continue
 
-        # időpont(ok) ehhez a megállóhoz
-        times = _extract_calls_for_stop(journey, stop_id)
+        dep = _parse_iso(ts)
+        if not (now <= dep <= horizon):
+            continue
 
-        for t in times:
-            if t is None:
-                continue
-            # Szűrés az időablakra
-            if t < now_utc or t > window_end:
-                continue
+        # Adatok: vonalszám, cél
+        route = mj.get("PublishedLineName") or mj.get("LineRef") or ""
+        dest = mj.get("DestinationName") or mj.get("DestinationRef") or ""
 
-            results.append(
-                {
-                    "route": _pick_route(journey),
-                    "destination": _pick_destination(journey),
-                    "time_utc": t.isoformat(),
-                    "timestamp_unix": int(t.timestamp()),
-                    "source": "BODS SIRI-VM",
-                }
-            )
+        results.append(
+            {
+                "route": str(route),
+                "destination": str(dest),
+                "time": dep.isoformat(),
+            }
+        )
 
-    # Rendezés idő szerint
-    results.sort(key=lambda x: x["timestamp_unix"])
+    # rendezés idő szerint
+    results.sort(key=lambda x: x["time"])
     return results
-# --- a siri_live.py legvégére tedd ---
-def get_next_departures(stop_id: str, minutes: int, api_key=None, feed_id=None):
-    """Visszafelé kompatibilis alias a régi hívásnévhez."""
+
+
+# --- Visszafelé kompatibilis alias (ha a frontend ezt hívja) ---
+def get_next_departures(
+    stop_id: str,
+    minutes: int,
+    api_key: Optional[str] = None,
+    feed_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Alias a régi névre – ugyanazt csinálja, mint get_live_departures.
+    """
     return get_live_departures(stop_id=stop_id, minutes=minutes, api_key=api_key, feed_id=feed_id)
