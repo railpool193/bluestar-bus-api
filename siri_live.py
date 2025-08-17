@@ -3,7 +3,7 @@ import requests
 import xmltodict
 
 # --- Beállítások (ENV) ---
-BODS_FEED_URL = "https://data.bus-data.dft.gov.uk/api/siri/2.0/stop-monitoring"
+BODS_FEED_URL = "https://data.bus-data.dft.gov.uk/api/v1/datafeed/"
 BODS_API_KEY = os.getenv("BODS_API_KEY") or os.getenv("BODS_API", "")
 
 # --- Saját kivételek ---
