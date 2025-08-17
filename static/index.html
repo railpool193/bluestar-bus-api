@@ -3,157 +3,190 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Bluestar Bus – Megálló keresés és indulások</title>
+  <title>Bluestar Bus – Megálló keresés</title>
+  <link rel="stylesheet" href="/static/style.css">
   <style>
-    :root{--fg:#0b0b0c;--muted:#6a6f76;--ok:#0aa84f;--warn:#e67e22;--err:#c0392b;--bg:#ffffff}
-    *{box-sizing:border-box} body{margin:0;font:16px/1.4 system-ui,Segoe UI,Roboto,Arial;background:#f5f7fb;color:var(--fg)}
-    header{background:#0d1b2a;color:#fff;padding:14px 16px;font-weight:700}
-    main{max-width:860px;margin:20px auto;padding:0 16px}
-    .card{background:var(--bg);border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.06);padding:14px 14px;margin-bottom:16px}
-    .row{display:flex;gap:10px;flex-wrap:wrap}
-    .row > *{flex:1 1 240px}
-    input,button{padding:10px 12px;border:1px solid #d9dde4;border-radius:8px;font:inherit}
-    input:focus{outline:none;border-color:#4c7af1;box-shadow:0 0 0 3px rgba(76,122,241,.18)}
-    button{background:#2d6cdf;color:#fff;border-color:#2d6cdf;cursor:pointer}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    .hint{color:var(--muted);font-size:13px;margin-top:6px}
-    ul.results{list-style:none;margin:10px 0 0;padding:0;border:1px solid #e4e7ee;border-radius:8px;overflow:hidden}
-    ul.results li{padding:10px 12px;border-top:1px solid #e9ecf3;background:#fff;display:flex;justify-content:space-between;gap:12px;align-items:center}
-    ul.results li:first-child{border-top:none}
-    ul.results li small{color:var(--muted)}
-    ul.results li:hover{background:#f3f6ff;cursor:pointer}
-    ul.results li.active{background:#e9f3ff}
-    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
-    .badge-live{background:#e8fff2;color:#0a7a43;border:1px solid #a8e7c9}
-    .badge-tt{background:#fff8e6;color:#8d5800;border:1px solid #f0d195}
-    .err{color:var(--err);margin-top:8px}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:10px;border-bottom:1px solid #eef1f6;text-align:left}
-    th{color:#475062;font-weight:600}
-    .muted{color:var(--muted)}
+    /* Ha van külön style.css, ez csak apró kiegészítés */
+    body { max-width: 960px; margin: 0 auto; padding: 16px; font-family: system-ui, sans-serif; }
+    h1 { margin: 0 0 12px; }
+    .card { background: #0f1115; color: #eaeaea; border: 1px solid #252a34; border-radius: 12px; padding: 16px; margin: 12px 0; }
+    .row { display: grid; gap: 12px; grid-template-columns: 1fr 120px 120px; }
+    input, select, button { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #343b47; background: #151923; color: #eaeaea; }
+    button { background: #3b82f6; border: none; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { padding: 10px; border-bottom: 1px solid #2a3140; text-align: left; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .75rem; }
+    .pill-live { background: #22c55e22; color: #22c55e; border: 1px solid #22c55e55; }
+    .muted { color: #94a3b8; }
+    .hint { font-size: .85rem; color: #a1a1aa; margin-top: 6px; }
+    .small { font-size: .9rem; }
+    @media (max-width: 640px) {
+      .row { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <header>Bluestar Bus – Megálló keresés</header>
+  <h1>Bluestar Bus – Megálló keresés</h1>
 
-  <main>
-    <section class="card">
-      <div class="row">
-        <div>
-          <label for="q">Megálló neve</label>
-          <input id="q" placeholder="pl. Hanover, Vincents Walk, West Quay..." />
-          <div class="hint">Írj be pár betűt, Enter, majd kattints a listából.</div>
-        </div>
-        <div style="max-width:160px">
-          <label for="minutes">Időablak (perc)</label>
-          <input id="minutes" type="number" min="5" max="360" value="60" />
-        </div>
-        <div style="align-self:end;max-width:140px">
-          <button id="searchBtn">Keresés</button>
-        </div>
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="q" class="small muted">Megálló neve</label>
+        <input id="q" type="text" placeholder="Írj pár betűt (pl. Vincent) és Enter…" />
+        <div class="hint">Tipp: írd be a települést is (pl. <em>Southampton, Vincent</em>), hogy könnyebb legyen találni.</div>
       </div>
+      <div>
+        <label for="minutes" class="small muted">Időablak (perc)</label>
+        <select id="minutes">
+          <option value="30">30</option>
+          <option value="60" selected>60</option>
+          <option value="90">90</option>
+          <option value="120">120</option>
+        </select>
+      </div>
+      <div>
+        <label class="small muted">&nbsp;</label>
+        <button id="btn-search">Keresés</button>
+      </div>
+    </div>
 
-      <ul id="results" class="results" aria-live="polite"></ul>
-      <div id="searchError" class="err" role="alert" hidden></div>
-    </section>
+    <div id="stops" class="hint" style="margin-top:12px;">Nincs találat. Kezdj el gépelni és nyomj Entert vagy kattints a Keresés gombra.</div>
+  </div>
 
-    <section class="card">
-      <h3 id="selTitle" class="muted" style="margin:0 0 10px">Nincs kiválasztott megálló</h3>
-      <table>
-        <thead>
-          <tr><th>Route</th><th>Destination</th><th>Time</th><th>Forrás</th></tr>
-        </thead>
-        <tbody id="tbody">
-          <tr><td colspan="4" class="muted">Nincs indulás ebben az időablakban.</td></tr>
-        </tbody>
-      </table>
-      <div id="depError" class="err" role="alert" hidden></div>
-    </section>
-  </main>
+  <div class="card">
+    <h3 id="chosen-stop" class="muted" style="margin-top:0;">Nincs kiválasztott megálló</h3>
+    <table id="results-table" style="display:none;">
+      <thead>
+        <tr>
+          <th>Route</th>
+          <th>Destination</th>
+          <th>Time</th>
+          <th>Forrás</th>
+        </tr>
+      </thead>
+      <tbody id="results-body"></tbody>
+    </table>
+    <div id="no-results" class="hint">Nincs indulás ebben az időablakban.</div>
+  </div>
 
   <script>
-    const $ = id => document.getElementById(id);
-    const q = $('q'), minutes = $('minutes'), results = $('results');
-    const searchBtn = $('searchBtn'), selTitle = $('selTitle'), tbody = $('tbody');
-    const searchError = $('searchError'), depError = $('depError');
-    let activeLi = null;
+    const qEl = document.getElementById('q');
+    const minutesEl = document.getElementById('minutes');
+    const btnSearch = document.getElementById('btn-search');
+    const stopsEl = document.getElementById('stops');
 
-    function showSearchError(msg){ searchError.textContent = msg; searchError.hidden = !msg; }
-    function showDepError(msg){ depError.textContent = msg; depError.hidden = !msg; }
+    const chosenStopEl = document.getElementById('chosen-stop');
+    const tableEl = document.getElementById('results-table');
+    const tbodyEl = document.getElementById('results-body');
+    const noResultsEl = document.getElementById('no-results');
 
-    async function searchStops(){
-      showSearchError('');
-      results.innerHTML = '';
-      activeLi = null;
+    async function apiGet(path) {
+      const res = await fetch(path, { headers: { 'accept': 'application/json' }});
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.json();
+    }
 
-      const term = q.value.trim();
-      if(!term){ showSearchError('Adj meg legalább 2 karaktert.'); return; }
-
-      try{
-        searchBtn.disabled = true;
-        const r = await fetch(`/api/stops/search?q=${encodeURIComponent(term)}`);
-        if(!r.ok) throw new Error(`HTTP ${r.status}`);
-        const data = await r.json(); // vár: [{stop_id, stop_name}]
-        if(!Array.isArray(data) || !data.length){
-          showSearchError('Nincs találat erre a névre.');
-          return;
-        }
-        // Listázás – stop_name + stop_id látható
-        for(const stop of data){
+    async function searchStops() {
+      const q = qEl.value.trim();
+      if (!q) { stopsEl.textContent = 'Írj be valamit a kereséshez.'; return; }
+      stopsEl.textContent = 'Keresés…';
+      try {
+        const data = await apiGet(`/api/stops/search?q=${encodeURIComponent(q)}`);
+        if (!data || !data.length) { stopsEl.textContent = 'Nincs találat.'; return; }
+        // listázzuk kattinthatóvá
+        const ul = document.createElement('ul');
+        ul.style.listStyle = 'none';
+        ul.style.padding = '0';
+        data.forEach(s => {
           const li = document.createElement('li');
-          li.innerHTML = `<span>${stop.stop_name}</span><small>[${stop.stop_id}]</small>`;
-          li.addEventListener('click', ()=> {
-            if(activeLi) activeLi.classList.remove('active');
-            li.classList.add('active');
-            activeLi = li;
-            loadDepartures(stop.stop_id, stop.stop_name);
+          li.style.padding = '8px 0';
+          li.style.borderBottom = '1px solid #2a3140';
+          const a = document.createElement('a');
+          a.href = '#';
+          a.textContent = `${s.stop_name} — ${s.stop_id}`;
+          a.addEventListener('click', (e) => {
+            e.preventDefault();
+            loadDepartures(s.stop_id, s.stop_name);
           });
-          results.appendChild(li);
-        }
-      }catch(err){
-        showSearchError(`Keresési hiba: ${err.message}`);
-      }finally{
-        searchBtn.disabled = false;
-      }
-    }
-
-    async function loadDepartures(stopId, stopName){
-      showDepError('');
-      selTitle.textContent = `${stopName} — ${stopId}`;
-      tbody.innerHTML = `<tr><td colspan="4" class="muted">Betöltés…</td></tr>`;
-
-      try{
-        const mins = Math.max(5, Math.min(360, Number(minutes.value)||60));
-        const r = await fetch(`/api/stops/${encodeURIComponent(stopId)}/next_departures?minutes=${mins}`);
-        if(!r.ok) throw new Error(`HTTP ${r.status}`);
-        const data = await r.json(); // {stop_id, minutes, results:[{route,destination,time_iso,is_live}]}
-
-        const rows = (data.results||[]).map(item=>{
-          const t = new Date(item.time_iso);
-          const time = isNaN(t) ? item.time_iso : t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-          const src = item.is_live
-            ? `<span class="badge badge-live" title="Élő adat (SIRI-VM)">ÉLŐ</span>`
-            : `<span class="badge badge-tt" title="Menetrendi (GTFS)">Menetrend</span>`;
-          return `<tr>
-            <td>${item.route||''}</td>
-            <td>${item.destination||''}</td>
-            <td>${time}</td>
-            <td>${src}</td>
-          </tr>`;
+          li.appendChild(a);
+          ul.appendChild(li);
         });
-
-        tbody.innerHTML = rows.length ? rows.join('') :
-          `<tr><td colspan="4" class="muted">Nincs indulás ebben az időablakban.</td></tr>`;
-
-      }catch(err){
-        showDepError(`Hiba az indulásoknál: ${err.message}`);
-        tbody.innerHTML = `<tr><td colspan="4" class="muted">–</td></tr>`;
+        stopsEl.innerHTML = '';
+        stopsEl.appendChild(ul);
+      } catch (err) {
+        stopsEl.textContent = `Hiba a keresésnél: ${err.message}`;
       }
     }
 
-    // Enterre keresés
-    q.addEventListener('keydown', e => { if(e.key === 'Enter') searchStops(); });
-    searchBtn.addEventListener('click', searchStops);
+    async function loadDepartures(stopId, stopName) {
+      chosenStopEl.textContent = `${stopName} — ${stopId}`;
+      tbodyEl.innerHTML = '';
+      tableEl.style.display = 'none';
+      noResultsEl.style.display = 'block';
+
+      const minutes = Number(minutesEl.value || 60);
+      try {
+        const data = await apiGet(`/api/stops/${encodeURIComponent(stopId)}/next_departures?minutes=${minutes}`);
+        const rows = (data && data.results) || [];
+        if (!rows.length) { return; }
+        noResultsEl.style.display = 'none';
+        tableEl.style.display = 'table';
+        rows.forEach(r => {
+          const tr = document.createElement('tr');
+          const tdRoute = document.createElement('td');
+          const tdDest = document.createElement('td');
+          const tdTime = document.createElement('td');
+          const tdLive = document.createElement('td');
+
+          tdRoute.textContent = r.route || '';
+          tdDest.textContent  = r.destination || '';
+
+          // idő formázás helyi szerint
+          const dt = r.time_iso ? new Date(r.time_iso) : null;
+          tdTime.textContent = dt ? dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+          // live jelző
+          if (r.is_live) {
+            const pill = document.createElement('span');
+            pill.className = 'pill pill-live';
+            pill.textContent = 'live';
+            tdLive.appendChild(pill);
+          } else {
+            tdLive.innerHTML = '<span class="muted">GTFS</span>';
+          }
+
+          tr.appendChild(tdRoute);
+          tr.appendChild(tdDest);
+          tr.appendChild(tdTime);
+          tr.appendChild(tdLive);
+          tbodyEl.appendChild(tr);
+        });
+      } catch (err) {
+        noResultsEl.style.display = 'block';
+        noResultsEl.textContent = `Hiba a letöltésnél: ${err.message}`;
+      }
+    }
+
+    // UI események
+    btnSearch.addEventListener('click', searchStops);
+    qEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') searchStops();
+    });
+
+    // opcionális: státusz kiírás
+    (async () => {
+      try {
+        const st = await apiGet('/api/status');
+        const ok = st?.status === 'ok';
+        const gtfs = st?.gtfs_loaded ? 'betöltve' : 'nincs betöltve';
+        const siri = st?.siri_configured ? 'SIRI OK' : 'SIRI nincs';
+        const p = document.createElement('div');
+        p.className = 'hint';
+        p.textContent = ok ? `Státusz: OK • GTFS: ${gtfs} • ${siri}` : 'Státusz: hiba';
+        document.body.insertBefore(p, document.body.firstChild.nextSibling);
+      } catch { /* csendben: nem létfontosságú */ }
+    })();
   </script>
 </body>
 </html>
