@@ -3,147 +3,131 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bluestar Bus – megálló & járat kereső</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='80'>🚌</text></svg>">
+  <title>Bluestar Bus – megálló & élő indulások</title>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
-    :root{
-      --bg:#0b1220; --card:#111a2b; --text:#eaf2ff; --muted:#b8c3d9;
-      --ok:#29d; --bad:#e74c3c; --btn:#4e8df5; --btn-h:#6aa3ff; --chip:#1b2740;
-    }
-    *{box-sizing:border-box}
-    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
-    .wrap{max-width:980px;margin:32px auto;padding:0 16px}
-    h1{font-weight:800;margin:0 0 16px}
-    .card{background:var(--card);border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
-    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-    input[type=text],input[type=number]{width:100%;padding:14px 16px;border-radius:12px;border:1px solid #26324b;background:#0e1628;color:var(--text)}
-    .btn{background:var(--btn);color:#fff;border:0;border-radius:12px;padding:14px 18px;font-weight:700;cursor:pointer}
-    .btn:hover{background:var(--btn-h)}
-    .chips{display:flex;gap:8px;margin-top:12px}
-    .chip{background:var(--chip);border-radius:999px;padding:6px 10px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+    :root { --bg:#0f172a; --card:#ffffff; --txt:#0f172a; --muted:#64748b; --brand:#2563eb; --ok:#16a34a; --bad:#ef4444; }
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:#fff}
+    .wrap{max-width:1100px;margin:32px auto;padding:0 16px}
+    h1{font-size:clamp(24px,3.5vw,40px);margin:0 0 24px}
+    .card{background:var(--card);color:var(--txt);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.25);padding:20px}
+    .row{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+    .grow{flex:1 1 520px}
+    input[type=text],input[type=number]{width:100%;padding:14px 16px;border-radius:12px;border:1px solid #e2e8f0;font-size:16px;outline:none}
+    button{background:var(--brand);border:none;color:#fff;padding:14px 18px;border-radius:12px;font-weight:700;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .status{display:flex;gap:12px;margin-top:14px}
+    .pill{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border-radius:999px;background:#f1f5f9;color:#0f172a;font-weight:600}
     .dot{width:10px;height:10px;border-radius:50%}
-    .ok{background:#24d164}.bad{background:#e74c3c}.warn{background:#f1c40f}
-    .list{margin-top:14px}
-    .item{padding:10px 12px;border-radius:10px;background:#0e1628;margin:6px 0;cursor:pointer}
-    .item:hover{background:#12203a}
-    table{width:100%;border-collapse:collapse;margin-top:14px}
-    th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #1a2944}
-    th{opacity:.9}
-    .pill{display:inline-flex;align-items:center;gap:6px;background:#0e1628;border:1px solid #253354;border-radius:999px;padding:6px 10px}
+    .ok{background:var(--ok)} .bad{background:var(--bad)}
+    .results{margin-top:18px;border-top:1px solid #e5e7eb;padding-top:12px}
+    ul.sugg{list-style:none;margin:8px 0 0;padding:0;border:1px solid #e2e8f0;border-radius:12px;max-height:260px;overflow:auto}
+    ul.sugg li{padding:10px 12px;cursor:pointer}
+    ul.sugg li:hover{background:#f1f5f9}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:12px;border-bottom:1px solid #e5e7eb}
+    tfoot{color:var(--muted);font-size:12px}
+    .muted{color:var(--muted)}
+    .footer{margin-top:18px;color:#cbd5e1;font-size:12px;text-align:center}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>🚌 Bluestar Bus – megálló & járat kereső</h1>
+    <h1>Bluestar Bus – Megálló keresés & élő indulások</h1>
 
     <div class="card">
       <div class="row">
-        <div style="flex:1 1 520px">
-          <label>Megálló név</label>
-          <input id="q" type="text" placeholder='pl. "Vincent"' />
-          <div id="multi" class="list" style="display:none"></div>
+        <div class="grow">
+          <label class="muted">Megálló név (pl. „Vincent”)</label>
+          <input id="q" type="text" placeholder="Kezdj el írni…" autocomplete="off" />
+          <ul id="sugg" class="sugg" hidden></ul>
         </div>
 
         <div>
-          <label>Időablak (perc)</label>
-          <input id="win" type="number" min="5" max="240" value="60" style="width:130px" />
+          <label class="muted">Időablak (perc)</label>
+          <input id="mins" type="number" value="60" min="5" max="240" />
         </div>
 
         <div>
-          <label style="opacity:0"> </label>
-          <button id="go" class="btn">Keresés</button>
+          <label class="muted" style="visibility:hidden"> </label>
+          <button id="go">Indulások lekérése</button>
         </div>
       </div>
 
-      <div class="chips">
-        <span class="chip"><span id="apiDot" class="dot bad"></span> API</span>
-        <span class="chip"><span id="gtfsDot" class="dot bad"></span> GTFS</span>
-        <span class="chip"><span id="liveDot" class="dot bad"></span> Live</span>
+      <div class="status">
+        <span class="pill">API <span id="api-dot" class="dot bad"></span></span>
+        <span class="pill">GTFS <span id="gtfs-dot" class="dot bad"></span></span>
+        <span class="pill">Live <span id="live-dot" class="dot bad"></span></span>
       </div>
 
-      <div id="hint" style="margin-top:10px;color:var(--muted)">Írj be egy megállónevet, majd kattints egy találatra.</div>
+      <div id="picked" class="muted" style="margin-top:8px;">Választott megálló: <b id="picked-name">–</b> <span id="picked-id" class="muted"></span></div>
+
+      <div class="results" id="res"></div>
+      <div class="footer">UI build: <span id="build"></span> • ❤️</div>
     </div>
-
-    <div id="result" class="card" style="display:none;margin-top:16px"></div>
   </div>
 
-<script>
-const api = (p)=>fetch(p).then(r=>r.json());
+  <script>
+  const API = location.origin;
+  let picked = null;
 
-async function refreshStatus(){
-  try{
-    const s = await api('/api/status');
-    setDot('apiDot', true);
-    setDot('gtfsDot', !!s.gtfs);
-    setDot('liveDot', !!s.live);
-  }catch{ setDot('apiDot', false); setDot('gtfsDot', false); setDot('liveDot', false); }
-}
-function setDot(id, ok){ const el=document.getElementById(id); el.classList.remove('ok','bad'); el.classList.add(ok?'ok':'bad'); }
+  function el(id){return document.getElementById(id)}
+  const q = el('q'), sugg = el('sugg'), res = el('res');
 
-async function doSearch(){
-  const q = document.getElementById('q').value.trim();
-  const win = +document.getElementById('win').value || 60;
-  if(q.length < 2){ alert('Írj be legalább 2 karaktert.'); return; }
-
-  const listBox = document.getElementById('multi');
-  listBox.innerHTML=''; listBox.style.display='none';
-  document.getElementById('result').style.display='none';
-
-  let arr = [];
-  try { arr = await api('/api/stops/search?q='+encodeURIComponent(q)); }
-  catch { alert('Hiba a keresés közben.'); return; }
-
-  if(!arr || arr.length === 0){
-    listBox.style.display='block';
-    listBox.innerHTML = '<div class="item" style="cursor:default;opacity:.8">Nincs találat erre a névre.</div>';
-    return;
-  }
-  if(arr.length === 1){
-    fetchStop(arr[0].stop_id, arr[0].stop_name, win);
-    return;
+  async function status(){
+    try{
+      const j = await (await fetch(`${API}/api/status`,{cache:'no-store'})).json();
+      el('api-dot').className = 'dot ' + (j.status==='ok'?'ok':'bad');
+      el('gtfs-dot').className = 'dot ' + (j.gtfs?'ok':'bad');
+      el('live-dot').className = 'dot ' + (j.live?'ok':'bad');
+      el('build').textContent = j.build || '{{BUILD_ID}}';
+    }catch(e){/* ignore */}
   }
 
-  listBox.style.display='block';
-  listBox.innerHTML = '<div class="item" style="cursor:default;opacity:.8">Több megálló is van erre a névre. Válassz egyet:</div>' +
-    arr.map(s=>`<div class="item" data-id="${s.stop_id}" data-name="${s.stop_name}">${s.stop_name} <span class="pill" style="float:right">${s.stop_id}</span></div>`).join('');
-  listBox.querySelectorAll('.item[data-id]').forEach(el=>{
-    el.addEventListener('click', ()=> fetchStop(el.dataset.id, el.dataset.name, win));
-  });
-}
-
-async function fetchStop(id, name, win){
-  const resBox = document.getElementById('result');
-  resBox.style.display='block';
-  resBox.innerHTML = `<h3>Megálló: ${name} <span class="pill" style="margin-left:8px">${id}</span></h3><div style="opacity:.8">Betöltés…</div>`;
-
-  let data=null;
-  try{ data = await api(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${win}`); }
-  catch{ resBox.innerHTML='<div>Hiba történt az adatok letöltésekor.</div>'; return; }
-
-  const deps = (data && data.departures) ? data.departures : [];
-  if(deps.length===0){
-    resBox.innerHTML = `<h3>Megálló: ${name} <span class="pill" style="margin-left:8px">${id}</span></h3>
-                        <div style="opacity:.8">Nincs indulás ebben az időablakban.</div>`;
-    return;
+  async function search(name){
+    sugg.innerHTML = '';
+    sugg.hidden = true;
+    picked = null;
+    el('picked-name').textContent = '–';
+    el('picked-id').textContent = '';
+    if(!name || name.trim().length<2) return;
+    const data = await (await fetch(`${API}/api/stops/search?q=`+encodeURIComponent(name),{cache:'no-store'})).json();
+    if(!Array.isArray(data) || data.length===0){
+      const li = document.createElement('li'); li.textContent = 'Nincs találat.'; li.className='muted';
+      sugg.appendChild(li); sugg.hidden=false; return;
+    }
+    data.forEach(s=>{
+      const li = document.createElement('li');
+      li.textContent = `${s.stop_name} • ${s.stop_id}`;
+      li.onclick = ()=>{ picked = s; q.value = s.stop_name; sugg.hidden=true; el('picked-name').textContent=s.stop_name; el('picked-id').textContent='(' + s.stop_id + ')'; };
+      sugg.appendChild(li);
+    });
+    sugg.hidden = false;
   }
-  const rows = deps.map(d=>`<tr>
-    <td style="width:80px;font-weight:700">${d.route||''}</td>
-    <td>${(d.destination||'').replaceAll('<','&lt;')}</td>
-    <td style="width:90px">${d.time}</td>
-    <td style="width:70px;text-align:center">${d.live===true?'<span class="dot ok"></span>': d.live===false?'<span class="dot bad"></span>':'–'}</td>
-  </tr>`).join('');
 
-  resBox.innerHTML = `<h3>Megálló: ${name} <span class="pill" style="margin-left:8px">${id}</span></h3>
-  <table>
-    <thead><tr><th>Járat</th><th>Cél</th><th>Indulás</th><th>Élő</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
-}
+  async function loadDepartures(){
+    if(!picked){ alert('Előbb válassz megállót a listából!'); return; }
+    res.innerHTML = 'Betöltés…';
+    const mins = Math.max(5, Math.min(240, parseInt(el('mins').value||'60',10)));
+    const data = await (await fetch(`${API}/api/stops/${encodeURIComponent(picked.stop_id)}/next_departures?minutes=${mins}`,{cache:'no-store'})).json();
+    if(!Array.isArray(data) || data.length===0){ res.innerHTML = '<div class="muted">Nincs megjeleníthető indulás.</div>'; return; }
+    let html = '<table><thead><tr><th>Járat</th><th>Cél</th><th>Idő</th></tr></thead><tbody>';
+    data.forEach(d=>{ html += `<tr><td>${d.route||'-'}</td><td>${d.destination||'-'}</td><td>${d.time||'-'}</td></tr>`; });
+    html += `</tbody><tfoot><tr><td colspan="3">Összes: ${data.length}</td></tr></tfoot></table>`;
+    res.innerHTML = html;
+  }
 
-document.getElementById('go').addEventListener('click', doSearch);
-document.getElementById('q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') doSearch(); });
+  // események
+  q.addEventListener('input', e=> search(e.target.value));
+  q.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); loadDepartures(); }});
+  el('go').onclick = loadDepartures;
 
-refreshStatus();
-</script>
+  // első státusz frissítés
+  status();
+
+  // beégetett build azonosító (cache-biztos)
+  (function(){ const b='{{BUILD_ID}}'; if(b && b!=='{{'+'BUILD_ID'+'}}'){ el('build').textContent=b; }})();
+  </script>
 </body>
 </html>
