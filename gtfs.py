@@ -1,111 +1,174 @@
+import sqlite3
 import csv
-import datetime
-import logging
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
-logger = logging.getLogger("bluestar")
+# ---- importálás ----
 
-DATA_DIR = Path(__file__).parent / "data"
+def import_from_zip_to_sqlite(zf, db_path: str):
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
 
-# Fájlok betöltése
-stops = {}
-stop_times = []
-trips = {}
-routes = {}
+    cur.executescript("""
+    PRAGMA journal_mode=WAL;
+    DROP TABLE IF EXISTS stops;
+    DROP TABLE IF EXISTS routes;
+    DROP TABLE IF EXISTS trips;
+    DROP TABLE IF EXISTS stop_times;
 
-def load_data():
-    global stops, stop_times, trips, routes
+    CREATE TABLE stops (
+        stop_id TEXT PRIMARY KEY,
+        stop_code TEXT,
+        stop_name TEXT,
+        stop_lat REAL,
+        stop_lon REAL
+    );
 
-    # stops.txt
-    with open(DATA_DIR / "stops.txt", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            stops[row["stop_id"]] = row
+    CREATE TABLE routes (
+        route_id TEXT PRIMARY KEY,
+        route_short_name TEXT,
+        route_long_name TEXT
+    );
 
-    logger.info(f"Betöltve {len(stops)} megálló.")
+    CREATE TABLE trips (
+        trip_id TEXT PRIMARY KEY,
+        route_id TEXT,
+        service_id TEXT,
+        trip_headsign TEXT
+    );
 
-    # trips.txt
-    with open(DATA_DIR / "trips.txt", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            trips[row["trip_id"]] = row
+    CREATE TABLE stop_times (
+        trip_id TEXT,
+        arrival_time TEXT,
+        departure_time TEXT,
+        stop_id TEXT,
+        stop_sequence INTEGER
+    );
 
-    logger.info(f"Betöltve {len(trips)} járat.")
+    CREATE INDEX idx_stops_name ON stops(stop_name);
+    CREATE INDEX idx_stop_times_stop ON stop_times(stop_id);
+    CREATE INDEX idx_stop_times_trip ON stop_times(trip_id);
+    """)
 
-    # routes.txt
-    with open(DATA_DIR / "routes.txt", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            routes[row["route_id"]] = row
+    def load_csv(name, table, cols):
+        if name not in zf.namelist():
+            return
+        with zf.open(name) as f:
+            reader = csv.DictReader((line.decode("utf-8-sig") for line in f))
+            rows = []
+            for r in reader:
+                rows.append(tuple(r.get(c) for c in cols))
+                if len(rows) >= 5000:
+                    cur.executemany(f"INSERT INTO {table} ({','.join(cols)}) VALUES ({','.join(['?']*len(cols))})", rows)
+                    rows.clear()
+            if rows:
+                cur.executemany(f"INSERT INTO {table} ({','.join(cols)}) VALUES ({','.join(['?']*len(cols))})", rows)
 
-    logger.info(f"Betöltve {len(routes)} útvonal.")
+    load_csv("stops.txt", "stops", ["stop_id", "stop_code", "stop_name", "stop_lat", "stop_lon"])
+    load_csv("routes.txt", "routes", ["route_id", "route_short_name", "route_long_name"])
+    load_csv("trips.txt", "trips", ["trip_id", "route_id", "service_id", "trip_headsign"])
+    load_csv("stop_times.txt", "stop_times", ["trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence"])
 
-    # stop_times.txt
-    with open(DATA_DIR / "stop_times.txt", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            stop_times.append(row)
-
-    logger.info(f"Betöltve {len(stop_times)} megálló-időpont.")
+    conn.commit()
+    conn.close()
 
 
-def search_stops(query: str):
-    """Megálló keresése név szerint"""
-    query_lower = query.lower()
-    results = [
-        {"stop_id": s["stop_id"], "name": s["stop_name"]}
-        for s in stops.values()
-        if query_lower in s["stop_name"].lower()
-    ]
-    logger.info(f"Keresés: '{query}' → {len(results)} találat")
+# ---- keresés ----
+
+def search_stops(db_path: str, q: str, limit: int = 12):
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    like = f"%{q.strip()}%"
+    cur.execute(
+        """
+        SELECT stop_id, stop_code, stop_name, stop_lat, stop_lon
+        FROM stops
+        WHERE LOWER(stop_name) LIKE LOWER(?)
+        ORDER BY stop_name
+        LIMIT ?
+        """,
+        (like, limit),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+# ---- menetrendi indulások ----
+
+def _time_to_seconds(t: str) -> int:
+    # lehet 24:xx:xx feletti is
+    if not t:
+        return None
+    parts = t.split(":")
+    if len(parts) < 3:
+        return None
+    h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
+    return h * 3600 + m * 60 + s
+
+def get_scheduled_departures(db_path: str, stop_id: str, minutes: int):
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    # összejoinoljuk a szükséges mezőket
+    cur.execute("""
+    SELECT st.departure_time, r.route_short_name, r.route_long_name, t.trip_headsign
+    FROM stop_times st
+    JOIN trips t ON t.trip_id = st.trip_id
+    JOIN routes r ON r.route_id = t.route_id
+    WHERE st.stop_id = ?
+    """, (stop_id,))
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        return []
+
+    now = datetime.now(timezone.utc)
+    now_sec = now.hour*3600 + now.minute*60 + now.second
+    horizon = now_sec + minutes*60
+
+    out = []
+
+    for r in rows:
+        sec = _time_to_seconds(r["departure_time"])
+        if sec is None:
+            continue
+
+        # kezeljük az átnyúlást (02:xx:xx másnap)
+        if horizon < 24*3600:
+            if now_sec <= sec <= horizon:
+                out.append((sec, r))
+        else:
+            # két intervallum: [now_sec..86400) ∪ [0..horizon-86400]
+            over = horizon - 24*3600
+            if sec >= now_sec or sec <= over:
+                out.append((sec, r))
+
+    # idő szerint rendezve
+    out.sort(key=lambda x: x[0])
+
+    results = []
+    for sec, r in out[:40]:
+        # az ISO időpontot a mai dátum + sec alapján állítjuk elő (UTC zónában)
+        base_day = now.date()
+        # ha a sec kisebb, mint "most", és a horizont miatt másnapra esik:
+        day_offset = 0
+        if sec < now_sec and (now_sec + minutes*60) >= 24*3600:
+            day_offset = 1
+        hh = sec // 3600
+        mm = (sec % 3600) // 60
+        ss = sec % 60
+        dt = datetime(
+            base_day.year, base_day.month, base_day.day,
+            hh, mm, ss, tzinfo=timezone.utc
+        ) + timedelta(days=day_offset)
+
+        results.append({
+            "route": r["route_short_name"] or r["route_long_name"] or "?",
+            "destination": r["trip_headsign"] or "?",
+            "time_iso": dt.isoformat()
+        })
+
     return results
-
-
-def get_next_departures(stop_id: str, minutes: int = 60):
-    """Következő indulások lekérése"""
-    now = datetime.datetime.now()
-    future = now + datetime.timedelta(minutes=minutes)
-
-    logger.info(f"Indulások keresése: stop_id={stop_id}, intervallum={now.time()} - {future.time()}")
-
-    departures = []
-
-    for st in stop_times:
-        if st["stop_id"] != stop_id:
-            continue
-
-        trip_id = st["trip_id"]
-        trip = trips.get(trip_id)
-        if not trip:
-            logger.warning(f"Hiányzó trip: {trip_id}")
-            continue
-
-        route = routes.get(trip["route_id"])
-        if not route:
-            logger.warning(f"Hiányzó route: {trip['route_id']}")
-            continue
-
-        # Indulási idő feldolgozás
-        dep_time_str = st["departure_time"]
-        try:
-            h, m, s = map(int, dep_time_str.split(":"))
-            dep_time = now.replace(hour=h % 24, minute=m, second=s)
-        except Exception as e:
-            logger.error(f"Hibás időformátum: {dep_time_str} ({e})")
-            continue
-
-        if now <= dep_time <= future:
-            departures.append({
-                "route": route["route_short_name"],
-                "destination": trip.get("trip_headsign", ""),
-                "time": dep_time.strftime("%H:%M"),
-                "live": False,  # majd a siri_live jelzi ha van élő adat
-            })
-
-    logger.info(f"{len(departures)} indulás található a(z) {stop_id} megállóhoz.")
-
-    return sorted(departures, key=lambda x: x["time"])
-
-
-# modul betöltéskor hívjuk
-load_data()
