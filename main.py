@@ -1,128 +1,191 @@
 # main.py
-import os
-import csv
-import asyncio
-from typing import List, Optional
-
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+import os
+import sqlite3
+from typing import List, Dict, Any
+from datetime import datetime, timedelta, timezone
+import zoneinfo
 
-# --- SIRI élő lekérdező import ---
-SIRI_CONFIGURED = True
-_siri_import_error: Optional[str] = None
+# ---- Beállítások ----
+TZ = zoneinfo.ZoneInfo("Europe/London")
+GTFS_DB_PATH = os.getenv("GTFS_DB", "gtfs.db")
+BODS_API_KEY = os.getenv("BODS_API_KEY", "").strip()
 
-try:
-    # feltételezzük, hogy siri_live.py ugyanebben a mappában van
-    # és tartalmaz egy async függvényt: get_next_departures(stop_id: str, minutes: int)
-    from siri_live import get_next_departures  # type: ignore
-except Exception as e:
-    SIRI_CONFIGURED = False
-    _siri_import_error = f"{e}"
-    async def get_next_departures(*args, **kwargs):  # fallback hiba esetére
-        raise HTTPException(status_code=500, detail=f"SIRI not available: {_siri_import_error}")
+# SIRI modul opcionális – csak ha van kulcs
+siri_configured = bool(BODS_API_KEY)
+if siri_configured:
+    try:
+        import siri_live  # saját modulod
+    except Exception:  # ha mégsem elérhető, kezeljük úgy, mintha nem lenne SIRI
+        siri_configured = False
 
-app = FastAPI(
-    title="Bluestar Bus – API",
-    version="0.1.0",
-)
 
-# CORS (ha a frontend külön domainen lenne; ártani nem árt)
+# ---- FastAPI ----
+app = FastAPI(title="Bluestar Bus – API", version="0.1.0")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- GTFS megállók betöltése kereséshez ---
-STOPS: List[dict] = []
-GTFS_LOADED = False
 
-def _load_stops() -> None:
-    global STOPS, GTFS_LOADED
-    candidates = [
-        "gtfs/stops.txt",
-        "data/gtfs/stops.txt",
-        "stops.txt",
-        "/app/gtfs/stops.txt",
-    ]
-    for p in candidates:
-        if os.path.exists(p):
-            with open(p, "r", encoding="utf-8-sig", newline="") as f:
-                reader = csv.DictReader(f)
-                # Elvárt oszlopok: stop_id, stop_name
-                for row in reader:
-                    sid = row.get("stop_id", "").strip()
-                    sname = row.get("stop_name", "").strip()
-                    if not sid or not sname:
-                        continue
-                    STOPS.append({
-                        "stop_id": sid,
-                        "stop_name": sname,
-                        "norm": sname.lower(),
-                    })
-            GTFS_LOADED = True
-            break
+# ---- Segédfüggvények ----
+def get_db() -> sqlite3.Connection:
+    if not os.path.exists(GTFS_DB_PATH):
+        raise HTTPException(status_code=500, detail="GTFS database not found")
+    conn = sqlite3.connect(GTFS_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-_load_stops()
 
-# --- API ENDPOINTS ---
+def seconds_since_midnight(dt: datetime) -> int:
+    midnight = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    return int((dt - midnight).total_seconds())
 
-@app.get("/api/status", summary="Status")
-async def status():
-    """Egyszerű health/status végpont."""
+
+# ---- Sémák ----
+class Departure(BaseModel):
+    route: str
+    destination: str
+    time_iso: str
+    is_live: bool
+
+
+# ---- Endpontok ----
+@app.get("/api/status")
+def api_status():
+    gtfs_loaded = os.path.exists(GTFS_DB_PATH)
+    return {"status": "ok", "gtfs_loaded": gtfs_loaded, "siri_configured": siri_configured}
+
+
+@app.get("/api/stops/search")
+def search_stops(q: str = Query(min_length=2, description="stop name / id / code")):
+    term = f"%{q.lower()}%"
+    conn = get_db()
+    cur = conn.cursor()
+    # Keresés stop_name, stop_id és stop_code mezőkben is
+    cur.execute(
+        """
+        SELECT stop_id, stop_name, coalesce(stop_code,'') AS stop_code
+        FROM stops
+        WHERE lower(stop_name) LIKE :t
+           OR lower(stop_id) LIKE :t
+           OR lower(coalesce(stop_code,'')) LIKE :t
+        ORDER BY stop_name
+        LIMIT 50
+        """,
+        {"t": term},
+    )
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return {"query": q, "results": rows}
+
+
+@app.get("/api/stops/{stop_id}/next_departures", response_model=Dict[str, Any])
+def next_departures(stop_id: str, minutes: int = Query(60, ge=5, le=720)):
+    """
+    Visszaadja a következő indulásokat az adott megállóból.
+    Ha SIRI be van állítva, először megpróbál élő adatot kérni.
+    Ha nincs vagy üres, GTFS menetrendre esik vissza.
+    """
+    results: List[Departure] = []
+
+    # 1) Élő (SIRI), ha elérhető
+    if siri_configured:
+        try:
+            live = siri_live.get_next_departures(stop_id=stop_id, minutes=minutes)  # -> List[dict]
+            for d in live:
+                # elvárt kulcsok: route, destination, time_iso
+                results.append(
+                    Departure(
+                        route=str(d.get("route", "")),
+                        destination=str(d.get("destination", "")),
+                        time_iso=str(d.get("time_iso", "")),
+                        is_live=True,
+                    )
+                )
+        except Exception:
+            # Ha SIRI hiba, simán visszaesünk GTFS-re
+            pass
+
+    # 2) Ha nincs élő adat, vagy kevés, egészítsük ki GTFS-sel (menetrend)
+    if len(results) == 0:
+        results.extend(_gtfs_next_departures(stop_id, minutes))
+
     return {
-        "status": "ok",
-        "gtfs_loaded": GTFS_LOADED,
-        "siri_configured": SIRI_CONFIGURED,
+        "stop_id": stop_id,
+        "minutes": minutes,
+        "results": [r.dict() for r in results],
     }
 
-@app.get("/api/stops/search", summary="Search Stops")
-async def search_stops(
-    q: str = Query(..., description="Megálló neve (részlet is lehet)"),
-    limit: int = Query(10, ge=1, le=50),
-):
-    if not GTFS_LOADED:
-        raise HTTPException(status_code=503, detail="GTFS stops not loaded")
-    qn = q.strip().lower()
-    if not qn:
-        return {"query": q, "results": []}
 
-    # nagyon egyszerű részszó-keresés
-    results = []
-    for s in STOPS:
-        if qn in s["norm"]:
-            results.append({"stop_id": s["stop_id"], "stop_name": s["stop_name"]})
-            if len(results) >= limit:
-                break
-
-    return {"query": q, "results": results}
-
-@app.get("/api/stops/{stop_id}/next_departures", summary="Next Departures")
-async def api_next_departures(
-    stop_id: str,
-    minutes: int = Query(60, ge=5, le=720, description="Időablak percekben"),
-):
+# ---- GTFS fallback logika ----
+def _gtfs_next_departures(stop_id: str, minutes: int) -> List[Departure]:
     """
-    Következő indulások a megadott megállóhoz.
-    - Először próbál élő SIRI (BODS) adatból
-    - Ha nincs élő, a backend a menetrendi (GTFS) fallbacket adhatja vissza
+    Egyszerű (gyors) GTFS menetrend lekérdezés az adott napra és időablakra.
+    Feltételez:
+      - stops.stop_id = stop_times.stop_id
+      - trips.trip_id = stop_times.trip_id
+      - routes.route_id = trips.route_id
+      - trips.trip_headsign a cél
+    Nem kezeli részleteiben a calendar/calendar_dates kivételek teljes mátrixát,
+    de napi használatra jó baseline (UK/Europe/London időzóna).
     """
-    # hívjuk a siri_live implementációt (async)
-    results = await get_next_departures(stop_id=stop_id, minutes=minutes)
-    # Várt visszaadott forma: {"stop_id": "...", "minutes": n, "results": [{route, destination, time_iso, is_live}, ...]}
-    return results
+    now = datetime.now(TZ)
+    now_s = seconds_since_midnight(now)
+    until_s = now_s + minutes * 60
 
-# --- Statikus fájlok (frontend) kiszolgálása ---
-# A mountingot LEGUTOLJÁRA tedd, hogy az /api/* útvonalakat ne írja felül!
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+    conn = get_db()
+    cur = conn.cursor()
 
+    # Ha a feed használ stop_code-ot az azonosításhoz, engedjünk egy rövid map-et
+    # (ha az átadott stop_id nincs a stops.stop_id-ban, de stop_code-ban van).
+    cur.execute("SELECT COUNT(1) AS c FROM stops WHERE stop_id = ?", (stop_id,))
+    row = cur.fetchone()
+    if row["c"] == 0:
+        cur.execute(
+            "SELECT stop_id FROM stops WHERE stop_code = ? LIMIT 1",
+            (stop_id,),
+        )
+        map_row = cur.fetchone()
+        if map_row:
+            stop_id = map_row["stop_id"]
 
-# --- Uvicorn belépési pont (helyi futtatáshoz) ---
-if __name__ == "__main__":
-    import uvicorn
-    # Railway a PORT env változót adja; lokálban 8000
-    port = int(os.environ.get("PORT", "8000"))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=os.environ.get("RELOAD", "0") == "1")
+    # Következő indulások az adott napon és időablakban
+    cur.execute(
+        """
+        SELECT
+          st.departure_time as dep_s,                 -- másodperc éjfél óta (SQLite GTFS előkészítésnél érdemes int-re konvertálni)
+          r.route_short_name as route_short_name,
+          r.route_id as route_id,
+          t.trip_headsign as headsign
+        FROM stop_times st
+        JOIN trips t ON t.trip_id = st.trip_id
+        JOIN routes r ON r.route_id = t.route_id
+        WHERE st.stop_id = :stop
+          AND st.departure_time >= :now_s
+          AND st.departure_time <= :until_s
+        ORDER BY st.departure_time
+        LIMIT 50
+        """,
+        {"stop": stop_id, "now_s": now_s, "until_s": until_s},
+    )
+
+    out: List[Departure] = []
+    for r in cur.fetchall():
+        dep_dt = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(seconds=int(r["dep_s"]))
+        out.append(
+            Departure(
+                route=r["route_short_name"] or r["route_id"],
+                destination=r["headsign"] or "",
+                time_iso=dep_dt.isoformat(),
+                is_live=False,
+            )
+        )
+
+    conn.close()
+    return out
