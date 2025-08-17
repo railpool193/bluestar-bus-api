@@ -1,93 +1,136 @@
 import os
-from datetime import datetime, timezone, timedelta
-import httpx
+import time
+import requests
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone, timedelta
+from typing import List, Dict, Optional
 
-BODS_API = "https://data.bus-data.dft.gov.uk/api/v1/datafeed/{feed_id}/?api_key={api_key}"
+# ---- Konfiguráció / környezeti változók ----
+BODS_BASE = os.getenv("BODS_BASE", "https://data.bus-data.dft.gov.uk/api/v1")
+BODS_API_KEY = os.getenv("BODS_API_KEY")  # szükséges az éles live-hoz
+BODS_PRODUCER = os.getenv("BODS_PRODUCER")  # pl. "DepartmentForTransport" vagy üres
 
-def _text(node, tag):
-    n = node.find(tag)
-    return n.text.strip() if n is not None and n.text else None
+# A BODS SIRI-VM feed endpoint (összes jármű / országos stream)
+# Paraméterezés: ?api_key=...  (opcionálisan &producerRef=...)
+DATAFEED_URL = f"{BODS_BASE.rstrip('/')}/datafeed/"
 
-def _parse_time(s: str) -> str:
-    # normalizáljuk ISO-ra (mindig UTC-re hagyjuk)
+# Egyszerű, kis TTL-es cache, hogy ne hívjuk túl gyakran a feedet
+_CACHE: Dict[str, tuple[float, ET.Element]] = {}  # key -> (ts, xml_root)
+_CACHE_TTL = 20  # mp
+
+
+def _configured() -> bool:
+    """Van-e értelmes live konfiguráció."""
+    return bool(BODS_API_KEY)
+
+
+def is_live_available() -> bool:
+    """
+    Gyors elérhetőség-ellenőrzés.
+    Ha nincs BODS_API_KEY, akkor False, különben megpróbál egy 5 mp-es GET-et.
+    """
+    if not _configured():
+        return False
     try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return dt.astimezone(timezone.utc).isoformat()
+        params = {"api_key": BODS_API_KEY}
+        if BODS_PRODUCER:
+            params["producerRef"] = BODS_PRODUCER
+        r = requests.get(DATAFEED_URL, params=params, timeout=5)
+        return r.status_code == 200
     except Exception:
-        return s
+        return False
 
-async def get_next_departures(stop_id: str, minutes: int):
-    """SIRI-VM feedből (BODS) élő indulások adott megállóra."""
-    feed_id = os.environ.get("BODS_SIRI_FEED_ID")
-    api_key = os.environ.get("BODS_API_KEY")
-    if not feed_id or not api_key:
+
+def _fetch_xml() -> Optional[ET.Element]:
+    """Letölti (vagy cache-ből adja) a SIRI-VM XML-t."""
+    if not _configured():
+        return None
+
+    now = time.time()
+    cached = _CACHE.get("vm")
+    if cached and (now - cached[0]) < _CACHE_TTL:
+        return cached[1]
+
+    params = {"api_key": BODS_API_KEY}
+    if BODS_PRODUCER:
+        params["producerRef"] = BODS_PRODUCER
+
+    r = requests.get(DATAFEED_URL, params=params, timeout=12)
+    r.raise_for_status()
+    root = ET.fromstring(r.content)
+    _CACHE["vm"] = (now, root)
+    return root
+
+
+def _parse_iso(ts: str) -> Optional[datetime]:
+    """ISO idő parsing (Z kezelése)."""
+    if not ts:
+        return None
+    try:
+        # példa: 2025-08-17T18:25:00Z
+        if ts.endswith("Z"):
+            return datetime.fromisoformat(ts[:-1]).replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(ts)
+    except Exception:
+        return None
+
+
+def get_live_departures(stop_id: str, limit: int = 20) -> List[Dict]:
+    """
+    Visszaad néhány élő indulást az adott megállóra.
+    A visszatérés formátuma kompatibilis a fronttal:
+    dict(route, destination, time_iso, is_live=True)
+    """
+    root = _fetch_xml()
+    if root is None:
         return []
 
-    url = BODS_API.format(feed_id=feed_id, api_key=api_key)
-    async with httpx.AsyncClient(timeout=40) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        xml = r.text
-
-    root = ET.fromstring(xml)
     ns = {
-        "s": "http://www.siri.org.uk/siri"
+        "siri": "http://www.siri.org.uk/siri",
+        "vm": "http://www.siri.org.uk/siri"
     }
 
-    now_utc = datetime.now(timezone.utc)
-    limit = now_utc + timedelta(minutes=minutes)
+    results: List[Dict] = []
+    # Keresünk MonitoredStopVisit bejegyzéseket
+    for msv in root.findall(".//siri:MonitoredStopVisit", ns):
+        j = msv.find("siri:MonitoredVehicleJourney", ns)
+        if j is None:
+            continue
 
-    out = []
+        sp = j.findtext("siri:MonitoredCall/siri:StopPointRef", default="", namespaces=ns)
+        if not sp:
+            continue
 
-    # VehicleMonitoringDelivery / VehicleActivity
-    for vmd in root.findall(".//s:VehicleMonitoringDelivery", ns):
-        for va in vmd.findall("s:VehicleActivity", ns):
-            mvj = va.find("s:MonitoredVehicleJourney", ns)
-            if mvj is None:
-                continue
+        # StopPointRef egyezés (egyes feedekben lehet "prefix:STOPID" – ezért tartalmazás is jó fallback)
+        if sp != stop_id and stop_id not in sp:
+            continue
 
-            # 1) Közvetlen MonitoredCall
-            mc = mvj.find("s:MonitoredCall", ns)
-            if mc is not None:
-                sp = _text(mc, "s:StopPointRef")
-                if sp and sp.upper() == stop_id.upper():
-                    line = _text(mvj, "s:PublishedLineName") or _text(mvj, "s:LineRef") or "?"
-                    dest = _text(mvj, "s:DestinationName") or "?"
-                    when = _text(mc, "s:ExpectedDepartureTime") or _text(mc, "s:AimedDepartureTime")
-                    if when:
-                        iso = _parse_time(when)
-                        try:
-                            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-                        except Exception:
-                            dt = None
-                        if dt and now_utc <= dt <= limit:
-                            out.append({"route": line, "destination": dest, "time_iso": iso})
-                    continue
+        line = (j.findtext("siri:PublishedLineName", default="", namespaces=ns)
+                or j.findtext("siri:LineRef", default="", namespaces=ns)
+                or "")
+        dest = j.findtext("siri:DestinationName", default="", namespaces=ns) or ""
 
-            # 2) OnwardCalls bejárása
-            oc_container = mvj.find("s:OnwardCalls", ns)
-            if oc_container is not None:
-                for oc in oc_container.findall("s:OnwardCall", ns):
-                    sp = _text(oc, "s:StopPointRef")
-                    if sp and sp.upper() == stop_id.upper():
-                        line = _text(mvj, "s:PublishedLineName") or _text(mvj, "s:LineRef") or "?"
-                        dest = _text(mvj, "s:DestinationName") or "?"
-                        when = _text(oc, "s:ExpectedDepartureTime") or _text(oc, "s:AimedDepartureTime")
-                        if when:
-                            iso = _parse_time(when)
-                            try:
-                                dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-                            except Exception:
-                                dt = None
-                            if dt and now_utc <= dt <= limit:
-                                out.append({"route": line, "destination": dest, "time_iso": iso})
+        # Először Expected (live), ha nincs, akkor Aimed
+        expected = j.findtext("siri:MonitoredCall/siri:ExpectedDepartureTime", default="", namespaces=ns)
+        aimed = j.findtext("siri:MonitoredCall/siri:AimedDepartureTime", default="", namespaces=ns)
+        when = _parse_iso(expected) or _parse_iso(aimed)
+        if not when:
+            continue
 
-    # idő szerint rendezés
-    out.sort(key=lambda x: x["time_iso"])
-    # route/destination üres értékek tisztítása
-    for d in out:
-        d["route"] = (d["route"] or "").strip()
-        d["destination"] = (d["destination"] or "").strip()
+        # csak jövőbeni indulásokat listázzunk
+        if when < datetime.now(timezone.utc) - timedelta(minutes=1):
+            continue
 
-    return out
+        results.append({
+            "route": line.strip(),
+            "destination": dest.strip(),
+            "time_iso": when.astimezone(timezone.utc).isoformat(),
+            "is_live": bool(expected)  # expected => valóban live
+        })
+
+        if len(results) >= limit:
+            break
+
+    # idő szerint növekvő
+    results.sort(key=lambda x: x["time_iso"])
+    return results
