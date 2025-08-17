@@ -1,102 +1,83 @@
 from __future__ import annotations
 
-# ---------- standard lib ----------
+# ── standard lib
 import io
-import os
-import json
 import csv
+import json
 import zipfile
-from pathlib import Path
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Any
 
-# ---------- third-party ----------
-from fastapi import FastAPI, UploadFile, File, Query
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+# ── fastapi
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, JSONResponse
 
-# =================================
-# Alap beállítások / mappák
-# =================================
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-DATA_DIR.mkdir(exist_ok=True)
-
-INDEX_FILE = BASE_DIR / "index.html"
-
+# ── app init
 app = FastAPI(title="Bluestar Bus – API", version="1.2.1")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # ha kell szigorítani, itt tedd
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# =================================
-# Live (SIRI) „kapcsoló”
-#   – igazi bekötéshez add meg a környezeti változót:
-#       SIRI_STOP_MONITORING_URL
-#     ha üres, a „Live” jelzés piros marad.
-# =================================
-SIRI_STOP_MONITORING_URL = os.getenv("SIRI_STOP_MONITORING_URL", "").strip()
+# ── fájl elérési utak
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(exist_ok=True)
+INDEX_FILE = BASE_DIR / "index.html"
+
+STOPS_JSON = DATA_DIR / "stops.json"
+SCHEDULE_JSON = DATA_DIR / "schedule.json"
 
 
-class SiriLive:
-    """Egyszerű keret; most csak az elérhetőséget jelzi.
-    Később ide tudjuk bekötni a valódi SIRI StopMonitoring hívást.
-    """
+# ========== Segédfüggvények ====================================================
 
-    def is_available(self) -> bool:
-        return bool(SIRI_STOP_MONITORING_URL)
-
-
-siri_live = SiriLive()
-
-# =================================
-# Segédek GTFS-hez
-# =================================
 def gtfs_files_exist() -> bool:
-    return (DATA_DIR / "stops.json").exists() and (DATA_DIR / "schedule.json").exists()
+    return STOPS_JSON.exists() and SCHEDULE_JSON.exists()
 
 
 def _find_member(zf: zipfile.ZipFile, name: str) -> str | None:
-    """Keres egy adott GTFS fájlt a zip gyökerében vagy almappában (case-insensitive)."""
+    """GTFS fájl keresése a zip-ben, gyökérben vagy almappában (case-insensitive)."""
     lname = name.lower()
     for m in zf.namelist():
-        mm = m.lower()
-        if mm == lname or mm.endswith("/" + lname):
+        ml = m.lower()
+        if ml == lname or ml.endswith("/" + lname):
             return m
     return None
 
 
 def _build_from_zip_bytes(zip_bytes: bytes) -> None:
-    """GTFS zip feldolgozása: stops.json + schedule.json előállítása."""
+    """
+    GTFS feldolgozás:
+    - stops.json: [ {stop_id, stop_name} ]
+    - schedule.json: { stop_id: [ {time, route, destination} ] }
+    Egyszerűsített menetrend (calendar-t most nem kezeljük).
+    """
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         required = ["stops.txt", "trips.txt", "stop_times.txt", "routes.txt"]
-        members = {n: _find_member(zf, n) for n in required}
+        members: Dict[str, str | None] = {n: _find_member(zf, n) for n in required}
         missing = [n for n, m in members.items() if m is None]
         if missing:
-            raise ValueError(f"Hiányzó GTFS fájlok a ZIP-ben: {', '.join(missing)}")
+            raise ValueError("Hiányzó GTFS fájlok a ZIP-ben: " + ", ".join(missing))
 
-        # ---- stops.json ----
-        stops = []
+        # --- stops.json ---
+        stops: List[Dict[str, str]] = []
         with zf.open(members["stops.txt"]) as f:
             reader = csv.DictReader(io.TextIOWrapper(f, "utf-8-sig"))
             for row in reader:
-                stops.append(
-                    {
-                        "stop_id": row["stop_id"],
-                        "stop_name": (row.get("stop_name") or "").strip(),
-                    }
-                )
-        (DATA_DIR / "stops.json").write_text(
-            json.dumps(stops, ensure_ascii=False), encoding="utf-8"
-        )
+                stops.append({
+                    "stop_id": row["stop_id"],
+                    "stop_name": (row.get("stop_name") or "").strip()
+                })
+        STOPS_JSON.write_text(json.dumps(stops, ensure_ascii=False), encoding="utf-8")
 
-        # ---- schedule.json ----
-        # route_id -> route_short_name (vagy long, ha üres)
-        routes: dict[str, str] = {}
+        # --- routes táblázat: route_id -> short/long name ---
+        routes: Dict[str, str] = {}
         with zf.open(members["routes.txt"]) as f:
             reader = csv.DictReader(io.TextIOWrapper(f, "utf-8-sig"))
             for row in reader:
@@ -106,20 +87,19 @@ def _build_from_zip_bytes(zip_bytes: bytes) -> None:
                     or ""
                 ).strip()
 
-        # trip_id -> (route_short_name, headsign)
-        trips: dict[str, dict[str, str]] = {}
+        # --- trips táblázat: trip_id -> (route_name, headsign) ---
+        trips: Dict[str, Dict[str, str]] = {}
         with zf.open(members["trips.txt"]) as f:
             reader = csv.DictReader(io.TextIOWrapper(f, "utf-8-sig"))
             for row in reader:
                 trips[row["trip_id"]] = {
                     "route": routes.get(row["route_id"], ""),
-                    "headsign": (row.get("trip_headsign") or "").strip(),
+                    "headsign": (row.get("trip_headsign") or "").strip()
                 }
 
-        # stop_id -> list of {"time": "HH:MM:SS", "route": "...", "destination": "..."}
+        # --- stop_times -> schedule.json ---
         from collections import defaultdict
-
-        schedule: dict[str, list[dict[str, str]]] = defaultdict(list)
+        schedule: Dict[str, List[Dict[str, str]]] = defaultdict(list)
         with zf.open(members["stop_times.txt"]) as f:
             reader = csv.DictReader(io.TextIOWrapper(f, "utf-8-sig"))
             for row in reader:
@@ -129,131 +109,133 @@ def _build_from_zip_bytes(zip_bytes: bytes) -> None:
                 t = (row.get("departure_time") or row.get("arrival_time") or "").strip()
                 if not t:
                     continue
-                schedule[row["stop_id"]].append(
-                    {
-                        "time": t,  # HH:MM(:SS)
-                        "route": trip["route"],
-                        "destination": trip["headsign"],
-                    }
-                )
+                schedule[row["stop_id"]].append({
+                    "time": t,  # HH:MM:SS
+                    "route": trip["route"],
+                    "destination": trip["headsign"]
+                })
 
-        (DATA_DIR / "schedule.json").write_text(
-            json.dumps(schedule, ensure_ascii=False),
-            encoding="utf-8",
-        )
-
-    # jelzőfájl – opcionális
-    (DATA_DIR / "gtfs_loaded.flag").write_text("ok", encoding="utf-8")
+        SCHEDULE_JSON.write_text(json.dumps(schedule, ensure_ascii=False), encoding="utf-8")
 
 
-def _load_stops() -> list[dict]:
-    p = DATA_DIR / "stops.json"
-    if not p.exists():
-        return []
-    return json.loads(p.read_text(encoding="utf-8"))
-
-
-def _load_schedule() -> dict[str, list[dict]]:
-    p = DATA_DIR / "schedule.json"
-    if not p.exists():
-        return {}
-    return json.loads(p.read_text(encoding="utf-8"))
-
-
-def _to_today_iso(time_hms: str) -> str:
-    """HH:MM(:SS) -> mai nap ISO (helyi idő alapján)"""
-    parts = [int(x) for x in time_hms.split(":")]
+def _now_seconds() -> int:
+    """Aktuális idő másodpercben (napon belül), helyi idő alapján."""
     now = datetime.now()
-    hh, mm = parts[0], parts[1]
-    ss = parts[2] if len(parts) > 2 else 0
-    dt = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
-        hours=hh, minutes=mm, seconds=ss
-    )
-    # ha már elmúlt, hagyjuk benne – a front úgyis a következő 60 percet kérdezi
-    return dt.isoformat(timespec="seconds")
+    return now.hour * 3600 + now.minute * 60 + now.second
 
 
-# =================================
-# Végpontok
-# =================================
+def _time_str_to_seconds(t: str) -> int:
+    """GTFS HH:MM(:SS) -> másodperc."""
+    parts = [int(p) for p in t.split(":")]
+    if len(parts) == 2:
+        h, m = parts
+        s = 0
+    else:
+        h, m, s = parts[:3]
+    # GTFS-ben lehet 24+ óra is (pl. 25:10:00), ezért nem modulozzuk itt, csak számolunk
+    return h * 3600 + m * 60 + s
+
+
+# ========== UI gyökér ===========================================================
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def ui_root():
-    # index.html-t szolgáljuk ki
+    """
+    Az index.html kiszolgálása. Cache TILTÁS, hogy mindig a frisset kapd.
+    """
     if INDEX_FILE.exists():
-        return HTMLResponse(INDEX_FILE.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>Missing index.html</h1>", status_code=200)
+        content = INDEX_FILE.read_text(encoding="utf-8")
+    else:
+        content = "<h1>Missing index.html</h1>"
+    return HTMLResponse(content=content, headers={"Cache-Control": "no-store, max-age=0"})
 
 
-@app.get("/index.html", response_class=FileResponse, include_in_schema=False)
-async def index_html():
-    return FileResponse(INDEX_FILE)
-
+# ========== API =================================================================
 
 @app.get("/api/status")
 async def api_status():
-    return {
-        "status": "ok",
-        "gtfs": gtfs_files_exist(),
-        "live": siri_live.is_available(),
-    }
+    """
+    Egyszerű „egészségjelentés”.
+    - gtfs: betöltve-e a feldolgozott JSON
+    - live: itt most helyben False; ha később bekötjük a SIRI-t, innen jelezzük.
+    """
+    return {"status": "ok", "gtfs": gtfs_files_exist(), "live": False}
 
 
 @app.post("/api/upload")
 async def api_upload(file: UploadFile = File(...)):
-    """GTFS ZIP feltöltés + azonnali feldolgozás."""
+    """
+    GTFS ZIP feltöltése és azonnali feldolgozása.
+    A feldolgozás után a /api/status `gtfs: true`-t fog mutatni.
+    """
+    if not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="ZIP fájlt adj meg.")
+
     content = await file.read()
-    # opcionális: mentsük le a kapott zipet
+    # opcionális: mentsük el a legutóbbi ZIP-et
     (DATA_DIR / "last_gtfs.zip").write_bytes(content)
-    # feldolgozás
+
     try:
         _build_from_zip_bytes(content)
     except Exception as e:
-        return JSONResponse({"status": "error", "detail": str(e)}, status_code=400)
+        raise HTTPException(status_code=422, detail=f"Feldolgozási hiba: {e}") from e
+
     return {"status": "uploaded"}
 
 
 @app.get("/api/stops/search")
-async def api_stops_search(q: str = Query("", min_length=2)):
-    """Megállók keresése névrészletre."""
+async def api_stop_search(q: str = Query(..., min_length=2, description="Megálló név (részlet is lehet)")):
+    """
+    Megálló-keresés (case-insensitive részszó).
+    Válasz: [ { stop_id, stop_name }, ... ]
+    """
     if not gtfs_files_exist():
         return []
+
+    stops = json.loads(STOPS_JSON.read_text(encoding="utf-8"))
     ql = q.strip().lower()
-    results = [
-        s for s in _load_stops() if ql in (s.get("stop_name") or "").lower()
-    ]
-    # visszaadjuk mindet; a front rendezi/limitelheti
-    return results
+    results = [s for s in stops if ql in (s.get("stop_name", "").lower())]
+    # limitáljuk mondjuk 30-ra
+    return results[:30]
 
 
 @app.get("/api/stops/{stop_id}/next_departures")
-async def api_next_departures(stop_id: str, minutes: int = 60):
-    """Következő indulások a kiválasztott megállóból a következő X percben."""
+async def api_next_departures(stop_id: str, minutes: int = Query(60, ge=1, le=360)):
+    """
+    Következő indulások az adott megállóból, az elkövetkező `minutes` percben.
+    Egyszerűsített (napi) szűrés az időpontokra, dátum-kezelés nélkül.
+    """
     if not gtfs_files_exist():
         return {"stop_id": stop_id, "minutes": minutes, "results": []}
 
-    sched = _load_schedule().get(stop_id, [])
-    if not sched:
-        return {"stop_id": stop_id, "minutes": minutes, "results": []}
+    schedule: Dict[str, List[Dict[str, str]]] = json.loads(SCHEDULE_JSON.read_text(encoding="utf-8"))
+    entries = schedule.get(stop_id, [])
 
-    now = datetime.now()
-    window_end = now + timedelta(minutes=minutes)
+    now_s = _now_seconds()
+    horizon = now_s + minutes * 60
 
-    out = []
-    for item in sched:
-        # HH:MM(:SS) -> mai nap
-        t_iso = _to_today_iso(item["time"])
-        t_dt = datetime.fromisoformat(t_iso)
-        if now <= t_dt <= window_end:
-            out.append(
-                {
-                    "route": item.get("route") or "",
-                    "destination": item.get("destination") or "",
-                    "time_iso": t_iso,
-                    "is_live": False,  # majd SIRI bekötésnél jelöljük True-ra
-                }
-            )
+    # átváltjuk a belső időket másodpercre és szűrjük
+    out: List[Dict[str, Any]] = []
+    for e in entries:
+        tsec = _time_str_to_seconds(e["time"])
+        # ha a GTFS-ben 24+ óra szerepel, igazítsuk egy napon belüli „folytatott időhöz”
+        # egyszerű megközelítés: ha tsec < 24h és now közelében vagyunk, működik;
+        # 24+ óráknál engedjük át, mert horizontig így is eljut.
+        if now_s <= tsec <= horizon:
+            out.append({
+                "route": e.get("route", ""),
+                "destination": e.get("destination", ""),
+                "time_iso": (datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                             + timedelta(seconds=tsec)).isoformat(timespec="minutes"),
+                "is_live": False  # ide köthetjük később a valósidejűséget
+            })
 
-    # egyszerű rendezés idő szerint
+    # rendezzük idő szerint és limitáljuk ésszerűen
     out.sort(key=lambda x: x["time_iso"])
+    return {"stop_id": stop_id, "minutes": minutes, "results": out[:100]}
+    
 
-    return {"stop_id": stop_id, "minutes": minutes, "results": out}
+# ========== Lokális futtatás ====================================================
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8080)
