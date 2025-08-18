@@ -3,133 +3,215 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bluestar Bus – megálló & élő indulások</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <title>Bluestar Bus – Megálló kijelző</title>
+  <meta name="color-scheme" content="dark light">
   <style>
-    :root { --bg:#0f172a; --card:#ffffff; --txt:#0f172a; --muted:#64748b; --brand:#2563eb; --ok:#16a34a; --bad:#ef4444; }
-    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:#fff}
-    .wrap{max-width:1100px;margin:32px auto;padding:0 16px}
-    h1{font-size:clamp(24px,3.5vw,40px);margin:0 0 24px}
-    .card{background:var(--card);color:var(--txt);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.25);padding:20px}
-    .row{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
-    .grow{flex:1 1 520px}
-    input[type=text],input[type=number]{width:100%;padding:14px 16px;border-radius:12px;border:1px solid #e2e8f0;font-size:16px;outline:none}
-    button{background:var(--brand);border:none;color:#fff;padding:14px 18px;border-radius:12px;font-weight:700;cursor:pointer}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    .status{display:flex;gap:12px;margin-top:14px}
-    .pill{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border-radius:999px;background:#f1f5f9;color:#0f172a;font-weight:600}
+    :root{
+      --bg:#0b1220; --card:#121a2a; --line:#1b2740;
+      --text:#eaf0ff; --muted:#a8b3cf; --accent:#b2ff59; /* zöld fejléc */
+      --blue:#2b4cff; --badge:#133; --ok:#27c93f; --err:#ff5f56;
+    }
+    html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji";}
+    .wrap{max-width:1000px;margin-inline:auto;padding:16px;}
+    .panel{background:var(--card);border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.35);overflow:hidden;border:1px solid var(--line)}
+    .header{display:flex;align-items:center;justify-content:space-between;background:var(--accent);color:#001b04;padding:10px 14px;font-weight:700;letter-spacing:.2px}
+    .header .stop{font-size:18px}
+    .header .time{font-variant-numeric:tabular-nums}
+    .controls{display:flex;gap:12px;flex-wrap:wrap;padding:14px;background:transparent}
+    .controls .field{flex:1;min-width:260px;position:relative}
+    .input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:#0e1627;color:var(--text);outline:none}
+    .input:focus{border-color:#3157ff;box-shadow:0 0 0 3px rgba(49,87,255,.25)}
+    .btn{padding:12px 16px;border-radius:12px;border:0;background:#3157ff;color:#fff;font-weight:700;cursor:pointer}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .hint{color:var(--muted);font-size:13px;margin-top:6px}
+    .status{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:13px}
     .dot{width:10px;height:10px;border-radius:50%}
-    .ok{background:var(--ok)} .bad{background:var(--bad)}
-    .results{margin-top:18px;border-top:1px solid #e5e7eb;padding-top:12px}
-    ul.sugg{list-style:none;margin:8px 0 0;padding:0;border:1px solid #e2e8f0;border-radius:12px;max-height:260px;overflow:auto}
-    ul.sugg li{padding:10px 12px;cursor:pointer}
-    ul.sugg li:hover{background:#f1f5f9}
-    table{width:100%;border-collapse:collapse;margin-top:12px}
-    th,td{padding:12px;border-bottom:1px solid #e5e7eb}
-    .muted{color:var(--muted)}
-    .footer{margin-top:18px;color:#cbd5e1;font-size:12px;text-align:center}
-    .err{color:#b91c1c;margin-top:8px}
+    .ok{background:var(--ok)} .bad{background:var(--err)}
+    .list{border-top:1px solid var(--line)}
+    .row{display:grid;grid-template-columns:80px 1fr 120px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+    .row:nth-child(even){background:rgba(255,255,255,.02)}
+    .route{font-weight:900;font-size:22px;display:inline-flex;gap:8px;align-items:center}
+    .badge{font-size:11px;padding:2px 6px;border-radius:999px;background:#0b2335;border:1px solid #21415f;color:#b9dbff}
+    .dest{font-size:18px}
+    .due{justify-self:end;font-weight:800;font-size:18px}
+    .empty{padding:16px 14px;color:var(--muted)}
+    /* javasolt dropdown lista */
+    .dropdown{position:absolute;top:100%;left:0;right:0;background:#0e1627;border:1px solid var(--line);border-radius:12px;margin-top:6px;max-height:220px;overflow:auto;z-index:10}
+    .option{padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+    .option:hover{background:#12203a}
+    .sr{position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Bluestar Bus – Megálló keresés & élő indulások</h1>
+    <div class="panel" id="board">
+      <div class="header">
+        <div class="stop" id="stopTitle">Válassz megállót…</div>
+        <div class="time" id="now">--:--</div>
+      </div>
 
-    <div class="card">
-      <div class="row">
-        <div class="grow">
-          <label class="muted">Megálló név (pl. „Vincent”)</label>
-          <input id="q" type="text" placeholder="Kezdj el írni…" autocomplete="off" />
-          <ul id="sugg" class="sugg" hidden></ul>
-          <div id="qerr" class="err" hidden></div>
+      <div class="controls">
+        <div class="field">
+          <label class="sr" for="q">Megálló keresése</label>
+          <input id="q" class="input" placeholder="Kezdj el írni… (pl. Vincent, Shirley, Hanover)" autocomplete="off">
+          <div id="dd" class="dropdown" style="display:none"></div>
+          <div class="hint">Tipp: írj legalább 3 betűt, majd válassz a listából.</div>
         </div>
-
-        <div>
-          <label class="muted">Időablak (perc)</label>
-          <input id="mins" type="number" value="60" min="5" max="240" />
+        <div class="field" style="max-width:140px">
+          <label class="sr" for="mins">Időablak</label>
+          <input id="mins" class="input" type="number" min="10" max="240" step="5" value="60">
         </div>
+        <button class="btn" id="loadBtn" disabled>Indulások lekérése</button>
+      </div>
 
-        <div>
-          <label class="muted" style="visibility:hidden"> </label>
-          <button id="go">Indulások lekérése</button>
+      <div class="controls" style="padding-top:0">
+        <div class="status" id="statusBar">
+          <div class="dot" id="apiDot"></div><span>API</span>
+          <div class="dot" id="gtfsDot"></div><span>GTFS</span>
+          <div class="dot" id="liveDot"></div><span>Live</span>
+          <span id="build" class="hint"></span>
         </div>
       </div>
 
-      <div class="status">
-        <span class="pill">API <span id="api-dot" class="dot bad"></span></span>
-        <span class="pill">GTFS <span id="gtfs-dot" class="dot bad"></span></span>
-        <span class="pill">Live <span id="live-dot" class="dot bad"></span></span>
+      <div id="list" class="list">
+        <div class="empty">Nincs adat. Válassz megállót a fenti keresőben.</div>
       </div>
-
-      <div id="picked" class="muted" style="margin-top:8px;">Választott megálló: <b id="picked-name">–</b> <span id="picked-id" class="muted"></span></div>
-
-      <div class="results" id="res"></div>
-      <div class="footer">UI build: <span id="build"></span> • ❤️</div>
     </div>
   </div>
 
   <script>
-  const API = location.origin;
-  let picked = null;
-  function el(id){return document.getElementById(id)}
-  const q = el('q'), sugg = el('sugg'), res = el('res'), qerr = el('qerr');
+    const $ = sel => document.querySelector(sel);
+    const q = $("#q"), dd=$("#dd"), btn=$("#loadBtn"), mins=$("#mins");
+    const list=$("#list"), stopTitle=$("#stopTitle");
+    let selectedStop = null;
 
-  async function status(){
-    try{
-      const j = await (await fetch(`${API}/api/status`,{cache:'no-store'})).json();
-      el('api-dot').className = 'dot ' + (j.status==='ok'?'ok':'bad');
-      el('gtfs-dot').className = 'dot ' + (j.gtfs?'ok':'bad');
-      el('live-dot').className = 'dot ' + (j.live?'ok':'bad');
-      el('build').textContent = j.build || '{{BUILD_ID}}';
-    }catch(e){}
-  }
-
-  async function search(name){
-    sugg.innerHTML = '';
-    sugg.hidden = true;
-    qerr.hidden = true;
-    picked = null;
-    el('picked-name').textContent = '–';
-    el('picked-id').textContent = '';
-    if(!name || name.trim().length<2) return;
-    try{
-      const r = await fetch(`${API}/api/stops/search?q=`+encodeURIComponent(name),{cache:'no-store'});
-      if(!r.ok){ throw new Error(`HTTP ${r.status}`); }
-      const data = await r.json();
-      if(!Array.isArray(data) || data.length===0){
-        const li = document.createElement('li'); li.textContent = 'Nincs találat.'; li.className='muted';
-        sugg.appendChild(li); sugg.hidden=false; return;
-      }
-      data.forEach(s=>{
-        const li = document.createElement('li');
-        li.textContent = `${s.stop_name} • ${s.stop_id}`;
-        li.onclick = ()=>{ picked = s; q.value = s.stop_name; sugg.hidden=true; el('picked-name').textContent=s.stop_name; el('picked-id').textContent='(' + s.stop_id + ')'; };
-        sugg.appendChild(li);
-      });
-      sugg.hidden = false;
-    }catch(err){
-      qerr.textContent = 'Keresési hiba: ' + (err.message || err);
-      qerr.hidden = false;
+    // óra
+    function tick(){
+      const d=new Date();
+      const hh=String(d.getHours()).padStart(2,"0");
+      const mm=String(d.getMinutes()).padStart(2,"0");
+      $("#now").textContent = `${hh}:${mm}`;
     }
-  }
+    setInterval(tick, 1000); tick();
 
-  async function loadDepartures(){
-    if(!picked){ alert('Előbb válassz megállót a listából!'); return; }
-    res.innerHTML = 'Betöltés…';
-    const mins = Math.max(5, Math.min(240, parseInt(el('mins').value||'60',10)));
-    const data = await (await fetch(`${API}/api/stops/${encodeURIComponent(picked.stop_id)}/next_departures?minutes=${mins}`,{cache:'no-store'})).json();
-    if(!Array.isArray(data) || data.length===0){ res.innerHTML = '<div class="muted">Nincs megjeleníthető indulás.</div>'; return; }
-    let html = '<table><thead><tr><th>Járat</th><th>Cél</th><th>Idő</th></tr></thead><tbody>';
-    data.forEach(d=>{ html += `<tr><td>${d.route||'-'}</td><td>${d.destination||'-'}</td><td>${d.time||'-'}</td></tr>`; });
-    html += `</tbody></table>`;
-    res.innerHTML = html;
-  }
+    // státusz pöttyök
+    async function loadStatus(){
+      try{
+        const r = await fetch("/api/status");
+        const j = await r.json();
+        dot("#apiDot", true);
+        dot("#gtfsDot", !!j.gtfs);
+        dot("#liveDot", !!j.live);
+        $("#build").textContent = j.build ? `build #${j.build}` : "";
+      }catch(e){
+        dot("#apiDot", false); dot("#gtfsDot", false); dot("#liveDot", false);
+      }
+    }
+    function dot(sel, ok){ const el=$(sel); el.classList.remove("ok","bad"); el.classList.add(ok?"ok":"bad"); }
+    loadStatus();
 
-  q.addEventListener('input', e=> search(e.target.value));
-  q.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); loadDepartures(); }});
-  el('go').onclick = loadDepartures;
-  status();
-  (function(){ const b='{{BUILD_ID}}'; if(b && b!=='{{'+'BUILD_ID'+'}}'){ el('build').textContent=b; }})();
+    // kereső
+    let timer=null;
+    q.addEventListener("input", ()=>{
+      const v=q.value.trim();
+      selectedStop=null; stopTitle.textContent="Válassz megállót…"; btn.disabled=true;
+      if (timer) clearTimeout(timer);
+      if (v.length<3){ dd.style.display="none"; return; }
+      timer=setTimeout(async ()=>{
+        const r=await fetch(`/api/stops/search?q=${encodeURIComponent(v)}`);
+        const arr=await r.json();
+        renderDropdown(arr);
+      }, 250);
+    });
+
+    function renderDropdown(items){
+      if(!Array.isArray(items) || items.length===0){
+        dd.innerHTML = `<div class="option" style="pointer-events:none;color:#9fb0d0">Nincs találat.</div>`;
+        dd.style.display="block"; return;
+      }
+      dd.innerHTML = items.map(it =>
+        `<div class="option" data-id="${it.stop_id}" data-name="${escapeHtml(it.stop_name)}">
+           <strong>${escapeHtml(it.stop_name)}</strong>
+           <div class="hint">ID: ${it.stop_id}</div>
+         </div>`).join("");
+      dd.style.display="block";
+    }
+
+    dd.addEventListener("click", (e)=>{
+      const row = e.target.closest(".option");
+      if(!row) return;
+      selectedStop = { id: row.dataset.id, name: row.dataset.name };
+      q.value = selectedStop.name;
+      stopTitle.textContent = `${selectedStop.name} • ${selectedStop.id}`;
+      dd.style.display="none";
+      btn.disabled=false;
+    });
+
+    // indulások lekérése
+    btn.addEventListener("click", loadDepartures);
+    q.addEventListener("keydown", (e)=>{ if(e.key==="Enter" && !btn.disabled) loadDepartures(); });
+
+    async function loadDepartures(){
+      if(!selectedStop) return;
+      list.innerHTML = `<div class="empty">Töltés…</div>`;
+      try{
+        const r = await fetch(`/api/stops/${encodeURIComponent(selectedStop.id)}/next_departures?minutes=${encodeURIComponent(mins.value||60)}`);
+        const arr = await r.json();
+        if(!Array.isArray(arr) || arr.length===0){
+          list.innerHTML = `<div class="empty">Erre az időablakra nincs indulás.</div>`;
+          return;
+        }
+        // render
+        list.innerHTML = arr.map(row => renderRow(row)).join("");
+      }catch(e){
+        list.innerHTML = `<div class="empty">Hiba történt a lekérés közben.</div>`;
+      }
+    }
+
+    function renderRow(d){
+      // várható API mezők: route, destination, time (HH:MM vagy HH:MM:SS), operator (opcionális)
+      const route = escapeHtml(d.route ?? "");
+      const dest  = escapeHtml(d.destination ?? "");
+      const oper  = d.operator ? `<span class="badge">${escapeHtml(d.operator)}</span>` : "";
+      const due   = humanDue(d.time);
+      return `<div class="row">
+        <div class="route">${route} ${oper}</div>
+        <div class="dest">${dest}</div>
+        <div class="due">${due}</div>
+      </div>`;
+    }
+
+    function humanDue(timeStr){
+      if(!timeStr) return "—";
+      // próbáljuk HH:MM[:SS]-ként értelmezni és percekre kitenni
+      const m=/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(timeStr);
+      if(!m) return timeStr;
+      const now=new Date();
+      const target=new Date(now);
+      target.setHours(+m[1], +m[2], m[3]?+m[3]:0, 0);
+      // ha már elmúlt, feltételezzük ugyanazon szolgálati nap következő példányát (+24h)
+      if(target.getTime() < now.getTime()-30*1000){ target.setTime(target.getTime()+24*3600*1000); }
+      const diffMin = Math.round((target - now)/60000);
+      if(diffMin <= 0) return "DUE";
+      if(diffMin === 1) return "1 min";
+      return `${diffMin} mins`;
+    }
+
+    function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c])); }
+
+    // kattintás bárhová – dropdown elrejt
+    document.addEventListener("click",(e)=>{
+      if(!dd.contains(e.target) && e.target!==q) dd.style.display="none";
+    });
+
+    // belső cache-frissítés kényszerítése – változtatható, ha szeretnéd
+    (function bust(){
+      const u=new URL(location.href);
+      if(!u.searchParams.get("v")){
+        u.searchParams.set("v","board1");
+        history.replaceState(null,"",u.toString());
+      }
+    })();
   </script>
 </body>
 </html>
