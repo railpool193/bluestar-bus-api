@@ -147,6 +147,101 @@
   </div>
 
   <script>
+/* ------- VONAL FÜL: ÉLŐ JÁRMŰVEK ------- */
+// Segéd: fok -> irány string + nyíl
+function bearingToDir(b) {
+  if (b == null || isNaN(b)) return "–";
+  const dirs = [
+    ["É", 337.5, 22.5, "↑"],
+    ["ÉK", 22.5, 67.5, "↗"],
+    ["K", 67.5, 112.5, "→"],
+    ["DK", 112.5, 157.5, "↘"],
+    ["D", 157.5, 202.5, "↓"],
+    ["DNY", 202.5, 247.5, "↙"],
+    ["NY", 247.5, 292.5, "←"],
+    ["ÉNY", 292.5, 337.5, "↖"],
+  ];
+  for (const [n, a, c, sym] of dirs) {
+    if (a > c && (b >= a || b < c)) return `${n} ${sym}`;
+    if (b >= a && b < c) return `${n} ${sym}`;
+  }
+  return "–";
+}
+
+async function loadRouteVehicles(routeNo) {
+  const url = `/api/routes/${encodeURIComponent(routeNo)}/vehicles?v=${Date.now()}`;
+  const tbody = document.querySelector("#routeVehiclesBody");
+  tbody.innerHTML = `
+    <tr><td colspan="6" style="opacity:.7">Betöltés…</td></tr>
+  `;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json(); // várjuk: tömb jármű objektumokkal
+
+    if (!Array.isArray(data) || data.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="opacity:.7">
+        Ha nincs élő jármű, a lista üres. (Live nincs vagy jelenleg nem bejelentkezett jármű.)
+      </td></tr>`;
+      return;
+    }
+
+    // Elfogadott kulcsok – ami nincs, „–”-ként jelenik meg.
+    // Példa nevezések: reg, vehicle_registration, fleet_no; type, vehicle_type; bearing; lat/lon;
+    // stop_name / stop, trip_id, headsign / destination
+    const rows = data.map(v => {
+      const reg = v.reg || v.vehicle_registration || v.fleet_no || "–";
+      const type = v.type || v.vehicle_type || "–";
+      const dir = bearingToDir(Number(v.bearing));
+      const pos = (v.lat && v.lon) ? `${v.lat.toFixed(5)}, ${v.lon.toFixed(5)}` : "–";
+      const stop = v.stop_name || v.stop || "–";
+      const tripId = v.trip_id || v.tripId || null;
+      const headsign = v.headsign || v.destination || "";
+      const tripBtn = tripId
+        ? `<button class="linklike" data-trip="${tripId}">Trip megnyitása</button>`
+        : "–";
+
+      return `
+        <tr>
+          <td>${reg}</td>
+          <td>${type}</td>
+          <td>${dir}</td>
+          <td>${pos}</td>
+          <td>${stop}</td>
+          <td>${headsign ? headsign : ""} ${tripBtn}</td>
+        </tr>`;
+    }).join("");
+
+    tbody.innerHTML = rows || `<tr><td colspan="6">–</td></tr>`;
+
+    // Trip gombok összekötése
+    tbody.querySelectorAll("button.linklike[data-trip]").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const tripId = e.currentTarget.getAttribute("data-trip");
+        if (tripId) openTripModal(tripId); // ez a már meglévő modal függvényed
+      });
+    });
+
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6" style="color:#f88">
+      Hiba a járművek lekérésekor: ${String(err).replace(/</g,"&lt;")}
+    </td></tr>`;
+  }
+}
+
+// „Keresés” a Vonal fülön
+document.querySelector("#btnRouteSearch")?.addEventListener("click", () => {
+  const routeNo = document.querySelector("#routeInput")?.value?.trim();
+  if (!routeNo) return;
+  // találati legördülő frissítés nélkül is tölthetünk:
+  loadRouteVehicles(routeNo);
+});
+
+// Ha a „Találatok – válassz vonalat” select változik
+document.querySelector("#routeSelect")?.addEventListener("change", (e) => {
+  const routeNo = e.target.value;
+  if (routeNo) loadRouteVehicles(routeNo);
+});
     const dotApi  = document.getElementById('dot-api');
     const dotGtfs = document.getElementById('dot-gtfs');
     const dotLive = document.getElementById('dot-live');
