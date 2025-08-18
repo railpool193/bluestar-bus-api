@@ -1,13 +1,12 @@
-import io, json, zipfile, csv
+import io, json, csv, zipfile, time
 from pathlib import Path
-from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional
 from collections import defaultdict
-from typing import Optional, Dict, Any, List
 
 from fastapi import FastAPI, UploadFile, File, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-import os
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Bluestar Bus – API", version="2.1.0")
 
@@ -15,34 +14,60 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
-INDEX_FILE = BASE_DIR / "index.html"
+# ---- CORS + cache OFF az indexhez ----
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
+)
 
-# ---------- Cache-tiltás minden válaszra ----------
-@app.middleware("http")
-async def add_no_cache_headers(request, call_next):
-    response = await call_next(request)
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
+# -------- Helpers --------
+def _read_json(path: Path, default):
+    if not path.exists():
+        return default
+    return json.loads(path.read_text(encoding="utf-8"))
 
-# ---------- Statikus / gyökér ----------
-@app.get("/", include_in_schema=False)
-async def ui_root():
-    return FileResponse(str(INDEX_FILE), media_type="text/html")
+def _write_json(path: Path, data: Any):
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static"), html=False), name="static")
-
-# ---------- Segédfüggvények ----------
 def gtfs_files_exist() -> bool:
     return (DATA_DIR / "stops.json").exists() and (DATA_DIR / "schedule.json").exists()
 
-def read_json(path: Path, default):
-    if not path.exists():
-        return default
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+def vehicles_map() -> Dict[str, Dict[str, str]]:
+    """
+    Opcionális mapping: rendszám -> { "model": "...", "fleet_no": "..." }
+    Fájl: data/vehicles.json  (szabadon bővíthető)
+    """
+    return _read_json(DATA_DIR / "vehicles.json", {})
 
+# ----- EGY NAGYON EGYSZERŰ „élő réteg” -----
+# Itt hagyunk egy csatlakozási pontot a SIRI/RT-hez. Ha van háttér
+# folyamatod, ami ide kiír JSON-t (pl. data/live_state.json), a frontend azonnal használja.
+class LiveLayer:
+    def __init__(self, path: Path):
+        self.path = path
+
+    async def is_available(self) -> bool:
+        return self.path.exists()
+
+    def _state(self):
+        return _read_json(self.path, {
+            "updated": 0,
+            # stop_id -> list of {time(mins), route, destination, trip_id, live: true, vehicle: {reg, model}, progress%}
+            "live_departures": {},
+            # route_short_name -> list of vehicles {lat, lon, bearing, dir, reg, model, next_stop, when}
+            "route_vehicles": {}
+        })
+
+    async def departures_for_stop(self, stop_id: str) -> List[Dict[str, Any]]:
+        return self._state().get("live_departures", {}).get(stop_id, [])
+
+    async def vehicles_for_route(self, route_short: str) -> List[Dict[str, Any]]:
+        return self._state().get("route_vehicles", {}).get(route_short, [])
+
+siri_live = LiveLayer(DATA_DIR / "live_state.json")
+
+# -------- GTFS feldolgozás (feltöltés után) --------
 def _find_member(zf: zipfile.ZipFile, name: str) -> Optional[str]:
     lname = name.lower()
     for m in zf.namelist():
@@ -51,109 +76,93 @@ def _find_member(zf: zipfile.ZipFile, name: str) -> Optional[str]:
     return None
 
 def _build_from_zip_bytes(zip_bytes: bytes) -> None:
-    """GTFS feldolgozás: stops.json + schedule.json létrehozása (egyszerű, gyors)."""
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         req = ["stops.txt", "trips.txt", "stop_times.txt", "routes.txt"]
         members = {n: _find_member(zf, n) for n in req}
         missing = [n for n, m in members.items() if m is None]
         if missing:
-            raise ValueError(f"Hiányzó GTFS fájlok a ZIP-ben: {', '.join(missing)}")
+            raise ValueError(f"Hiányzó GTFS fájlok: {', '.join(missing)}")
 
-        # stops.json
-        stops: List[Dict[str, Any]] = []
+        # stops.json  (id + name + optional: code)
+        stops = []
         with zf.open(members["stops.txt"]) as f:
             reader = csv.DictReader(io.TextIOWrapper(f, "utf-8-sig"))
             for row in reader:
                 stops.append({
                     "stop_id": row["stop_id"],
-                    "stop_name": (row.get("stop_name") or "").strip(),
+                    "stop_name": row.get("stop_name", "").strip(),
+                    "stop_code": row.get("stop_code", "").strip(),
                 })
-        (DATA_DIR / "stops.json").write_text(json.dumps(stops, ensure_ascii=False), encoding="utf-8")
+        _write_json(DATA_DIR / "stops.json", stops)
 
-        # routes map
-        routes: Dict[str, str] = {}
+        # routes: route_id -> short/long
+        routes = {}
         with zf.open(members["routes.txt"]) as f:
             reader = csv.DictReader(io.TextIOWrapper(f, "utf-8-sig"))
             for row in reader:
-                routes[row["route_id"]] = row.get("route_short_name") or row.get("route_long_name") or ""
+                routes[row["route_id"]] = {
+                    "short": row.get("route_short_name") or "",
+                    "long": row.get("route_long_name") or "",
+                }
 
-        # trips map
-        trips: Dict[str, Dict[str, str]] = {}
+        # trips: trip_id -> {route_short, headsign}
+        trips = {}
         with zf.open(members["trips.txt"]) as f:
             reader = csv.DictReader(io.TextIOWrapper(f, "utf-8-sig"))
             for row in reader:
+                r = routes.get(row["route_id"], {"short": "", "long": ""})
                 trips[row["trip_id"]] = {
-                    "route": routes.get(row["route_id"], ""),
+                    "route": r["short"] or r["long"],
                     "headsign": (row.get("trip_headsign") or "").strip(),
                 }
 
-        # schedule.json: stop_id -> list of {time, route, destination}
+        # schedule: stop_id -> list of departures (HH:MM:SS, route, dest, trip_id)
         schedule = defaultdict(list)
+        # trip_stops: trip_id -> list of {seq, stop_id, time}
+        trip_stops = defaultdict(list)
         with zf.open(members["stop_times.txt"]) as f:
             reader = csv.DictReader(io.TextIOWrapper(f, "utf-8-sig"))
             for row in reader:
-                trip = trips.get(row["trip_id"])
-                if not trip:
-                    continue
+                tid = row["trip_id"]
                 t = (row.get("departure_time") or row.get("arrival_time") or "").strip()
                 if not t:
                     continue
+                trip = trips.get(tid)
+                if not trip:
+                    continue
                 schedule[row["stop_id"]].append({
-                    "time": t,  # HH:MM:SS
+                    "time": t,
                     "route": trip["route"],
                     "destination": trip["headsign"],
+                    "trip_id": tid
+                })
+                trip_stops[tid].append({
+                    "seq": int(row.get("stop_sequence") or 0),
+                    "stop_id": row["stop_id"],
+                    "time": t
                 })
 
-        (DATA_DIR / "schedule.json").write_text(json.dumps(schedule, ensure_ascii=False), encoding="utf-8")
+        # sort lists
+        for lst in schedule.values():
+            lst.sort(key=lambda x: x["time"])
+        for lst in trip_stops.values():
+            lst.sort(key=lambda x: x["seq"])
 
-# ---------- API ----------
+        _write_json(DATA_DIR / "schedule.json", schedule)
+        _write_json(DATA_DIR / "trip_stops.json", trip_stops)
+
+    (DATA_DIR / "gtfs_loaded.flag").write_text("ok", encoding="utf-8")
+
+
+# --------- API ENDPOINTS ---------
 @app.get("/api/status")
 async def api_status():
-    build = os.environ.get("RAILWAY_BUILD", "") or str(int(datetime.utcnow().timestamp()))
-    live_available = bool(os.environ.get("LIVE_ENABLED", ""))  # ha lesz SIRI, itt kapcsolható
-    return {"status": "ok", "gtfs": gtfs_files_exist(), "live": live_available, "build": build}
-
-@app.get("/api/stops/search")
-async def api_search_stops(q: str = Query(..., min_length=1), limit: int = 20):
-    stops = read_json(DATA_DIR / "stops.json", [])
-    ql = q.lower()
-    res = [s for s in stops if ql in (s.get("stop_name") or "").lower()]
-    res = res[:limit]
-    return res
-
-def _to_today_dt(hms: str) -> datetime:
-    # HH:MM[:SS] -> datetime ma (UTC+0 feltételezés; a kijelzéshez elég)
-    parts = [int(p) for p in hms.split(":")]
-    while len(parts) < 3:
-        parts.append(0)
-    now = datetime.utcnow()
-    base = datetime(now.year, now.month, now.day, 0, 0, 0)
-    return base + timedelta(hours=parts[0], minutes=parts[1], seconds=parts[2])
-
-@app.get("/api/stops/{stop_id}/next_departures")
-async def api_next_departures(stop_id: str, minutes: int = 60):
-    schedule: Dict[str, List[Dict[str, Any]]] = read_json(DATA_DIR / "schedule.json", {})
-    items = schedule.get(stop_id, [])
-    now = datetime.utcnow()
-    window = now + timedelta(minutes=minutes)
-
-    out = []
-    for it in items:
-        dt = _to_today_dt(it["time"])
-        # kezeli a 24+ órás időket is (pl. 25:10:00 -> másnap)
-        if dt < now:
-            # ha múltban van, de +24h beleesik az ablakba, toljuk 24h-val
-            dt_plus = dt + timedelta(days=1)
-            if dt_plus <= window:
-                due = int((dt_plus - now).total_seconds() // 60)
-                out.append({**it, "time": dt_plus.strftime("%H:%M"), "due": due})
-            continue
-        if dt <= window:
-            due = int((dt - now).total_seconds() // 60)
-            out.append({**it, "time": dt.strftime("%H:%M"), "due": due})
-
-    out.sort(key=lambda x: (x["due"], x["time"]))
-    return out
+    return {
+        "status": "ok",
+        "gtfs": gtfs_files_exist(),
+        "live": await siri_live.is_available(),
+        "build": str(int(time.time()))
+    }
 
 @app.post("/api/upload")
 async def api_upload(file: UploadFile = File(...)):
@@ -161,3 +170,130 @@ async def api_upload(file: UploadFile = File(...)):
     (DATA_DIR / "last_gtfs.zip").write_bytes(content)
     _build_from_zip_bytes(content)
     return {"status": "uploaded"}
+
+@app.get("/api/stops/search")
+async def stops_search(q: str = Query("", description="Megálló neve vagy kódja")):
+    stops = _read_json(DATA_DIR / "stops.json", [])
+    ql = q.strip().lower()
+    if not ql:
+        return []
+    res = [
+        s for s in stops
+        if ql in s["stop_name"].lower() or (s.get("stop_code") or "").lower().startswith(ql)
+    ]
+    # max 20 találat
+    return res[:20]
+
+def _hhmm_to_minutes(t: str) -> int:
+    try:
+        h, m, *_ = t.split(":")
+        return int(h) * 60 + int(m)
+    except:
+        return 0
+
+@app.get("/api/stops/{stop_id}/next_departures")
+async def next_departures(stop_id: str, minutes: int = 60):
+    schedule = _read_json(DATA_DIR / "schedule.json", {})
+    base = schedule.get(stop_id, [])
+
+    # időablak szűrés: a mai nap perceihez képest
+    now = time.localtime()
+    now_min = now.tm_hour * 60 + now.tm_min
+    upper = now_min + minutes
+
+    upcoming = []
+    for d in base:
+        dep_min = _hhmm_to_minutes(d["time"]) % (24*60)
+        # egyszerű: „mosttól + ablak” (átfordulást nagyvonalúan engedjük)
+        if now_min <= dep_min <= upper or (upper >= 24*60 and dep_min <= (upper % (24*60))):
+            minutes_left = (dep_min - now_min) % (24*60)
+            upcoming.append({
+                "route": d["route"],
+                "destination": d["destination"],
+                "time": d["time"],
+                "in_minutes": minutes_left,
+                "trip_id": d["trip_id"],
+                "live": False,
+                "vehicle": None
+            })
+
+    # élő overlay
+    if await siri_live.is_available():
+        live = await siri_live.departures_for_stop(stop_id)
+        # felülírjuk/összefésüljük (azonos trip vagy route+dest+közeli idő)
+        def sig(item): return (item["trip_id"] or "", item["route"], item["destination"])
+        by_sig = {sig(x): x for x in upcoming}
+        for ld in live:
+            key = (ld.get("trip_id") or "", ld.get("route"), ld.get("destination"))
+            if key in by_sig:
+                by_sig[key]["in_minutes"] = ld.get("time", by_sig[key]["in_minutes"])
+                by_sig[key]["live"] = True
+                by_sig[key]["vehicle"] = ld.get("vehicle")
+            else:
+                # új élő elem is jöhet
+                add = {
+                    "route": ld.get("route",""),
+                    "destination": ld.get("destination",""),
+                    "time": "", "in_minutes": ld.get("time", 0),
+                    "trip_id": ld.get("trip_id"), "live": True,
+                    "vehicle": ld.get("vehicle")
+                }
+                upcoming.append(add)
+
+    # rendezés: élő előre, majd ETA
+    upcoming.sort(key=lambda x: (not x["live"], x["in_minutes"]))
+    return upcoming[:50]
+
+@app.get("/api/trips/{trip_id}")
+async def trip_details(trip_id: str):
+    trip_stops = _read_json(DATA_DIR / "trip_stops.json", {})
+    stops = {s["stop_id"]: s for s in _read_json(DATA_DIR / "stops.json", [])}
+    seq = trip_stops.get(trip_id, [])
+    for r in seq:
+        st = stops.get(r["stop_id"])
+        r["stop_name"] = st["stop_name"] if st else r["stop_id"]
+    return {
+        "trip_id": trip_id,
+        "stops": seq
+    }
+
+@app.get("/api/routes/search")
+async def route_search(q: str = Query("", description="Járatszám / név")):
+    schedule = _read_json(DATA_DIR / "schedule.json", {})
+    routes = set()
+    for lst in schedule.values():
+        for it in lst:
+            if it.get("route"):
+                routes.add(it["route"])
+    ql = q.strip().lower()
+    res = [r for r in routes if ql in str(r).lower()]
+    res.sort(key=lambda x: (len(str(x)), str(x)))
+    return res[:30]
+
+@app.get("/api/routes/{route}/vehicles")
+async def route_vehicles(route: str):
+    # élő állapotból
+    result = []
+    if await siri_live.is_available():
+        result = await siri_live.vehicles_for_route(route)
+    # gazdagítás a vehicles.json-nal (ha élőben nincs model mező)
+    vmap = vehicles_map()
+    for v in result:
+        if not v.get("model"):
+            reg = (v.get("reg") or "").upper()
+            meta = vmap.get(reg)
+            if meta:
+                v["model"] = meta.get("model")
+                v["fleet_no"] = meta.get("fleet_no")
+    return result
+
+# ---- index.html kiszolgálása (cache kontroll) ----
+@app.get("/", response_class=HTMLResponse)
+async def index_html():
+    html = (BASE_DIR / "index.html").read_text(encoding="utf-8")
+    # no-cache fejlécek
+    return HTMLResponse(content=html, headers={
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    })
