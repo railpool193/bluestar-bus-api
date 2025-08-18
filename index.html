@@ -115,7 +115,21 @@
         </div>
 
         <div id="vehWrap" class="list" style="display:none">
-          <table>
+            <!-- Vonal fül táblája -->
+          <table class="table">
+  <thead>
+    <tr>
+      <th>Rendszám</th>
+      <th>Típus</th>
+      <th>Irány</th>
+      <th>Pozíció</th>
+      <th>Megálló</th>
+      <th>Trip</th>
+    </tr>
+  </thead>
+  <tbody id="routeVehiclesBody">
+    <tr><td colspan="6" style="opacity:.7">Ha nincs élő jármű, a lista üres.</td></tr>
+  </tbody>
             <thead><tr><th>Rendszám</th><th>Típus</th><th>Irány</th><th>Pozíció</th><th>Megálló</th><th>Frissítve</th></tr></thead>
             <tbody id="vehBody"></tbody>
           </table>
