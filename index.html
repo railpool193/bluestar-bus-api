@@ -4,308 +4,367 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Bluestar Bus – megálló & járat kereső</title>
-
-  <!-- Leaflet (vonal térképhez) -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
+  <link rel="icon" href="data:," />
   <style>
     :root{
-      --bg:#0f1320; --card:#151a2c; --muted:#8ea2c0; --text:#e8eefc;
-      --accent:#6ea8fe; --ok:#44d17a; --bad:#ff5d6c; --btn:#6a76ff;
-      --chip:#23304d; --chip-b:#3b4c74;
+      --bg:#0e1320;--panel:#151b2f;--panel-2:#0f1629;--text:#e6ebff;--muted:#9aa6c1;
+      --primary:#6a77ff;--good:#18c08f;--bad:#ff6b6b;--chip:#223056;--chip-t:#bcd4ff;
+      --row:#1a2139;--row-alt:#151c31;
+      --shadow:0 8px 28px rgba(0,0,0,.35);
+      --radius:16px
     }
-    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);
-      font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-    .wrap{max-width:1000px;margin:24px auto;padding:0 16px}
-    h1{font-size:2rem;margin:0 0 16px}
-    .card{background:var(--card);border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
-    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-    label{display:block;font-size:.9rem;color:var(--muted);margin:4px 0}
-    input,select,button{font:inherit}
-    input[type="text"],input[type="number"],select{width:100%;padding:12px 14px;border-radius:10px;border:1px solid #2b3553;background:#0f1526;color:var(--text);outline:none}
-    button{background:var(--btn);border:0;color:#fff;padding:12px 18px;border-radius:12px;font-weight:600;cursor:pointer}
-    button:disabled{opacity:.5;cursor:not-allowed}
-    .tabs{display:flex;gap:10px;margin:0 0 12px}
-    .tab{padding:8px 12px;border-radius:999px;background:var(--chip);color:var(--muted);cursor:pointer;user-select:none}
-    .tab.active{background:var(--chip-b);color:var(--text)}
-    .status{display:flex;gap:10px;align-items:center;margin-top:8px}
-    .dot{width:10px;height:10px;border-radius:50%;background:#777}
-    .dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)}
-    .list{margin-top:12px;border-radius:12px;overflow:auto;border:1px solid #2b3553}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:12px;border-bottom:1px solid #2b3553;text-align:left}
-    th{color:var(--muted);font-weight:600;background:#111833;position:sticky;top:0}
-    tr:hover{background:#111a36}
-    .route-badge{display:inline-block;min-width:36px;text-align:center;border-radius:999px;padding:2px 8px;background:#1e2a3a}
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,Segoe UI,Roboto,Inter,Arial}
+    .wrap{max-width:980px;margin:0 auto;padding:20px}
+    h1{display:flex;align-items:center;gap:.5rem;font-weight:800;letter-spacing:.2px;margin:8px 0 20px}
+    h1 .bus{font-size:28px}
+    .card{background:linear-gradient(180deg,var(--panel),var(--panel-2));border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
+    .tabs{display:flex;gap:12px;margin-bottom:16px}
+    .tab{border:none;border-radius:999px;padding:10px 18px;background:#222b47;color:#93a6d8}
+    .tab.active{background:#2f3b6a;color:#fff}
+    .grid{display:grid;grid-template-columns:1fr auto;gap:14px}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    label{display:block;font-size:13px;color:var(--muted);margin:6px 2px}
+    input,select{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #2a3354;background:#0c1122;color:#dfe6ff}
+    button.primary{padding:12px 18px;border:none;border-radius:12px;background:var(--primary);color:white;font-weight:700}
+    .badges{display:flex;gap:14px;align-items:center;margin:10px 0 14px;color:var(--muted)}
+    .dot{width:10px;height:10px;border-radius:50%}
+    .ok{background:var(--good)} .no{background:var(--bad)}
+    table{width:100%;border-collapse:separate;border-spacing:0 10px}
+    th,td{padding:14px}
+    thead th{color:#9fb0d8;font-weight:700}
+    tbody tr{background:var(--row);border-radius:12px}
+    tbody tr:nth-child(even){background:var(--row-alt)}
+    tbody tr td:first-child{border-radius:12px 0 0 12px}
+    tbody tr td:last-child{border-radius:0 12px 12px 0}
+    .chip{display:inline-flex;min-width:38px;justify-content:center;padding:6px 10px;border-radius:999px;background:var(--chip);color:var(--chip-t);font-weight:700}
     .muted{color:var(--muted)}
-    .sub{font-size:.9rem;color:var(--muted)}
-    .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;padding:16px;z-index:50}
-    .modal .content{background:var(--card);width:min(720px,96vw);max-height:90vh;overflow:auto;border-radius:14px;padding:16px}
-    .modal h3{margin:0 0 8px}
-    .modal .close{float:right;cursor:pointer;color:var(--muted)}
-    #routeMap{width:100%;height:360px;border-radius:14px;overflow:hidden;margin:10px 0}
+    .footer{opacity:.7;margin-top:18px;font-size:13px}
+    /* Modal */
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;padding:18px}
+    .modal.open{display:flex}
+    .modal .box{width:min(860px,95vw);max-height:85vh;overflow:auto;background:linear-gradient(180deg,var(--panel),var(--panel-2));border-radius:18px;padding:18px;box-shadow:var(--shadow)}
+    .modal h3{margin:0 0 12px}
+    .close{border:none;background:#2a355f;color:#bcd4ff;border-radius:8px;padding:6px 10px;float:right}
+    /* Map placeholder container */
+    #routeMap{width:100%;height:360px;border-radius:14px;overflow:hidden;background:#0c1122}
+    /* Mobile tweaks */
+    @media (max-width:640px){ .grid{grid-template-columns:1fr} }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>🚌 Bluestar Bus – megálló & járat kereső <span id="liveDot" class="dot" title="Live"></span></h1>
+    <h1><span class="bus">🚌</span> Bluestar Bus – megálló & járat kereső</h1>
 
     <div class="card">
       <div class="tabs">
-        <div class="tab active" data-tab="stops">Megálló</div>
-        <div class="tab" data-tab="routes">Vonal</div>
+        <button id="tabStop"  class="tab active">Megálló</button>
+        <button id="tabRoute" class="tab">Vonal</button>
       </div>
 
-      <!-- Megálló fül -->
-      <div id="tab-stops">
-        <div class="row">
-          <div style="flex:2">
+      <!-- STOP PANEL -->
+      <div id="panelStop">
+        <div class="grid">
+          <div>
             <label>Megálló név</label>
-            <input id="qStop" type="text" placeholder="Pl. Vincent…" autocomplete="off">
-          </div>
-          <div style="flex:1;min-width:140px">
-            <label>Időablak (perc)</label>
-            <input id="win" type="number" value="60" min="5" max="240">
+            <input id="stopQuery" placeholder="Pl. Vincent…" />
           </div>
           <div>
-            <label>&nbsp;</label>
-            <button id="btnSearchStop">Keresés</button>
+            <label>Időablak (perc)</label>
+            <input id="minutes" type="number" value="60" min="5" max="240"/>
+          </div>
+          <div></div>
+          <div style="display:flex;align-items:flex-end;justify-content:flex-end">
+            <button id="btnSearchStop" class="primary">Keresés</button>
           </div>
         </div>
 
-        <div id="stopSelectWrap" style="margin-top:10px;display:none">
-          <label>Találatok – válassz megállót</label>
-          <select id="stopSelect"></select>
+        <label>Találatok – válassz megállót</label>
+        <select id="stopSelect"></select>
+
+        <div class="badges">
+          <span><span id="apiDot"   class="dot no"></span> API</span>
+          <span><span id="gtfsDot"  class="dot no"></span> GTFS</span>
+          <span><span id="liveDot"  class="dot no"></span> Live</span>
+          <span class="muted" id="chosenStopNote"></span>
         </div>
 
-        <div class="status">
-          <div><span id="dot-api" class="dot"></span> <span class="muted">API</span></div>
-          <div><span id="dot-gtfs" class="dot"></span> <span class="muted">GTFS</span></div>
-          <div><span id="dot-live" class="dot"></span> <span class="muted">Live</span></div>
-          <div class="sub" style="margin-left:auto">Választott megálló: <span id="chosenStop" class="muted">–</span></div>
-        </div>
-
-        <div id="depWrap" class="list" style="display:none">
+        <div style="overflow:auto">
           <table>
-            <thead><tr><th>Járat</th><th>Cél</th><th>Indulás</th><th>Élő</th><th>Rendszám</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <th>Járat</th>
+                <th>Cél</th>
+                <th>Indulás</th>
+                <th>Élő</th>
+                <th>Rendszám</th>
+                <th>Típus</th>
+              </tr>
+            </thead>
             <tbody id="depBody"></tbody>
           </table>
         </div>
       </div>
 
-      <!-- Vonal fül -->
-      <div id="tab-routes" style="display:none">
-        <div class="row">
-          <div style="flex:2">
-            <label>Vonal száma/név</label>
-            <input id="qRoute" type="text" placeholder="Pl. 18">
-          </div>
+      <!-- ROUTE PANEL -->
+      <div id="panelRoute" style="display:none">
+        <div class="grid">
           <div>
-            <label>&nbsp;</label>
-            <button id="btnSearchRoute">Keresés</button>
+            <label>Vonal száma/név</label>
+            <input id="routeQuery" placeholder="Pl. 18…" />
+          </div>
+          <div></div>
+          <div></div>
+          <div style="display:flex;align-items:flex-end;justify-content:flex-end">
+            <button id="btnSearchRoute" class="primary">Keresés</button>
           </div>
         </div>
 
-        <div id="routeSelectWrap" style="margin-top:10px;display:none">
-          <label>Találatok – válassz vonalat</label>
-          <select id="routeSelect"></select>
-        </div>
+        <label>Találatok – válassz vonalat</label>
+        <select id="routeSelect"></select>
 
-        <div id="routeMap"></div>
-
-        <div id="vehWrap" class="list" style="display:none">
-          <table>
-            <thead><tr><th>Rendszám</th><th>Típus</th><th>Irány</th><th>Pozíció</th><th>Megálló</th></tr></thead>
-            <tbody id="vehBody"></tbody>
-          </table>
-        </div>
+        <div id="routeMap" class="card" style="margin-top:12px"></div>
+        <div class="muted" style="margin-top:8px">Ha nincs élő jármű, a térkép üres marad.</div>
       </div>
-    </div>
 
-    <div class="card" style="margin-top:12px">
-      <div class="sub">Build: <span id="build">–</span> · Cache-bypass aktív</div>
+      <div class="footer muted" id="buildInfo"></div>
     </div>
   </div>
 
   <!-- Trip modal -->
-  <div class="modal" id="tripModal">
-    <div class="content">
-      <div class="close" id="closeTrip">✖</div>
-      <h3>Járat részletek</h3>
-      <div id="tripTitle" class="sub" style="margin-bottom:8px"></div>
-      <div class="list">
+  <div id="tripModal" class="modal" role="dialog" aria-modal="true">
+    <div class="box">
+      <button class="close" id="closeTrip">✕</button>
+      <h3 id="tripTitle">Járat részletek</h3>
+      <div style="overflow:auto">
         <table>
-          <thead><tr><th>Idő</th><th>Megálló</th><th>Élő</th></tr></thead>
+          <thead><tr><th>Idő</th><th>Megálló</th></tr></thead>
           <tbody id="tripBody"></tbody>
         </table>
       </div>
     </div>
   </div>
 
-<script>
-const qs=(s)=>document.querySelector(s);
-const apiFetch=(url,opts={})=>{
-  const sep=url.includes('?')?'&':'?';
-  return fetch(url+sep+'ts='+Date.now(), {cache:'no-store',...opts});
-};
+  <!-- OPTIONAL: Leaflet for map (CDN) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="" crossorigin=""></script>
 
-// Tabs
-document.querySelectorAll('.tab').forEach(t=>{
-  t.onclick=()=>{
-    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-    t.classList.add('active');
-    const name=t.dataset.tab;
-    qs('#tab-stops').style.display=(name==='stops')?'block':'none';
-    qs('#tab-routes').style.display=(name==='routes')?'block':'none';
-  };
-});
-
-// Status
-async function refreshStatus(){
-  try{
-    const s=await apiFetch('/api/status').then(r=>r.json());
-    qs('#build').textContent=s.build||'–';
-    qs('#liveDot').classList.toggle('ok', !!s.live);
-    setDot('#dot-api', true);
-    setDot('#dot-gtfs', !!s.gtfs);
-    setDot('#dot-live', !!s.live);
-  }catch{
-    setDot('#dot-api', false); setDot('#dot-gtfs', false); setDot('#dot-live', false);
-  }
-}
-function setDot(id, ok){ const el=qs(id); el.classList.remove('ok','bad'); el.classList.add(ok?'ok':'bad'); }
-refreshStatus(); setInterval(refreshStatus, 10000);
-
-// -------- Megálló keresés --------
-qs('#btnSearchStop').onclick = async ()=>{
-  const q = qs('#qStop').value.trim();
-  if(!q) return;
-  const arr = await apiFetch('/api/stops/search?q='+encodeURIComponent(q)).then(r=>r.json());
-  const sel = qs('#stopSelect');
-  sel.innerHTML='';
-  arr.forEach(s=>{
-    const o=document.createElement('option');
-    o.value=s.stop_id;
-    o.textContent=`${s.stop_name} (${s.stop_id}${s.stop_code? ' • '+s.stop_code:''})`;
-    sel.appendChild(o);
-  });
-  const has=arr.length>0;
-  qs('#stopSelectWrap').style.display=has?'block':'none';
-  qs('#chosenStop').textContent=has?arr[0].stop_id:'–';
-  if(has){ sel.onchange=()=>{ qs('#chosenStop').textContent=sel.value; getDepartures(); }; await getDepartures(); }
-};
-
-async function getDepartures(){
-  const id = qs('#stopSelect').value;
-  const mins = Math.max(5, Math.min(240, parseInt(qs('#win').value||'60',10)));
-  const rows = await apiFetch(`/api/stops/${encodeURIComponent(id)}/next_departures?minutes=${mins}&live=true`).then(r=>r.json());
-  const tb = qs('#depBody');
-  tb.innerHTML='';
-  rows.forEach(d=>{
-    const liveTxt = Number.isFinite(d.eta_min) ? `${d.eta_min}'`
-                  : (Number.isFinite(d.delay_min) ? (d.delay_min>0?`+${d.delay_min}'`:`${d.delay_min}'`) : '–');
-    const tr=document.createElement('tr');
-    tr.innerHTML = `
-      <td><span class="route-badge">${d.route||''}</span></td>
-      <td>${escapeHtml(d.destination||'')}</td>
-      <td>${d.time||''}</td>
-      <td>${d.live?`<span class="dot ok" title="Live"></span> ${liveTxt}`:liveTxt}</td>
-      <td>${d.vehicle_reg||'–'}</td>
-      <td>${d.trip_id?`<button class="linklike" data-trip="${d.trip_id}">Részletek</button>`:'–'}</td>
-    `;
-    tr.querySelectorAll('button[data-trip]').forEach(b=>{
-      b.onclick=()=>openTrip(d.trip_id, d.route, d.destination);
-    });
-    tb.appendChild(tr);
-  });
-  qs('#depWrap').style.display = rows.length?'block':'none';
-}
-
-function escapeHtml(s){return (s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
-
-// -------- Trip modal --------
-const tripModal=qs('#tripModal');
-qs('#closeTrip').onclick=()=> tripModal.style.display='none';
-
-async function openTrip(tripId, route, headsign){
-  if(!tripId){ return; }
-  tripModal.style.display='flex';
-  qs('#tripTitle').textContent = `Járat ${route||''} – ${headsign||''} (trip: ${tripId})`;
-  qs('#tripBody').innerHTML = `<tr><td colspan="3" class="muted">Betöltés…</td></tr>`;
-  const d = await apiFetch(`/api/trips/${encodeURIComponent(tripId)}`).then(r=>r.json());
-  qs('#tripBody').innerHTML = (d.calls||[]).map(c=>`
-    <tr><td>${c.time||''}</td><td>${escapeHtml(c.stop_name||c.stop_id||'')}</td><td>${Number.isFinite(c.eta_min)?`${c.eta_min}'`:'–'}</td></tr>
-  `).join('') || `<tr><td colspan="3" class="muted">Nincs adat.</td></tr>`;
-}
-
-// -------- Vonal: keresés + járművek + térkép --------
-let routeMap, routeMarkers=new Map(), routeTimer=null;
-
-qs('#btnSearchRoute').onclick = async ()=>{
-  const q = qs('#qRoute').value.trim();
-  if(!q) return;
-  const arr = await apiFetch('/api/routes/search?q='+encodeURIComponent(q)).then(r=>r.json());
-  const sel = qs('#routeSelect');
-  sel.innerHTML='';
-  arr.forEach(o=>{
-    const opt=document.createElement('option');
-    opt.value=o.route; opt.textContent=o.route; sel.appendChild(opt);
-  });
-  const has = arr.length>0;
-  qs('#routeSelectWrap').style.display = has?'block':'none';
-  if(has){ sel.onchange=()=>loadRouteVehicles(); await loadRouteVehicles(); startRoutePolling(); }
-};
-
-function ensureRouteMap(){
-  if(routeMap) return routeMap;
-  routeMap = L.map('routeMap',{zoomControl:true,attributionControl:false}).setView([50.9097,-1.4043], 12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(routeMap);
-  return routeMap;
-}
-function iconForBearing(b=0){
-  return L.divIcon({className:'',html:`<div style="width:14px;height:14px;border-radius:50%;background:#7aa2ff;border:2px solid white;box-shadow:0 0 10px rgba(0,0,0,.4)"></div>`});
-}
-
-async function loadRouteVehicles(){
-  ensureRouteMap();
-  const route = qs('#routeSelect').value;
-  const arr = await apiFetch(`/api/routes/${encodeURIComponent(route)}/vehicles`).then(r=>r.json());
-  // táblázat
-  const tb = qs('#vehBody');
-  tb.innerHTML = arr.map(v=>{
-    const pos=(v.lat&&v.lon)?`${v.lat.toFixed(5)}, ${v.lon.toFixed(5)}`:'–';
-    const dir=Number.isFinite(v.bearing)?`${Math.round(v.bearing)}°`:'–';
-    return `<tr><td>${escapeHtml(v.reg||'–')}</td><td>${escapeHtml(v.type||v.fleet_no||'–')}</td><td>${dir}</td><td>${pos}</td><td>${escapeHtml(v.stop_name||'')}</td></tr>`;
-  }).join('') || `<tr><td colspan="5" class="muted">Nincs élő jármű ezen a vonalon.</td></tr>`;
-
-  // térkép
-  const keep=new Set(), pts=[];
-  arr.forEach(v=>{
-    if(!(v.lat&&v.lon)) return;
-    const key=v.reg||`${v.lat},${v.lon}`;
-    keep.add(key);
-    let m=routeMarkers.get(key);
-    if(!m){
-      m=L.marker([v.lat,v.lon],{icon:iconForBearing(v.bearing||0)}).addTo(routeMap);
-      routeMarkers.set(key,m);
-    }else{
-      m.setLatLng([v.lat,v.lon]);
+  <script>
+  (()=> {
+    const Q = (s,root=document)=>root.querySelector(s)
+    const Qa = (s,root=document)=>[...root.querySelectorAll(s)]
+    const api = (p, params={}) => {
+      // cache bypass
+      const v = Date.now().toString()
+      const url = p + (p.includes('?') ? '&' : '?') + 'v='+v
+      return fetch(url, params).then(r=>r.json())
     }
-    const popup=`<b>${escapeHtml(v.reg||'Ismeretlen')}</b><br>${escapeHtml(v.type||'')}<br>${escapeHtml(v.headsign||'')}<br>${escapeHtml(v.stop_name||'')}`;
-    m.bindPopup(popup);
-    pts.push([v.lat,v.lon]);
-  });
-  for(const [k,m] of routeMarkers.entries()){
-    if(!keep.has(k)){ routeMap.removeLayer(m); routeMarkers.delete(k); }
-  }
-  if(pts.length){ routeMap.fitBounds(L.latLngBounds(pts).pad(0.2)); }
-}
 
-function startRoutePolling(){
-  if(routeTimer) clearInterval(routeTimer);
-  routeTimer=setInterval(()=>{ loadRouteVehicles().catch(()=>{}); }, 15000);
-}
-</script>
+    const dots = {api:Q('#apiDot'), gtfs:Q('#gtfsDot'), live:Q('#liveDot')}
+    const setDot = (el, ok)=>{ el.classList.toggle('ok', ok); el.classList.toggle('no', !ok) }
+
+    // Tabs
+    const tabStop = Q('#tabStop'), tabRoute = Q('#tabRoute')
+    const panelStop = Q('#panelStop'), panelRoute = Q('#panelRoute')
+    tabStop.onclick = ()=>{ tabStop.classList.add('active'); tabRoute.classList.remove('active'); panelStop.style.display='block'; panelRoute.style.display='none' }
+    tabRoute.onclick= ()=>{ tabRoute.classList.add('active'); tabStop.classList.remove('active'); panelRoute.style.display='block'; panelStop.style.display='none' }
+
+    // Build info + status lights
+    api('/api/status').then(s=>{
+      Q('#buildInfo').textContent = `Build: ${s.build} · Cache-bypass aktív`
+      setDot(dots.api, true)
+      setDot(dots.gtfs, !!s.gtfs)
+      setDot(dots.live, !!s.live)
+    }).catch(()=>{ setDot(dots.api,false); setDot(dots.gtfs,false); setDot(dots.live,false) })
+
+    // Elements
+    const stopQuery = Q('#stopQuery'), minutes = Q('#minutes'), stopSelect = Q('#stopSelect'), depBody = Q('#depBody'), chosenNote = Q('#chosenStopNote')
+    const routeQuery = Q('#routeQuery'), routeSelect = Q('#routeSelect')
+    let leafletMap=null, leafletLayer=null
+
+    // --- STOP SEARCH ---
+    Q('#btnSearchStop').onclick = async ()=>{
+      depBody.innerHTML = ''
+      stopSelect.innerHTML = ''
+      chosenNote.textContent = 'Keresés…'
+      const q = stopQuery.value.trim()
+      if(!q){ chosenNote.textContent = 'Írj be egy megállónevet.'; return }
+      try{
+        const data = await api('/api/stops/search?q='+encodeURIComponent(q))
+        if(!data || !data.length){ chosenNote.textContent = 'Nincs találat.'; return }
+        data.forEach((s,i)=>{
+          const opt = document.createElement('option')
+          opt.value = s.stop_id
+          opt.textContent = `${s.stop_name} (${s.stop_id})`
+          stopSelect.appendChild(opt)
+        })
+        chosenNote.textContent = 'Válassz egy megállót, az indulások automatikusan betöltődnek.'
+        stopSelect.onchange()
+      }catch(e){ chosenNote.textContent='Hiba a keresésnél.' }
+    }
+
+    stopSelect.onchange = async ()=>{
+      const stop_id = stopSelect.value
+      if(!stop_id){ return }
+      chosenNote.textContent = 'Indulások betöltése…'
+      depBody.innerHTML = ''
+      try{
+        const m = Number(minutes.value||60)
+        const deps = await api(`/api/stops/${encodeURIComponent(stop_id)}/next_departures?minutes=${m}`)
+        chosenNote.textContent = `Választott megálló: ${stop_id}`
+        renderDepartures(deps||[], stop_id)
+      }catch(e){ chosenNote.textContent='Hiba az indulások lekérésekor.' }
+    }
+
+    // render departures + attach click to open trip modal
+    async function renderDepartures(deps, stop_id){
+      depBody.innerHTML=''
+      if(!deps.length){
+        depBody.innerHTML = `<tr><td colspan="6" class="muted">Nincs indulás az időablakban.</td></tr>`
+        return
+      }
+      // csoportosítunk route szerint, hogy minél kevesebb live hívás legyen
+      const routes = [...new Set(deps.map(d=>d.route_short_name||d.route||'').filter(Boolean))]
+      const liveByRoute = {}
+      // Élő adatok lekérése párhuzamosan (ha van live)
+      try{
+        const status = await api('/api/status')
+        if(status.live){
+          await Promise.all(routes.map(async r=>{
+            liveByRoute[r] = await api(`/api/routes/${encodeURIComponent(r)}/vehicles`).catch(()=>[])
+          }))
+        }
+      }catch{}
+
+      // Segédfüggvény: megpróbáljuk összepárosítani a departure-t a route live járműveihez
+      const findLiveFor = (d)=>{
+        const arr = liveByRoute[d.route_short_name||d.route||'']||[]
+        // próbáljunk trip_id alapján, ha van
+        if(d.trip_id){
+          const hit = arr.find(v=>v.trip_id && v.trip_id===d.trip_id)
+          if(hit) return hit
+        }
+        // második esély: headsign / direction (best-effort)
+        if(d.headsign){
+          const norm = s=>String(s).toLowerCase().replace(/\s+/g,'').replace(/[^\p{L}\p{N}]/gu,'')
+          const h = norm(d.headsign)
+          const hit = arr.find(v=>norm(v.headsign||v.destination||'')===h)
+          if(hit) return hit
+        }
+        return null
+      }
+
+      deps.forEach(d=>{
+        const tr = document.createElement('tr')
+        tr.innerHTML = `
+          <td><span class="chip">${escapeHtml(d.route_short_name||d.route||'?')}</span></td>
+          <td>${escapeHtml(d.headsign||d.destination||'')}</td>
+          <td>${escapeHtml(d.departure_time||d.time||'')}</td>
+          <td class="liveCell muted">–</td>
+          <td class="regCell  muted">–</td>
+          <td class="typCell  muted">–</td>
+        `
+        // kattintás = trip modal
+        if(d.trip_id){
+          tr.style.cursor='pointer'
+          tr.addEventListener('click', ()=> openTripModal(d))
+          tr.title = 'Koppints a járat részleteihez'
+        }
+        depBody.appendChild(tr)
+
+        // élő kitöltése (ha van találat)
+        const live = findLiveFor(d)
+        if(live){
+          // ETA becslés: ha a backend ad "eta_minutes", használjuk, különben hagyjuk „–”-on
+          const eta = live.eta_minutes!=null ? `${live.eta_minutes}′` : '•'
+          tr.querySelector('.liveCell').textContent = eta
+          tr.querySelector('.liveCell').classList.remove('muted')
+
+          if(live.registration){ tr.querySelector('.regCell').textContent = live.registration; tr.querySelector('.regCell').classList.remove('muted') }
+          if(live.vehicle_type){ tr.querySelector('.typCell').textContent = live.vehicle_type; tr.querySelector('.typCell').classList.remove('muted') }
+        }
+      })
+    }
+
+    // --- TRIP MODAL ---
+    const tripModal = Q('#tripModal'), tripBody = Q('#tripBody'), tripTitle = Q('#tripTitle')
+    Q('#closeTrip').onclick = ()=> tripModal.classList.remove('open')
+
+    async function openTripModal(dep){
+      tripBody.innerHTML = '<tr><td colspan="2" class="muted">Betöltés…</td></tr>'
+      tripTitle.textContent = `Járat ${dep.route_short_name||dep.route||''} – ${dep.headsign||''} (trip: ${dep.trip_id||'?'})`
+      tripModal.classList.add('open')
+      if(!dep.trip_id){ tripBody.innerHTML = '<tr><td colspan="2" class="muted">Ehhez a sorhoz nincs trip azonosító.</td></tr>'; return }
+      try{
+        const t = await api(`/api/trips/${encodeURIComponent(dep.trip_id)}`)
+        const rows = (t.stop_times||t.stops||[]).map(st=>{
+          const time = st.arrival_time || st.departure_time || st.time || ''
+          const name = st.stop_name || st.name || ''
+          return `<tr><td>${escapeHtml(time)}</td><td>${escapeHtml(name)}</td></tr>`
+        }).join('')
+        tripBody.innerHTML = rows || '<tr><td colspan="2" class="muted">Nincs menetrendi adat ehhez a triphez.</td></tr>'
+      }catch(e){
+        tripBody.innerHTML = '<tr><td colspan="2" class="muted">Hiba a trip lekérésekor.</td></tr>'
+      }
+    }
+
+    // --- ROUTE SEARCH + MAP ---
+    Q('#btnSearchRoute').onclick = async ()=>{
+      routeSelect.innerHTML=''
+      const q = routeQuery.value.trim()
+      if(!q) return
+      const res = await api('/api/routes/search?q='+encodeURIComponent(q)).catch(()=>[])
+      if(!res.length){ const o=document.createElement('option');o.textContent='Nincs találat';routeSelect.appendChild(o);return }
+      res.forEach(r=>{
+        const o=document.createElement('option')
+        o.value = r.route_short_name || r.route || r.id
+        o.textContent = r.long_name ? `${o.value} – ${r.long_name}` : o.value
+        routeSelect.appendChild(o)
+      })
+      await loadRouteVehicles(routeSelect.value)
+    }
+
+    routeSelect.onchange = ()=> loadRouteVehicles(routeSelect.value)
+
+    async function loadRouteVehicles(route){
+      if(!route) return
+      const vehicles = await api(`/api/routes/${encodeURIComponent(route)}/vehicles`).catch(()=>[])
+      ensureMap()
+      // töröljük az előző réteget
+      if(leafletLayer){ leafletLayer.clearLayers() } else { leafletLayer = L.layerGroup().addTo(leafletMap) }
+      if(!vehicles.length) return
+      vehicles.forEach(v=>{
+        const m = L.marker([v.lat||v.latitude, v.lon||v.longitude], {rotationAngle: v.bearing||0})
+        const title = [
+          `<b>${escapeHtml(v.registration||v.label||'Jármű')}</b>`,
+          `Vonal: ${escapeHtml(route)}`,
+          v.headsign? `Irány: ${escapeHtml(v.headsign)}`:'',
+          v.vehicle_type? `Típus: ${escapeHtml(v.vehicle_type)}`:''
+        ].filter(Boolean).join('<br/>')
+        m.bindPopup(title)
+        leafletLayer.addLayer(m)
+      })
+      // fókusz
+      const grp = L.featureGroup(leafletLayer.getLayers())
+      leafletMap.fitBounds(grp.getBounds().pad(0.2))
+    }
+
+    function ensureMap(){
+      if(leafletMap) return
+      leafletMap = L.map('routeMap')
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19, attribution: '&copy; OpenStreetMap'
+      }).addTo(leafletMap)
+      leafletMap.setView([50.9,-1.4], 12)
+    }
+
+    // Utils
+    function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])) }
+
+    // Autofókusz – kényelmi
+    stopQuery.focus()
+  })();
+  </script>
 </body>
 </html>
