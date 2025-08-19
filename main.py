@@ -88,9 +88,13 @@ class BODSAdapter:
         if not url:
             return None
         try:
-            r = await self.client.get(url, headers={"Cache-Control":"no-cache"}, params={"_": int(time.time())})
+            r = await self.client.get(
+                url,
+                headers={"Cache-Control": "no-cache"},
+                params={"_": int(time.time())},
+            )
             r.raise_for_status()
-            ct = r.headers.get("content-type","").lower()
+            ct = r.headers.get("content-type", "").lower()
             if "json" in ct or r.text.strip().startswith("{"):
                 return r.json()
             # XML → dict
@@ -114,15 +118,16 @@ class BODSAdapter:
         def pick_json(d):
             vs = []
             try:
-                vm = d.get("Siri",{}).get("ServiceDelivery",{}).get("VehicleMonitoringDelivery",[])
-                if isinstance(vm, dict): vm=[vm]
+                vm = d.get("Siri", {}).get("ServiceDelivery", {}).get("VehicleMonitoringDelivery", [])
+                if isinstance(vm, dict):
+                    vm = [vm]
                 for deliv in vm:
-                    for mvj in deliv.get("VehicleActivity",[]) or []:
-                        mj = mvj.get("MonitoredVehicleJourney",{}) or {}
-                        loc = mj.get("VehicleLocation",{}) or {}
+                    for mvj in deliv.get("VehicleActivity", []) or []:
+                        mj = mvj.get("MonitoredVehicleJourney", {}) or {}
+                        loc = mj.get("VehicleLocation", {}) or {}
                         vs.append({
-                            "lat": float(loc.get("Latitude",0) or 0),
-                            "lon": float(loc.get("Longitude",0) or 0),
+                            "lat": float(loc.get("Latitude", 0) or 0),
+                            "lon": float(loc.get("Longitude", 0) or 0),
                             "route": (mj.get("LineRef") or mj.get("PublishedLineName") or ""),
                             "bearing": mj.get("Bearing"),
                             "reg": mj.get("VehicleRef") or mj.get("VehicleRegistrationMark") or "",
@@ -138,26 +143,29 @@ class BODSAdapter:
         def pick_xml(d):
             vs = []
             try:
-                siri = d.get("Siri",{})
-                sd = siri.get("ServiceDelivery",{})
-                vmd = sd.get("VehicleMonitoringDelivery",{})
+                siri = d.get("Siri", {})
+                sd = siri.get("ServiceDelivery", {})
+                vmd = sd.get("VehicleMonitoringDelivery", {})
                 vas = BODSAdapter._as_list(vmd.get("VehicleActivity"))
                 for mvj in vas:
-                    mj = mvj.get("MonitoredVehicleJourney",{}) or {}
-                    loc = mj.get("VehicleLocation",{}) or {}
-                    def getk(obj, k): 
+                    mj = mvj.get("MonitoredVehicleJourney", {}) or {}
+                    loc = mj.get("VehicleLocation", {}) or {}
+
+                    def getk(obj, k):
                         v = obj.get(k)
-                        if isinstance(v, dict) and "#text" in v: return v["#text"]
+                        if isinstance(v, dict) and "#text" in v:
+                            return v["#text"]
                         return v
+
                     vs.append({
-                        "lat": float(getk(loc,"Latitude") or 0),
-                        "lon": float(getk(loc,"Longitude") or 0),
-                        "route": getk(mj,"LineRef") or getk(mj,"PublishedLineName") or "",
-                        "bearing": getk(mj,"Bearing"),
-                        "reg": getk(mj,"VehicleRef") or getk(mj,"VehicleRegistrationMark") or "",
-                        "trip_id": getk(mj,"DatedVehicleJourneyRef") or getk(mj,"VehicleJourneyRef") or "",
-                        "line_ref": getk(mj,"LineRef") or "",
-                        "dest": getk(mj,"DestinationName") or "",
+                        "lat": float(getk(loc, "Latitude") or 0),
+                        "lon": float(getk(loc, "Longitude") or 0),
+                        "route": getk(mj, "LineRef") or getk(mj, "PublishedLineName") or "",
+                        "bearing": getk(mj, "Bearing"),
+                        "reg": getk(mj, "VehicleRef") or getk(mj, "VehicleRegistrationMark") or "",
+                        "trip_id": getk(mj, "DatedVehicleJourneyRef") or getk(mj, "VehicleJourneyRef") or "",
+                        "line_ref": getk(mj, "LineRef") or "",
+                        "dest": getk(mj, "DestinationName") or "",
                     })
             except Exception:
                 pass
@@ -176,14 +184,39 @@ class BODSAdapter:
         return self._parse_vehicles(raw)
 
     async def vehicles_by_route(self, route_no: str) -> List[Dict[str, Any]]:
+        """Rugalmas egyezés: LineRef/PublishedLineName, prefix-levágás, csak számrészek stb."""
         vs = await self.vehicles()
-        route_no = str(route_no).strip().lower()
-        def norm(x): return str(x or "").strip().lower()
-        return [v for v in vs if norm(v.get("route")) == route_no or norm(v.get("line_ref")) == route_no]
+        r = str(route_no or "").strip().lower()
+
+        def norm(x: Any) -> str:
+            s = str(x or "").strip().lower()
+            for p in ("blus:", "blus", "line", "route"):
+                if s.startswith(p):
+                    s = s[len(p):].strip()
+            return s
+
+        def digits_only(s: str) -> str:
+            return "".join(ch for ch in s if ch.isdigit())
+
+        target_norm = norm(r)
+        target_digits = digits_only(target_norm)
+
+        out = []
+        for v in vs:
+            cand = norm(v.get("route") or v.get("line_ref"))
+            name = norm(v.get("dest") or "")
+            if (
+                cand == target_norm
+                or (target_digits and digits_only(cand) == target_digits)
+                or (target_digits and target_digits in digits_only(name))
+            ):
+                out.append(v)
+        return out
 
     # Ezekhez a feed általában nem ad külön adatot – visszaadunk üreset.
     async def stop_next_departures(self, stop_id: str, minutes: int) -> List[Dict[str, Any]]:
         return []
+
     async def trip_details(self, trip_id: str) -> Dict[str, Any]:
         return {}
 
@@ -278,14 +311,14 @@ async def api_status():
         "build": str(int(time.time()))
     }
 
-# ---- LIVE config
+# ---- LIVE config + debug
 @app.get("/api/live/config")
 async def get_live_cfg():
     return _get_live_cfg()
 
 @app.post("/api/live/config")
 async def set_live_cfg(payload: Dict[str, Any]):
-    url = (payload or {}).get("feed_url","").strip()
+    url = (payload or {}).get("feed_url", "").strip()
     if not url:
         _set_live_cfg({"feed_url": ""})
         return {"ok": True}
@@ -293,6 +326,19 @@ async def set_live_cfg(payload: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Adj meg teljes BODS feed URL-t api_key paraméterrel.")
     _set_live_cfg({"feed_url": url})
     return {"ok": True}
+
+@app.get("/api/live/raw")
+async def api_live_raw():
+    """Nyers BODS feed (debughoz)."""
+    raw = await siri_live._fetch_raw()
+    return raw or {}
+
+@app.get("/api/live/vehicles")
+async def api_live_vehicles():
+    """Összes jármű a feedből, előfeldolgozott mezőkkel."""
+    if not await siri_live.is_available():
+        return []
+    return await siri_live.vehicles()
 
 @app.post("/api/upload")
 async def api_upload(file: UploadFile = File(...)):
@@ -311,7 +357,7 @@ async def api_stops_search(q: str = Query(..., min_length=1), limit: int = 20):
     stops = _read_json(DATA_DIR / "stops.json", [])
     ql = q.strip().lower()
     res = [s for s in stops if ql in (s.get("stop_name") or "").lower() or ql == (s.get("stop_code") or "").lower()]
-    res.sort(key=lambda s: (len(s.get("stop_name","")), s.get("stop_name","")))
+    res.sort(key=lambda s: (len(s.get("stop_name", "")), s.get("stop_name", "")))
     return res[:limit]
 
 @app.get("/api/stops/{stop_id}/next_departures")
@@ -359,16 +405,13 @@ async def api_next_departures(stop_id: str, minutes: int = Query(60, ge=5, le=24
     if live and await siri_live.is_available():
         try:
             all_live = await siri_live.vehicles()
-            # route normalizálás
             def norm(x): return str(x or "").strip().lower()
             live_routes = defaultdict(list)
             for v in all_live:
                 live_routes[norm(v.get("route") or v.get("line_ref"))].append(v)
-
             for it in upcoming:
                 lr = live_routes.get(norm(it.get("route")))
                 if lr:
-                    # bármelyik jármű a vonalon → jelöld „live”-nak, reg egyik járműből
                     it["live"] = True
                     it["vehicle_reg"] = lr[0].get("reg")
         except Exception:
@@ -381,7 +424,7 @@ async def api_next_departures(stop_id: str, minutes: int = Query(60, ge=5, le=24
 async def api_trip_details(trip_id: str):
     """Trip részletek: GTFS megállólánc (ha a feed nem ad tripet)."""
     trip_stops = _read_json(DATA_DIR / "trip_stops.json", {})
-    stops_idx = { s["stop_id"]: s for s in _read_json(DATA_DIR / "stops.json", []) }
+    stops_idx = {s["stop_id"]: s for s in _read_json(DATA_DIR / "stops.json", [])}
     seq = trip_stops.get(trip_id, [])
     calls = []
     for r in seq:
@@ -403,7 +446,8 @@ async def api_route_search(q: str = Query("", description="Járatszám/név"), l
         for it in lst:
             if it.get("route"):
                 routes.add(it["route"])
-    res = sorted([r for r in routes if q.strip().lower() in str(r).lower()], key=lambda x: (len(str(x)), str(x)))
+    res = sorted([r for r in routes if q.strip().lower() in str(r).lower()],
+                 key=lambda x: (len(str(x)), str(x)))
     return [{"route": r} for r in res[:limit]]
 
 @app.get("/api/routes/{route}/vehicles")
