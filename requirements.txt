@@ -1,11 +1,10 @@
-fastapi
-uvicorn
+fastapi==0.112.2
+uvicorn[standard]==0.30.6
+pandas==2.2.2
+python-dateutil==2.9.0.post0
 requests
-pandas
 xmltodict
-uvicorn[standard]
 aiohttp
-python-dateutil
 jinja2
 httpx
 python-multipart
