@@ -12,6 +12,53 @@ app = FastAPI(title="Bluestar Bus – API", version="2.1.0")
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
+# --- LIVE: SIRI/AVL adapter (mock + hook) -----------------
+import json, asyncio
+from pathlib import Path
+
+# Feltételezem, hogy DATA_DIR már nálad létezik. Ha nem:
+# DATA_DIR = Path(__file__).parent / "data"
+# DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+class SiriLiveAdapter:
+    """Ezt később könnyen kicserélheted valódi SIRI/AVL hívásokra."""
+    def __init__(self, data_dir: Path):
+        self.data_dir = data_dir
+
+    async def is_available(self) -> bool:
+        # Valódi esetben itt lehetne egy ping a szolgáltatásra.
+        return (self.data_dir / "live_available.flag").exists()
+
+    async def vehicles_by_route(self, route_no: str) -> list[dict]:
+        """
+        Vissza: [{reg,type,lat,lon,bearing,stop_name,trip_id,headsign}, ...]
+        """
+        f = self.data_dir / f"live_route_{route_no}.json"
+        if not f.exists():
+            return []
+        return json.loads(f.read_text(encoding="utf-8"))
+
+    async def stop_next_departures(self, stop_id: str, mins: int) -> list[dict]:
+        """
+        Vissza: [{trip_id,route,headsign,scheduled_time,eta_min,delay_min,vehicle_reg}, ...]
+        """
+        f = self.data_dir / f"live_stop_{stop_id}.json"
+        if not f.exists():
+            return []
+        return json.loads(f.read_text(encoding="utf-8"))
+
+    async def trip_details(self, trip_id: str) -> dict:
+        """
+        Vissza: {trip_id, route, headsign, calls:[{time,stop_id,stop_name,eta_min,delay_min}],
+                 vehicle:{reg,type}}
+        """
+        f = self.data_dir / f"live_trip_{trip_id}.json"
+        if not f.exists():
+            return {}
+        return json.loads(f.read_text(encoding="utf-8"))
+
+# Globális példány:
+siri_live = SiriLiveAdapter(DATA_DIR)
 DATA_DIR.mkdir(exist_ok=True)
 
 # ---- CORS + cache OFF az indexhez ----
