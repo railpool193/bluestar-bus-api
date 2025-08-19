@@ -8,3 +8,8 @@ aiohttp
 jinja2
 httpx
 python-multipart
+fastapi
+uvicorn
+pandas
+httpx
+jinja2
