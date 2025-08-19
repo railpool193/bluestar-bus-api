@@ -1,179 +1,226 @@
 <!doctype html>
 <html lang="hu">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Bluestar Bus – megálló & járat kereső</title>
-  <link rel="icon" href="data:,">
-  <style>
-    :root{
-      --bg:#0e1220; --card:#171b2b; --muted:#8892b0; --text:#e6e6e6;
-      --accent:#8ab4ff; --green:#00d97e; --chip:#26314a;
-    }
-    *{box-sizing:border-box;font-family:Inter,system-ui,Arial,sans-serif}
-    body{margin:0;background:var(--bg);color:var(--text)}
-    .wrap{max-width:900px;margin:20px auto;padding:16px}
-    .h1{font-size:32px;font-weight:800;margin:10px 0 16px}
-    .card{background:var(--card);border-radius:16px;padding:16px;box-shadow:0 6px 30px rgba(0,0,0,.25)}
-    .row{display:flex;gap:12px;flex-wrap:wrap}
-    .row>.col{flex:1 1 260px}
-    input,select,button{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #2a3050;background:#0f1322;color:var(--text)}
-    button{background:#6573ff;border:0;font-weight:700}
-    button:active{opacity:.85}
-    .tabs{display:flex;gap:10px;margin-bottom:14px}
-    .tab{padding:10px 14px;border-radius:999px;background:#222845;color:#bcd;border:1px solid #2d3558;cursor:default}
-    .table{width:100%;border-collapse:separate;border-spacing:0 10px}
-    .tr{display:grid;grid-template-columns:72px 1fr 110px 80px 110px;gap:8px;align-items:center;background:#12172a;border-radius:14px;padding:12px 14px}
-    .th{opacity:.7;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin:6px 4px}
-    .chip{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:999px;background:var(--chip);font-weight:800}
-    .muted{color:var(--muted)}
-    .live{color:var(--green);font-weight:800}
-    .due{animation:blink 1s linear infinite}
-    @keyframes blink { 50%{opacity:.3} }
-    .foot{margin-top:14px;font-size:12px;color:var(--muted);display:flex;justify-content:space-between}
-    .small{font-size:12px}
-  </style>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Bluestar Bus – megálló & járat kereső</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+:root{--bg:#0e1220;--card:#171b2b;--muted:#8892b0;--text:#e6e6e6;--accent:#8ab4ff;--green:#00d97e;--chip:#26314a}
+*{box-sizing:border-box;font-family:Inter,system-ui,Arial,sans-serif}
+body{margin:0;background:var(--bg);color:var(--text)}
+.wrap{max-width:980px;margin:20px auto;padding:16px}
+.h1{font-size:30px;font-weight:800;margin:8px 0 16px}
+.card{background:var(--card);border-radius:16px;padding:16px;box-shadow:0 6px 30px rgba(0,0,0,.25);margin-bottom:18px}
+.tabs{display:flex;gap:10px;margin-bottom:14px}
+.tab{padding:10px 14px;border-radius:999px;background:#222845;color:#bcd;border:1px solid #2d3558;cursor:pointer}
+.tab.active{background:#6573ff;color:#fff;border-color:#6573ff}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.row>.col{flex:1 1 260px}
+input,select,button{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #2a3050;background:#0f1322;color:var(--text)}
+button{background:#6573ff;border:0;font-weight:700}
+.small{font-size:12px}.muted{color:var(--muted)}
+.table{width:100%;border-collapse:separate;border-spacing:0 10px}
+.tr{display:grid;grid-template-columns:72px 1fr 110px 80px 110px;gap:8px;align-items:center;background:#12172a;border-radius:14px;padding:12px 14px;cursor:pointer}
+.th{opacity:.7;font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin:6px 4px}
+.chip{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:999px;background:var(--chip);font-weight:800}
+.live{color:var(--green);font-weight:800}
+.due{animation:blink 1s linear infinite}@keyframes blink{50%{opacity:.3}}
+.foot{margin-top:12px;font-size:12px;color:var(--muted);display:flex;justify-content:space-between}
+#map{height:360px;border-radius:14px;overflow:hidden}
+.modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+.modal>.box{background:#101428;border:1px solid #2b3353;border-radius:16px;max-width:560px;width:92%;padding:16px}
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="h1">🚌 Bluestar Bus – megálló & járat kereső</div>
+<div class="wrap">
+  <div class="h1">🚌 Bluestar Bus – megálló & járat kereső</div>
 
-    <div class="card">
-      <div class="tabs">
-        <div class="tab">Megálló</div>
-        <div class="muted small">Frissítés: <span id="refreshIn">–</span></div>
-      </div>
+  <div class="tabs">
+    <div id="tabStop" class="tab active">Megálló</div>
+    <div id="tabRoute" class="tab">Vonal</div>
+    <div class="muted small" style="margin-left:auto">Frissítés: <b id="tick">–</b></div>
+  </div>
 
-      <div class="row">
-        <div class="col">
-          <label class="small muted">Megálló név</label>
-          <input id="q" placeholder="pl. Albion, Vincent, Hanover..."/>
-          <div id="stopListWrap" class="small muted" style="margin-top:6px;display:none">Találatok – válassz megállót:</div>
-          <select id="stopList" style="display:none;margin-top:6px"></select>
-        </div>
-        <div class="col" style="max-width:200px">
-          <label class="small muted">Időablak (perc)</label>
-          <input id="window" type="number" value="60" min="5" max="240"/>
-        </div>
-        <div class="col" style="max-width:180px;align-self:end">
-          <button id="btn">Keresés</button>
-        </div>
+  <!-- STOP CARD -->
+  <div id="stopCard" class="card">
+    <div class="row">
+      <div class="col">
+        <label class="small muted">Megálló név</label>
+        <input id="q" placeholder="pl. Albion, Vincent, Hanover..."/>
+        <div id="stopListWrap" class="small muted" style="margin-top:6px;display:none">Találatok – válassz megállót:</div>
+        <select id="stopList" style="display:none;margin-top:6px"></select>
       </div>
+      <div class="col" style="max-width:200px">
+        <label class="small muted">Időablak (perc)</label>
+        <input id="window" type="number" value="60" min="5" max="240"/>
+      </div>
+      <div class="col" style="max-width:180px;align-self:end">
+        <button id="btn">Keresés</button>
+      </div>
+    </div>
 
-      <div id="meta" class="foot" style="display:none">
-        <div>Választott megálló: <b id="selStop"></b></div>
-        <div>Frissítés: <b id="tick">20s</b></div>
-      </div>
+    <div class="foot" id="meta" style="display:none">
+      <div>Választott megálló: <b id="selStop"></b></div>
+      <div>Frissítés 20 mp-enként</div>
+    </div>
 
-      <div class="th" style="margin-top:16px">Indulások</div>
-      <div class="th tr" style="background:transparent;padding:0">
-        <div>Járat</div><div>Cél</div><div>Indulás</div><div>Élő</div><div>Rendszám</div>
-      </div>
-      <div id="rows" class="col"></div>
+    <div class="th" style="margin-top:16px">Indulások</div>
+    <div class="th tr" style="background:transparent;padding:0;cursor:default">
+      <div>Járat</div><div>Cél</div><div>Indulás</div><div>Élő</div><div>Rendszám</div>
+    </div>
+    <div id="rows"></div>
 
-      <div class="foot">
-        <div>Build: <span id="build">–</span> · Cache-bypass aktív</div>
-        <div><a class="muted" href="/docs" target="_blank">API</a> · <a class="muted" href="/openapi.json" target="_blank">OpenAPI</a></div>
-      </div>
+    <div class="foot">
+      <div>Build: <span id="build">–</span> · Cache-bypass aktív</div>
+      <div><a class="muted" href="/docs" target="_blank">API</a> · <a class="muted" href="/openapi.json" target="_blank">OpenAPI</a></div>
     </div>
   </div>
 
-<script>
-const API = "";
-const REFRESH_SEC = 20; // 20 mp
-let state = { stopId:null, minutes:60, timer:null, tick:REFRESH_SEC, build:"" };
+  <!-- ROUTE CARD -->
+  <div id="routeCard" class="card" style="display:none">
+    <div class="row">
+      <div class="col" style="max-width:260px">
+        <label class="small muted">Vonal száma</label>
+        <input id="routeQ" placeholder="pl. 9"/>
+      </div>
+      <div class="col" style="max-width:160px;align-self:end">
+        <button id="btnRoute">Keresés</button>
+      </div>
+    </div>
+    <div id="map" style="margin-top:12px"></div>
+    <div class="small muted" style="margin-top:8px">Ha nincs élő jármű, a térkép üres marad.</div>
+  </div>
+</div>
 
-async function api(path){
-  const r = await fetch(API+path, {cache:"no-store"});
-  if(!r.ok) throw new Error(await r.text());
-  return r.json();
-}
+<!-- TRIP MODAL -->
+<div id="modal" class="modal">
+  <div class="box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div><b id="mTitle">Trip</b></div>
+      <button id="mClose" style="width:auto;padding:6px 10px">Bezár</button>
+    </div>
+    <div id="mBody" class="small"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const API=""; const REFRESH=20;
+let state={stopId:null, minutes:60, timer:null, tick:REFRESH, build:"", route:null, map:null, markers:[]};
+
+async function api(path){ const r=await fetch(API+path,{cache:"no-store"}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+function setTick(v){ document.getElementById("tick").innerText = v>0? `${v}s`:"frissít…"; }
 
 function fmtRow(it){
   const live = it.live && (it.eta_min ?? null) !== null;
-  let dep = `<span>${it.time || ""}</span>`;
+  const depColor = live ? "var(--muted)" : "#fff";
   let liveTxt = "–";
-  if(live){
-    if(it.eta_min <= 0){
-      liveTxt = `<span class="live due">DUE</span>`;
-    }else{
-      liveTxt = `<span class="live">${it.eta_min}′</span>`;
-    }
-  }
+  if(live){ liveTxt = it.eta_min<=0 ? `<span class="live due">DUE</span>` : `<span class="live">${it.eta_min}′</span>`; }
   return `
-    <div class="tr">
+    <div class="tr" data-trip="${it.trip_id||""}">
       <div><div class="chip">${(it.route||"").toString().slice(0,3)}</div></div>
       <div>${it.destination||""}</div>
-      <div style="color:${live?'var(--muted)':'#fff'}">${dep}</div>
+      <div style="color:${depColor}">${it.time||""}</div>
       <div>${liveTxt}</div>
       <div>${it.vehicle_reg||"–"}</div>
     </div>`;
 }
 
 function renderRows(list){
-  const el = document.getElementById("rows");
-  if(!list || !list.length){
-    el.innerHTML = `<div class="muted" style="padding:10px 4px">Nincs adat erre az időablakra.</div>`;
-    return;
-  }
+  const el=document.getElementById("rows");
+  if(!list?.length){ el.innerHTML=`<div class="muted" style="padding:10px 4px">Nincs adat erre az időablakra.</div>`; return; }
   el.innerHTML = list.map(fmtRow).join("");
+  [...el.querySelectorAll(".tr")].forEach(row=>{
+    const tid=row.dataset.trip;
+    if(tid) row.addEventListener("click",()=>showTrip(tid));
+  });
 }
 
-async function refresh(){
+async function refreshStop(){
   if(!state.stopId) return;
-  try{
-    const items = await api(`/api/stops/${encodeURIComponent(state.stopId)}/next_departures?minutes=${state.minutes}&live=true&_=${Date.now()}`);
-    renderRows(items);
-  }catch(e){
-    console.error(e);
-  }
+  const items = await api(`/api/stops/${encodeURIComponent(state.stopId)}/next_departures?minutes=${state.minutes}&live=true&_=${Date.now()}`);
+  renderRows(items);
 }
 
 function startTicker(){
   clearInterval(state.timer);
-  state.tick = REFRESH_SEC;
-  document.getElementById("tick").innerText = `${state.tick}s`;
-  state.timer = setInterval(()=>{
-    state.tick--;
-    if(state.tick<=0){
-      state.tick = REFRESH_SEC;
-      refresh();
-    }
-    document.getElementById("tick").innerText = `${state.tick}s`;
-  }, 1000);
+  state.tick=REFRESH; setTick(state.tick);
+  state.timer=setInterval(async ()=>{
+    state.tick--; if(state.tick<=0){ setTick(0); await Promise.all([refreshStop(), refreshRoute()]); state.tick=REFRESH; }
+    setTick(state.tick);
+  },1000);
 }
 
 async function onSearchStops(){
-  const q = document.getElementById("q").value.trim();
-  if(!q) return;
-  const arr = await api(`/api/stops/search?q=${encodeURIComponent(q)}`);
-  const wrap = document.getElementById("stopListWrap");
-  const sel = document.getElementById("stopList");
-  wrap.style.display = "block";
-  sel.style.display = "block";
-  sel.innerHTML = arr.map(s=>`<option value="${s.stop_id}">${s.stop_name} (${s.stop_id})</option>`).join("");
-  if(arr.length){
-    sel.value = arr[0].stop_id;
-  }
+  const q=document.getElementById("q").value.trim(); if(!q) return;
+  const arr=await api(`/api/stops/search?q=${encodeURIComponent(q)}`);
+  const wrap=document.getElementById("stopListWrap"); const sel=document.getElementById("stopList");
+  wrap.style.display="block"; sel.style.display="block";
+  sel.innerHTML=arr.map(s=>`<option value="${s.stop_id}">${s.stop_name} (${s.stop_id})</option>`).join("");
+  if(arr.length) sel.value=arr[0].stop_id;
 }
 
-async function onPick(){
-  state.stopId = document.getElementById("stopList").value;
-  state.minutes = Math.max(5, Math.min(240, parseInt(document.getElementById("window").value||"60")));
-  document.getElementById("selStop").innerText = state.stopId || "–";
-  document.getElementById("meta").style.display = state.stopId ? "flex" : "none";
-  await refresh();
-  startTicker();
+async function onPickStop(){
+  state.stopId=document.getElementById("stopList").value;
+  state.minutes=Math.max(5,Math.min(240,parseInt(document.getElementById("window").value||"60")));
+  document.getElementById("selStop").innerText=state.stopId||"–";
+  document.getElementById("meta").style.display=state.stopId?"flex":"none";
+  await refreshStop(); startTicker();
+}
+
+async function showTrip(tripId){
+  try{
+    const t = await api(`/api/trips/${encodeURIComponent(tripId)}?_=${Date.now()}`);
+    document.getElementById("mTitle").innerText = `Trip: ${t.trip_id || ""}  ${t.route?(" • "+t.route):""}`;
+    const calls = (t.calls||[]).map(c=>`<div>${c.time||""} – ${c.stop_name||c.stop_id||""} ${c.eta_min!=null?`<span class="live">(${c.eta_min}′)</span>`:""}</div>`).join("") || "<div class='muted'>Nincs megállólista.</div>";
+    document.getElementById("mBody").innerHTML = calls;
+    document.getElementById("modal").style.display="flex";
+  }catch(e){ console.error(e); }
+}
+
+function hideModal(){ document.getElementById("modal").style.display="none"; }
+
+function initMap(){
+  if(state.map) return;
+  state.map=L.map('map').setView([50.9097,-1.4043], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'© OSM'}).addTo(state.map);
+}
+
+function clearMarkers(){ state.markers.forEach(m=>m.remove()); state.markers=[]; }
+async function refreshRoute(){
+  if(!state.route) return;
+  const vs = await api(`/api/routes/${encodeURIComponent(state.route)}/vehicles?_=${Date.now()}`);
+  clearMarkers();
+  vs.forEach(v=>{
+    const m=L.marker([v.lat,v.lon]).addTo(state.map);
+    m.bindPopup(`<b>${state.route}</b><br>${v.reg||""}${v.trip_id?`<br>trip: ${v.trip_id}`:""}`);
+    state.markers.push(m);
+  });
+}
+
+function switchTab(which){
+  document.getElementById("tabStop").classList.toggle("active", which==="stop");
+  document.getElementById("tabRoute").classList.toggle("active", which==="route");
+  document.getElementById("stopCard").style.display = which==="stop"?"block":"none";
+  document.getElementById("routeCard").style.display = which==="route"?"block":"none";
+  if(which==="route") initMap();
 }
 
 async function boot(){
-  const st = await api("/api/status");
-  document.getElementById("build").innerText = st.build;
-  document.getElementById("btn").addEventListener("click", async ()=>{
-    await onSearchStops();
-    await onPick();
-  });
-  document.getElementById("stopList").addEventListener("change", onPick);
+  const st = await api("/api/status"); document.getElementById("build").innerText=st.build;
+  document.getElementById("btn").addEventListener("click", async()=>{ await onSearchStops(); await onPickStop(); });
+  document.getElementById("stopList").addEventListener("change", onPickStop);
+  document.getElementById("mClose").addEventListener("click", hideModal);
+  document.getElementById("modal").addEventListener("click", (e)=>{ if(e.target.id==="modal") hideModal(); });
+  document.getElementById("tabStop").onclick=()=>switchTab("stop");
+  document.getElementById("tabRoute").onclick=()=>switchTab("route");
+  document.getElementById("btnRoute").onclick=async ()=>{
+    state.route = document.getElementById("routeQ").value.trim();
+    if(!state.route) return;
+    initMap(); await refreshRoute(); startTicker();
+  };
+  startTicker();
 }
 boot();
 </script>
