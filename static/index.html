@@ -25,8 +25,9 @@
     label{display:block;font-size:13px;color:var(--muted);margin:6px 2px}
     input,select{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #2a3354;background:#0c1122;color:#dfe6ff}
     button.primary{padding:12px 18px;border:none;border-radius:12px;background:var(--primary);color:#fff;font-weight:700}
-    .badges{display:flex;gap:14px;align-items:center;margin:10px 0 14px;color:var(--muted)}
+    .badges{display:flex;gap:14px;align-items:center;margin:10px 0 14px;color:var(--muted);flex-wrap:wrap}
     .dot{width:10px;height:10px;border-radius:50%}.ok{background:var(--good)}.no{background:var(--bad)}
+    .small{font-size:13px}
     table{width:100%;border-collapse:separate;border-spacing:0 10px}
     th,td{padding:14px}
     thead th{color:#9fb0d8;font-weight:700}
@@ -36,6 +37,9 @@
     .chip{display:inline-flex;min-width:38px;justify-content:center;padding:6px 10px;border-radius:999px;background:var(--chip);color:var(--chip-t);font-weight:700}
     .muted{color:var(--muted)} .footer{opacity:.7;margin-top:18px;font-size:13px}
     #routeMap{width:100%;height:360px;border-radius:14px;overflow:hidden;background:#0c1122}
+    .live{color:var(--good);font-weight:700}
+    @keyframes blink { 50% { opacity:.2 } }
+    .blink{animation:blink 1s linear infinite}
     /* Modal */
     .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;padding:18px}
     .modal.open{display:flex}
@@ -72,6 +76,7 @@
           <span><span id="gtfsDot" class="dot no"></span> GTFS</span>
           <span><span id="liveDot" class="dot no"></span> Live</span>
           <span class="muted" id="chosenStopNote"></span>
+          <span id="refreshBadge" class="small"></span>
         </div>
 
         <div style="overflow:auto">
@@ -125,31 +130,34 @@
   <script>
   (()=> {
     const Q = (s,root=document)=>root.querySelector(s)
+    const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]))
+    const num = n => Number.isFinite(+n) ? +n : null
+
+    // cache-bypass minden kérésnél
     const api = (p, params={})=>{
       const v = Date.now().toString()
       const url = p + (p.includes('?')?'&':'?') + 'v='+v
       return fetch(url, params).then(r=>r.json())
     }
+
+    // --- Status pöttyök
     const dots={api:Q('#apiDot'),gtfs:Q('#gtfsDot'),live:Q('#liveDot')}
     const setDot=(el,ok)=>{el.classList.toggle('ok',ok);el.classList.toggle('no',!ok)}
-    const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]))
+    api('/api/status').then(s=>{
+      setDot(dots.api,true); setDot(dots.gtfs,!!s.gtfs); setDot(dots.live,!!s.live)
+      Q('#buildInfo').textContent = `Build: ${s.build} · Cache-bypass aktív`
+    }).catch(()=>{ /* ha hibás, maradnak pirosan */ })
 
     // Tabs
     const tabStop=Q('#tabStop'),tabRoute=Q('#tabRoute'),panelStop=Q('#panelStop'),panelRoute=Q('#panelRoute')
     tabStop.onclick = ()=>{tabStop.classList.add('active');tabRoute.classList.remove('active');panelStop.style.display='block';panelRoute.style.display='none'}
     tabRoute.onclick= ()=>{tabRoute.classList.add('active');tabStop.classList.remove('active');panelRoute.style.display='block';panelStop.style.display='none'}
 
-    // Status
-    api('/api/status').then(s=>{
-      Q('#buildInfo').textContent=`Build: ${s.build} · Cache-bypass aktív`
-      setDot(dots.api,true);setDot(dots.gtfs,!!s.gtfs);setDot(dots.live,!!s.live)
-    }).catch(()=>{})
-
-    // Elements
+    // Elems
     const stopQuery=Q('#stopQuery'), minutes=Q('#minutes'), stopSelect=Q('#stopSelect'), depBody=Q('#depBody'), chosenNote=Q('#chosenStopNote')
-    const routeQuery=Q('#routeQuery'), routeSelect=Q('#routeSelect')
+    const routeQuery=Q('#routeQuery'), routeSelect=Q('#routeSelect'), refreshBadge=Q('#refreshBadge')
 
-    // --- Megálló keresés ---
+    // --- Keresés megállóra ---
     Q('#btnSearchStop').onclick = async ()=>{
       depBody.innerHTML=''; stopSelect.innerHTML=''; chosenNote.textContent='Keresés…'
       const q=stopQuery.value.trim(); if(!q){chosenNote.textContent='Írj be egy megállónevet.';return}
@@ -164,114 +172,101 @@
       }catch{ chosenNote.textContent='Hiba a keresésnél.' }
     }
 
-    stopSelect.onchange = async ()=>{
+    // --- Állandó frissítés 5 mp-enként (látható visszaszámlálóval) ---
+    let tickInt=null, reloadIn=5, lastStop=null
+    function startTicker(){
+      clearInterval(tickInt); reloadIn = 5
+      refreshBadge.textContent = `Frissítés: ${reloadIn}s`
+      tickInt = setInterval(()=>{
+        reloadIn--; if(reloadIn<=0){ reloadIn=5; if(lastStop) stopSelect.onchange(true) }
+        refreshBadge.textContent = `Frissítés: ${reloadIn}s`
+      }, 1000)
+    }
+
+    stopSelect.onchange = async (auto=false)=>{
       const stop_id=stopSelect.value; if(!stop_id) return
-      chosenNote.textContent='Indulások betöltése…'; depBody.innerHTML=''
+      lastStop = stop_id
+      if(!auto){ chosenNote.textContent='Indulások betöltése…' }
+      depBody.innerHTML=''
       try{
         const m=Number(minutes.value||60)
         let deps=await api(`/api/stops/${encodeURIComponent(stop_id)}/next_departures?minutes=${m}`) || []
-        // ---- DEDUP: trip_id előnyben; ha nincs, route+headsign+time
-        const seen=new Set()
-        deps = deps.filter(d=>{
-          const key = d.trip_id || `${d.route_short_name||d.route||''}|${(d.headsign||d.destination||'').toLowerCase()}|${d.departure_time||d.time||''}`
-          if(seen.has(key)) return false; seen.add(key); return true
-        })
+
+        // ---- DEDUP: trip_id előnyben; ha nincs, route+headsign+time (másodpercek nélkül)
+        const seen=new Set(), out=[]
+        for(const d of deps){
+          const time=(d.departure_time||d.time||'').slice(0,5)
+          const key = d.trip_id || `${d.route_short_name||d.route||''}|${(d.headsign||d.destination||'').toLowerCase()}|${time}`
+          if(seen.has(key)) continue; seen.add(key); out.push({...d, __timeHHMM: time})
+        }
+        deps = out
+
         chosenNote.textContent=`Választott megálló: ${stop_id}`
-        renderDepartures(deps)
-      }catch{ chosenNote.textContent='Hiba az indulások lekérésekor.' }
+
+        // élő adatok route-onként
+        const routes=[...new Set(deps.map(d=>d.route_short_name||d.route||''))].filter(Boolean)
+        const liveByRoute={}
+        await Promise.all(routes.map(async r=>{
+          try{ liveByRoute[r]=await api(`/api/routes/${encodeURIComponent(r)}/vehicles`)||[] }catch{ liveByRoute[r]=[] }
+        }))
+
+        // render
+        depBody.innerHTML=''
+        if(!deps.length){ depBody.innerHTML='<tr><td colspan="6" class="muted">Nincs indulás az időablakban.</td></tr>'; startTicker(); return }
+
+        const norm=s=>String(s||'').toLowerCase().replace(/\s+/g,'').replace(/[^\p{L}\p{N}]/gu,'')
+        deps.forEach(d=>{
+          const tr=document.createElement('tr')
+          tr.innerHTML = `
+            <td><span class="chip">${esc(d.route_short_name||d.route||'?')}</span></td>
+            <td>${esc(d.headsign||d.destination||'')}</td>
+            <td class="whenCell">${esc(d.__timeHHMM)}</td>
+            <td class="liveCell muted">–</td>
+            <td class="regCell muted">–</td>
+            <td class="typCell muted">–</td>`
+          depBody.appendChild(tr)
+
+          const arr = liveByRoute[d.route_short_name||d.route||''] || []
+          let live = d.trip_id ? arr.find(v=>v.trip_id===d.trip_id) : null
+          if(!live && (d.headsign||d.destination)){
+            const h = norm(d.headsign||d.destination)
+            live = arr.find(v=>norm(v.headsign||v.destination||'')===h)
+          }
+
+          if(live){
+            // ETA megjelenítés (zöld; Due <1 perc)
+            const eta = num(live.eta_minutes)
+            if(eta!=null){
+              const w=tr.querySelector('.whenCell')
+              w.textContent = eta<=0 ? 'Due' : `${eta}′`
+              w.classList.add('live')
+              if(eta<=0) w.classList.add('blink')
+              const lc=tr.querySelector('.liveCell'); lc.textContent='Live'; lc.classList.remove('muted')
+            }
+            if(live.registration){ tr.querySelector('.regCell').textContent = live.registration; tr.querySelector('.regCell').classList.remove('muted') }
+            if(live.vehicle_type){ tr.querySelector('.typCell').textContent = live.vehicle_type; tr.querySelector('.typCell').classList.remove('muted') }
+          }
+        })
+
+        startTicker()
+      }catch{
+        chosenNote.textContent='Hiba az indulások lekérésekor.'
+        startTicker()
+      }
     }
 
-    // Élő cache route-onként
-    let liveCache = {}
-    async function fetchLiveForRoutes(routeShortNames){
-      const uniq=[...new Set(routeShortNames.filter(Boolean))]
-      const res={}
-      await Promise.all(uniq.map(async r=>{
-        try{ res[r] = await api(`/api/routes/${encodeURIComponent(r)}/vehicles`) || [] }catch{ res[r]=[] }
-      }))
-      liveCache = res
-    }
-
-    function norm(s){ return String(s||'').toLowerCase().replace(/\s+/g,'').replace(/[^\p{L}\p{N}]/gu,'') }
-
-    async function renderDepartures(deps){
-      depBody.innerHTML=''
-      if(!deps.length){ depBody.innerHTML='<tr><td colspan="6" class="muted">Nincs indulás az időablakban.</td></tr>'; return }
-      // élő előtöltés (route-onként)
-      const routes = deps.map(d=>d.route_short_name||d.route||'')
-      await fetchLiveForRoutes(routes)
-
-      deps.forEach(d=>{
-        const tr=document.createElement('tr')
-        tr.innerHTML = `
-          <td><span class="chip">${esc(d.route_short_name||d.route||'?')}</span></td>
-          <td>${esc(d.headsign||d.destination||'')}</td>
-          <td>${esc(d.departure_time||d.time||'')}</td>
-          <td class="liveCell muted">–</td>
-          <td class="regCell muted">–</td>
-          <td class="typCell muted">–</td>`
-        if(d.trip_id){ tr.style.cursor='pointer'; tr.title='Koppints a járat részleteihez'; tr.addEventListener('click',()=>openTripModal(d)) }
-        depBody.appendChild(tr)
-
-        const arr = liveCache[d.route_short_name||d.route||''] || []
-        // PONTOS: trip_id
-        let live = d.trip_id ? arr.find(v=>v.trip_id===d.trip_id) : null
-        // HEURISZTIKA: headsign
-        if(!live && (d.headsign||d.destination)){
-          const h = norm(d.headsign||d.destination)
-          live = arr.find(v=>norm(v.headsign||v.destination||'')===h)
-        }
-        if(live){
-          if(live.eta_minutes!=null){ tr.querySelector('.liveCell').textContent = `${live.eta_minutes}′`; tr.querySelector('.liveCell').classList.remove('muted') }
-          if(live.registration){ tr.querySelector('.regCell').textContent = live.registration; tr.querySelector('.regCell').classList.remove('muted') }
-          if(live.vehicle_type){ tr.querySelector('.typCell').textContent = live.vehicle_type; tr.querySelector('.typCell').classList.remove('muted') }
-        }
-      })
-    }
-
-    // --- Trip modal + térkép ---
+    // --- Trip modal marad, de csak akkor tölt, ha van adat a backendben ---
     const tripModal=Q('#tripModal'), tripBody=Q('#tripBody'), tripTitle=Q('#tripTitle')
     let tripMap=null, tripLine=null
     Q('#closeTrip').onclick = ()=> tripModal.classList.remove('open')
 
-    async function openTripModal(dep){
-      tripBody.innerHTML='<tr><td colspan="2" class="muted">Betöltés…</td></tr>'
-      tripTitle.textContent=`Járat ${dep.route_short_name||dep.route||''} – (trip: ${dep.trip_id||'?'})`
-      tripModal.classList.add('open')
-      if(!dep.trip_id){ tripBody.innerHTML='<tr><td colspan="2" class="muted">Ehhez a sorhoz nincs trip azonosító.</td></tr>'; return }
-      try{
-        const t = await api(`/api/trips/${encodeURIComponent(dep.trip_id)}`)
-        const stops = (t.stop_times || t.stops || []).map(st=>({
-          time: st.arrival_time || st.departure_time || st.time || '',
-          name: st.stop_name || st.name || '',
-          lat: st.stop_lat || st.lat || st.latitude,
-          lon: st.stop_lon || st.lon || st.longitude
-        }))
-        tripBody.innerHTML = stops.length
-          ? stops.map(s=>`<tr><td>${esc(s.time)}</td><td>${esc(s.name)}</td></tr>`).join('')
-          : '<tr><td colspan="2" class="muted">Nincs menetrendi adat ehhez a triphez.</td></tr>'
+    // (Opcionális: sor-kattintásra trip – akkor érdemes bekapcsolni, ha /api/trips/{id} visszaad megállókat)
+    depBody.addEventListener('click', async (e)=>{
+      const tr=e.target.closest('tr'); if(!tr) return
+      // nincs biztos trip_id a táblában – itt backend fejlesztés kellene; ezért most kihagyjuk
+    })
 
-        // térkép + polyline ha van koordináta
-        const pts = stops.filter(s=>s.lat!=null && s.lon!=null).map(s=>[s.lat,s.lon])
-        if(pts.length>=2){
-          if(!tripMap){
-            tripMap = L.map('tripMap'); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(tripMap)
-          }
-          setTimeout(()=>{ // modal animáció miatt
-            const grp = L.featureGroup([L.polyline(pts)])
-            tripMap.fitBounds(grp.getBounds().pad(0.2))
-            if(tripLine){ tripMap.removeLayer(tripLine) }
-            tripLine = L.polyline(pts).addTo(tripMap)
-          }, 50)
-        } else {
-          Q('#tripMap').innerHTML='' // nincs adat – üres doboz
-        }
-      }catch{
-        tripBody.innerHTML='<tr><td colspan="2" class="muted">Hiba a trip lekérésekor.</td></tr>'
-      }
-    }
-
-    // --- Vonal keresés + térkép + polyline ---
+    // --- Vonal keresés + térkép (marad) ---
     let routeMap=null, routeLayer=null, routeShape=null, liveTimer=null
     function ensureRouteMap(){
       if(routeMap) return
@@ -292,45 +287,23 @@
     routeSelect.onchange = async ()=>{
       const r = routeSelect.value; if(!r) return
       ensureRouteMap()
-      await drawRouteShape(r)
-      await drawRouteVehicles(r)
-      clearInterval(liveTimer)
-      liveTimer = setInterval(()=>drawRouteVehicles(r), 20000) // 20 mp
-    }
-
-    async function drawRouteShape(route){
-      // előző shape törlése
-      if(routeShape){ routeMap.removeLayer(routeShape); routeShape=null }
-
-      // 1) megpróbáljuk: /api/routes/{route}/shape   => [{lat,lon}, ...]
+      // jelen verzióban a shape rajzolása opcionális a backendtől függően (ha nincs, semmi hiba)
       try{
-        const shape = await api(`/api/routes/${encodeURIComponent(route)}/shape`)
+        if(routeShape){ routeMap.removeLayer(routeShape); routeShape=null }
+        const shape = await api(`/api/routes/${encodeURIComponent(r)}/shape`)
         if(Array.isArray(shape) && shape.length>=2){
           const pts = shape.map(p=>[p.lat||p.latitude, p.lon||p.longitude])
           routeShape = L.polyline(pts,{weight:4}).addTo(routeMap)
           routeMap.fitBounds(routeShape.getBounds().pad(0.2))
-          return
         }
       }catch{}
-
-      // 2) fallback: próbáljunk egy jellemző tripből shape-et építeni
-      try{
-        const sample = await api(`/api/routes/${encodeURIComponent(route)}/trips?limit=1`)
-        const tripId = sample?.[0]?.trip_id
-        if(tripId){
-          const t = await api(`/api/trips/${encodeURIComponent(tripId)}`)
-          const stops=(t.stop_times||t.stops||[]).filter(s=>(s.stop_lat||s.lat)&&(s.stop_lon||s.lon))
-          if(stops.length>=2){
-            const pts=stops.map(s=>[s.stop_lat||s.lat,s.stop_lon||s.lon])
-            routeShape = L.polyline(pts,{weight:4}).addTo(routeMap)
-            routeMap.fitBounds(routeShape.getBounds().pad(0.2))
-          }
-        }
-      }catch{}
+      await drawRouteVehicles(r)
+      clearInterval(liveTimer)
+      liveTimer = setInterval(()=>drawRouteVehicles(r), 20000)
     }
 
     async function drawRouteVehicles(route){
-      // réteg ürítés
+      if(!routeMap) return
       if(!routeLayer){ routeLayer = L.layerGroup().addTo(routeMap) } else { routeLayer.clearLayers() }
       const vehicles = await api(`/api/routes/${encodeURIComponent(route)}/vehicles`).catch(()=>[])
       if(!vehicles?.length) return
@@ -342,7 +315,7 @@
           `Vonal: ${esc(route)}`,
           v.headsign?`Irány: ${esc(v.headsign)}`:'',
           v.vehicle_type?`Típus: ${esc(v.vehicle_type)}`:'',
-          v.eta_minutes!=null?`ETA: ${esc(v.eta_minutes)}′`:''
+          num(v.eta_minutes)!=null?`ETA: ${esc(v.eta_minutes)}′`:''
         ].filter(Boolean).join('<br/>')
         m.bindPopup(title); routeLayer.addLayer(m)
       })
