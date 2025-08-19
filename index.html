@@ -289,6 +289,12 @@ document.querySelector("#routeSelect")?.addEventListener("change", (e) => {
     });
 
     // Status
+   @app.get("/api/status")
+async def api_status():
+    live_ok = await siri_live.is_available()
+    # gtfs_ok nálad már számolódik – itt csak példa:
+    gtfs_ok = True
+    return {"status": "ok", "gtfs": gtfs_ok, "live": live_ok}
     async function refreshStatus(){
       const r = await fetch('/api/status?v=' + Date.now());
       const s = await r.json();
