@@ -151,7 +151,6 @@ async function api(path){
   if(!r.ok) throw new Error(await r.text());
   return r.json();
 }
-
 function setTick(txt){ qs('#tick').textContent = txt; }
 
 // tabs
@@ -184,22 +183,22 @@ qs('#btnStop').onclick = async ()=>{
 qs('#selStops').onchange = (e)=>{ state.stopId = e.target.value; qs('#selStopLbl').textContent = state.stopId; refreshStop(); }
 
 function fmtTime(t){ if(!t) return '—'; const [h,m]=t.split(':'); return `${h.padStart(2,'0')}:${m.padStart(2,'0')}`; }
-function minsUntil(hhmm){
-  const [h,m]=hhmm.split(':').map(x=>parseInt(x));
-  const now=new Date(); const nowMin=now.getHours()*60+now.getMinutes();
-  const dep=h*60+m; let d=(dep-nowMin)%(24*60); if(d<0)d+=24*60; return d;
-}
 
 function fmtRow(it){
-  const due = minsUntil(it.time) <= 1;
   const live = !!it.live;
-  const eta = it.eta_min;
-  let liveCell = live ? `<span class="liveDot"></span><span class="muted">LIVE</span>` : `<span class="muted">–</span>`;
-  let when = due ? `<span class="due">Due</span>` : `<span class="time">${fmtTime(it.time)}</span>`;
-  if(typeof eta === 'number'){
-    if(eta<=1) when = `<span class="due">Due</span>`;
-    else when = `<span class="time">${eta} min</span>`;
+  const eta = (typeof it.eta_min === 'number') ? it.eta_min : null;
+
+  let when;
+  if (eta !== null) {
+    when = (eta <= 1) ? `<span class="due">Due</span>` : `<span class="time">${eta} min</span>`;
+  } else {
+    when = `<span class="time">${fmtTime(it.time)}</span>`;
   }
+  if (it.day_offset && it.day_offset > 0) {
+    when += ` <span class="muted">(+${it.day_offset})</span>`;
+  }
+
+  let liveCell = live ? `<span class="liveDot"></span><span class="muted">LIVE</span>` : `<span class="muted">–</span>`;
   const reg = it.vehicle_reg || '–';
   const trip = it.trip_id || '';
   return `<div class="tr" data-trip="${trip}">
@@ -289,8 +288,7 @@ async function refreshRoute(){
     state.markers.push(m);
   });
   if(list.length){
-    const lat=list[0].lat, lon=list[0].lon;
-    state.map.setView([lat,lon], 12);
+    state.map.setView([list[0].lat,list[0].lon], 12);
   }
   renderRouteList(list);
   state.lastUpdate=new Date();
@@ -311,7 +309,6 @@ function showTrip(tid){
   }).catch(()=>{ qs('#tripBody').innerHTML = `<div class="muted">Hiba történt.</div>`; })
 }
 function hideTrip(){ qs('#tripModal').style.display='none'; }
-
 </script>
 </body>
 </html>
