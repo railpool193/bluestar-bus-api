@@ -1,15 +1,7 @@
-# main.py
-import io, json, csv, zipfile, time, asyncio
+import io, json, csv, zipfile, time, re
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from collections import defaultdict, OrderedDict
-from datetime import datetime, date
-try:
-    # Py3.9+
-    from zoneinfo import ZoneInfo
-    TZ_LONDON = ZoneInfo("Europe/London")
-except Exception:
-    TZ_LONDON = None
 
 from fastapi import FastAPI, UploadFile, File, Query, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -24,7 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
-# -------- CORS + statikus --------
+# ---------------- CORS + Statikus ----------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
@@ -33,7 +25,7 @@ STATIC_DIR = BASE_DIR / "static"
 STATIC_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), html=False), name="static")
 
-# -------- No-cache minden válaszra --------
+# -------------- No-cache middleware --------------
 @app.middleware("http")
 async def no_cache_mw(request, call_next):
     resp = await call_next(request)
@@ -42,7 +34,7 @@ async def no_cache_mw(request, call_next):
     resp.headers["Expires"] = "0"
     return resp
 
-# ===================== SEGÉDEK =====================
+# ===================== Segédek ====================
 def _read_json(path: Path, default):
     if not path.exists():
         return default
@@ -52,9 +44,7 @@ def _write_json(path: Path, data: Any):
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 def gtfs_ok() -> bool:
-    # bővített ellenőrzés
-    must = ["stops.json", "schedule.json", "trip_stops.json", "trips.json", "calendars.json"]
-    return all((DATA_DIR / m).exists() for m in must)
+    return (DATA_DIR / "stops.json").exists() and (DATA_DIR / "schedule.json").exists()
 
 def _find_member(zf: zipfile.ZipFile, name: str) -> Optional[str]:
     lname = name.lower()
@@ -64,30 +54,27 @@ def _find_member(zf: zipfile.ZipFile, name: str) -> Optional[str]:
             return m
     return None
 
-def _hhmmss_to_minutes_total(t: str) -> int:
-    """
-    GTFS idő HH:MM[:SS], akár 24 feletti órával (pl. 25:06:00).
-    Visszaad: percek a szolgálati nap 00:00-jától (óra lehet 0..48+).
-    """
-    if not t:
-        return 0
-    parts = t.split(":")
-    if len(parts) == 2:
-        h, m = parts
-        s = 0
-    else:
-        h, m, s = parts[:3]
+def _hhmm_to_min(t: str) -> int:
+    """Accept 'HH:MM' or 'HH:MM:SS' (can be 24+ hours in GTFS)"""
     try:
-        return int(h) * 60 + int(m)
+        parts = t.split(":")
+        h, m = int(parts[0]), int(parts[1])
+        return h * 60 + m
     except Exception:
         return 0
 
-def _now_london() -> datetime:
-    # mindig UK időben számoljunk
-    if TZ_LONDON:
-        return datetime.now(TZ_LONDON)
-    # fallback: rendszeridő
-    return datetime.now()
+def norm_route(x: str) -> str:
+    """Normalizált vonalszám (pl. 'BLUS:0018' → '18', 'H1' → 'H1')."""
+    s = str(x or "").strip().upper()
+    if not s:
+        return ""
+    core = re.sub(r"[^A-Z0-9]", "", s)
+    if not core:
+        return ""
+    # ha csak szám, vágjuk le a vezető nullákat
+    if core.isdigit():
+        core = str(int(core))
+    return core
 
 # ===================== LIVE (BODS) =====================
 LIVE_CFG_PATH = DATA_DIR / "live_config.json"
@@ -100,9 +87,8 @@ def _set_live_cfg(cfg: Dict[str, Any]):
 
 class BODSAdapter:
     """
-    Egyszerű kliens a BODS datafeedhez (VehicleMonitoring).
-    Várja, hogy live_config.json-ben legyen: {"feed_url": "https://.../api/v1/datafeed/.../?api_key=..."}
-    A feed lehet XML vagy JSON; mindkettőt kezeli.
+    Egyszerű kliens a BODS SIRI-VM feedhez.
+    live_config.json: {"feed_url": "https://.../api/v1/datafeed/.../?api_key=..."}
     """
     def __init__(self):
         self.timeout = httpx.Timeout(12.0)
@@ -116,18 +102,13 @@ class BODSAdapter:
         if not url:
             return None
         try:
-            r = await self.client.get(
-                url,
-                headers={"Cache-Control":"no-cache"},
-                params={"_": int(time.time())}
-            )
+            r = await self.client.get(url, headers={"Cache-Control":"no-cache"}, params={"_": int(time.time())})
             r.raise_for_status()
-            ct = r.headers.get("content-type","").lower()
-            txt = r.text.strip()
-            if "json" in ct or txt.startswith("{"):
+            ct = (r.headers.get("content-type") or "").lower()
+            text = r.text.strip()
+            if "json" in ct or text.startswith("{") or text.startswith("["):
                 return r.json()
-            # XML → dict
-            return xmltodict.parse(txt)
+            return xmltodict.parse(text)
         except Exception:
             return None
 
@@ -139,7 +120,7 @@ class BODSAdapter:
 
     def _parse_vehicles(self, raw) -> List[Dict[str, Any]]:
         """
-        Visszaad: [{lat, lon, route, bearing, reg, trip_id, line_ref, dest}]
+        Kimenet: [{lat, lon, route, bearing, reg, trip_id, line_ref, dest}]
         """
         out: List[Dict[str, Any]] = []
 
@@ -147,15 +128,16 @@ class BODSAdapter:
         def pick_json(d):
             vs = []
             try:
-                vm = d.get("Siri",{}).get("ServiceDelivery",{}).get("VehicleMonitoringDelivery",[])
-                if isinstance(vm, dict): vm=[vm]
-                for deliv in vm:
-                    for mvj in deliv.get("VehicleActivity",[]) or []:
-                        mj = mvj.get("MonitoredVehicleJourney",{}) or {}
+                sd = d.get("Siri",{}).get("ServiceDelivery",{})
+                vmd = sd.get("VehicleMonitoringDelivery",[])
+                if isinstance(vmd, dict): vmd=[vmd]
+                for deliv in vmd:
+                    for va in deliv.get("VehicleActivity",[]) or []:
+                        mj = va.get("MonitoredVehicleJourney",{}) or {}
                         loc = mj.get("VehicleLocation",{}) or {}
                         vs.append({
-                            "lat": float(loc.get("Latitude",0) or 0),
-                            "lon": float(loc.get("Longitude",0) or 0),
+                            "lat": float(loc.get("Latitude") or 0),
+                            "lon": float(loc.get("Longitude") or 0),
                             "route": (mj.get("LineRef") or mj.get("PublishedLineName") or ""),
                             "bearing": mj.get("Bearing"),
                             "reg": mj.get("VehicleRef") or mj.get("VehicleRegistrationMark") or "",
@@ -167,30 +149,29 @@ class BODSAdapter:
                 pass
             return vs
 
-        # --- XML (SIRI-VM → xmltodict)
+        # --- XML (SIRI-VM)
         def pick_xml(d):
             vs = []
             try:
-                siri = d.get("Siri",{})
-                sd = siri.get("ServiceDelivery",{})
+                sd = d.get("Siri",{}).get("ServiceDelivery",{})
                 vmd = sd.get("VehicleMonitoringDelivery",{})
-                vas = BODSAdapter._as_list(vmd.get("VehicleActivity"))
-                for mvj in vas:
-                    mj = mvj.get("MonitoredVehicleJourney",{}) or {}
+                acts = BODSAdapter._as_list(vmd.get("VehicleActivity"))
+                for va in acts:
+                    mj = va.get("MonitoredVehicleJourney",{}) or {}
                     loc = mj.get("VehicleLocation",{}) or {}
-                    def getk(obj, k): 
+                    def val(obj, k):
                         v = obj.get(k)
                         if isinstance(v, dict) and "#text" in v: return v["#text"]
                         return v
                     vs.append({
-                        "lat": float(getk(loc,"Latitude") or 0),
-                        "lon": float(getk(loc,"Longitude") or 0),
-                        "route": getk(mj,"LineRef") or getk(mj,"PublishedLineName") or "",
-                        "bearing": getk(mj,"Bearing"),
-                        "reg": getk(mj,"VehicleRef") or getk(mj,"VehicleRegistrationMark") or "",
-                        "trip_id": getk(mj,"DatedVehicleJourneyRef") or getk(mj,"VehicleJourneyRef") or "",
-                        "line_ref": getk(mj,"LineRef") or "",
-                        "dest": getk(mj,"DestinationName") or "",
+                        "lat": float(val(loc,"Latitude") or 0),
+                        "lon": float(val(loc,"Longitude") or 0),
+                        "route": val(mj,"LineRef") or val(mj,"PublishedLineName") or "",
+                        "bearing": val(mj,"Bearing"),
+                        "reg": val(mj,"VehicleRef") or val(mj,"VehicleRegistrationMark") or "",
+                        "trip_id": val(mj,"DatedVehicleJourneyRef") or val(mj,"VehicleJourneyRef") or "",
+                        "line_ref": val(mj,"LineRef") or "",
+                        "dest": val(mj,"DestinationName") or "",
                     })
             except Exception:
                 pass
@@ -202,7 +183,8 @@ class BODSAdapter:
             out = pick_json(raw)
         elif isinstance(raw, dict):
             out = pick_xml(raw)
-        return [v for v in out if v["lat"] and v["lon"]]
+        # szűrés érvényes koordinátákra
+        return [v for v in out if v.get("lat") and v.get("lon")]
 
     async def vehicles(self) -> List[Dict[str, Any]]:
         raw = await self._fetch_raw()
@@ -210,27 +192,28 @@ class BODSAdapter:
 
     async def vehicles_by_route(self, route_no: str) -> List[Dict[str, Any]]:
         vs = await self.vehicles()
-        route_no = str(route_no).strip().lower()
-        def norm(x): return str(x or "").strip().lower()
-        return [v for v in vs if norm(v.get("route")) == route_no or norm(v.get("line_ref")) == route_no]
+        target = norm_route(route_no)
+        out = []
+        for v in vs:
+            r = norm_route(v.get("route") or v.get("line_ref"))
+            if r == target:
+                out.append(v)
+        return out
 
-    # Ezekhez a feed általában nem ad külön adatot – visszaadunk üreset.
     async def stop_next_departures(self, stop_id: str, minutes: int) -> List[Dict[str, Any]]:
         return []
+
     async def trip_details(self, trip_id: str) -> Dict[str, Any]:
         return {}
 
 siri_live = BODSAdapter()
 
 # ===================== GTFS feldolgozás =====================
-
 def _build_from_zip_bytes(zip_bytes: bytes) -> None:
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         req = ["stops.txt", "trips.txt", "stop_times.txt", "routes.txt"]
-        # opcionálisak
-        opt = ["calendar.txt", "calendar_dates.txt"]
-        members = {n: _find_member(zf, n) for n in req + opt}
-        missing = [n for n in req if members.get(n) is None]
+        members = {n: _find_member(zf, n) for n in req}
+        missing = [n for n, m in members.items() if m is None]
         if missing:
             raise ValueError(f"Hiányzó GTFS fájlok: {', '.join(missing)}")
 
@@ -243,17 +226,15 @@ def _build_from_zip_bytes(zip_bytes: bytes) -> None:
                     "long": (row.get("route_long_name") or "").strip(),
                 }
 
-        # trips (service_id is kell!)
+        # trips
         trips: Dict[str, Dict[str, str]] = {}
         with zf.open(members["trips.txt"]) as f:
             for row in csv.DictReader(io.TextIOWrapper(f, "utf-8-sig")):
                 r = routes.get(row["route_id"], {"short": "", "long": ""})
                 trips[row["trip_id"]] = {
-                    "route": (r["short"] or r["long"]).strip(),
+                    "route": r["short"] or r["long"],
                     "headsign": (row.get("trip_headsign") or "").strip(),
-                    "service_id": (row.get("service_id") or "").strip()
                 }
-        _write_json(DATA_DIR / "trips.json", trips)
 
         # stops.json
         stops: List[Dict[str, str]] = []
@@ -266,58 +247,25 @@ def _build_from_zip_bytes(zip_bytes: bytes) -> None:
                 })
         _write_json(DATA_DIR / "stops.json", stops)
 
-        # calendar
-        calendars_base: Dict[str, Dict[str, Any]] = {}
-        if members.get("calendar.txt"):
-            with zf.open(members["calendar.txt"]) as f:
-                for row in csv.DictReader(io.TextIOWrapper(f, "utf-8-sig")):
-                    sid = (row.get("service_id") or "").strip()
-                    calendars_base[sid] = {
-                        "monday": int(row.get("monday") or 0),
-                        "tuesday": int(row.get("tuesday") or 0),
-                        "wednesday": int(row.get("wednesday") or 0),
-                        "thursday": int(row.get("thursday") or 0),
-                        "friday": int(row.get("friday") or 0),
-                        "saturday": int(row.get("saturday") or 0),
-                        "sunday": int(row.get("sunday") or 0),
-                        "start_date": row.get("start_date") or "",
-                        "end_date": row.get("end_date") or "",
-                    }
-
-        calendar_dates: List[Dict[str, Any]] = []
-        if members.get("calendar_dates.txt"):
-            with zf.open(members["calendar_dates.txt"]) as f:
-                for row in csv.DictReader(io.TextIOWrapper(f, "utf-8-sig")):
-                    calendar_dates.append({
-                        "service_id": (row.get("service_id") or "").strip(),
-                        "date": row.get("date") or "",
-                        "exception_type": int(row.get("exception_type") or 0)  # 1=added, 2=removed
-                    })
-
-        _write_json(DATA_DIR / "calendars.json", {
-            "base": calendars_base,
-            "dates": calendar_dates
-        })
-
-        # schedule.json  (stop_id -> list of departures)  + trip_stops.json
+        # schedule.json  (stop_id -> list of departures)
         schedule: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+        # trip_stops.json (trip_id -> sequence list)
         trip_stops: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
         with zf.open(members["stop_times.txt"]) as f:
             for row in csv.DictReader(io.TextIOWrapper(f, "utf-8-sig")):
                 tid = row["trip_id"]
-                t = (row.get("departure_time") or "").strip()  # indulás
+                t = (row.get("departure_time") or row.get("arrival_time") or "").strip()
                 if not t:
                     continue
                 trip = trips.get(tid)
                 if not trip:
                     continue
                 schedule[row["stop_id"]].append({
-                    "time": t,  # HH:MM[:SS], 24+ óra is lehet
+                    "time": t,
                     "route": trip["route"],
                     "destination": trip["headsign"],
-                    "trip_id": tid,
-                    "service_id": trip["service_id"]
+                    "trip_id": tid
                 })
                 trip_stops[tid].append({
                     "seq": int(row.get("stop_sequence") or 0),
@@ -326,46 +274,13 @@ def _build_from_zip_bytes(zip_bytes: bytes) -> None:
                 })
 
         for lst in schedule.values():
-            lst.sort(key=lambda x: _hhmmss_to_minutes_total(x["time"]))
+            lst.sort(key=lambda x: _hhmm_to_min(x["time"]))
         for lst in trip_stops.values():
             lst.sort(key=lambda x: x["seq"])
 
         _write_json(DATA_DIR / "schedule.json", schedule)
         _write_json(DATA_DIR / "trip_stops.json", trip_stops)
-
-# ---- Naptípus-szűrés segédfüggvények ----
-def _ymd(dt: date) -> str:
-    return dt.strftime("%Y%m%d")
-
-def _service_active_today(service_id: str, today: date, calendars: Dict[str, Any]) -> bool:
-    """
-    Visszaadja, hogy az adott service_id érvényes-e ma:
-    - calendar_dates elsőbbséget élvez (1=added, 2=removed)
-    - különben calendar.txt dow és dátumtartomány szerint.
-    """
-    if not service_id:
-        return True
-    today_ymd = _ymd(today)
-
-    # calendar_dates override
-    for rec in calendars.get("dates", []):
-        if rec.get("service_id") == service_id and rec.get("date") == today_ymd:
-            return rec.get("exception_type") == 1
-
-    base = calendars.get("base", {}).get(service_id)
-    if not base:
-        # ha nincs base bejegyzés, engedjük (néhány feed csak calendar_dates-et használ)
-        return True
-
-    # dátumtartomány
-    sd = base.get("start_date") or "00000000"
-    ed = base.get("end_date") or "99999999"
-    if not (sd <= today_ymd <= ed):
-        return False
-
-    dow = today.weekday()  # 0=Mon...6=Sun
-    keys = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
-    return bool(base.get(keys[dow], 0))
+        _write_json(DATA_DIR / "trips_index.json", trips)
 
 # ===================== API =====================
 
@@ -376,13 +291,10 @@ async def root_html():
 
 @app.get("/api/status")
 async def api_status():
-    # adunk vissza UK időt információként
-    now = _now_london()
     return {
         "status": "ok",
         "gtfs": gtfs_ok(),
         "live": await siri_live.is_available(),
-        "uk_time": now.strftime("%Y-%m-%d %H:%M:%S"),
         "build": str(int(time.time()))
     }
 
@@ -402,6 +314,7 @@ async def set_live_cfg(payload: Dict[str, Any]):
     _set_live_cfg({"feed_url": url})
     return {"ok": True}
 
+# ---- GTFS upload
 @app.post("/api/upload")
 async def api_upload(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".zip"):
@@ -414,6 +327,7 @@ async def api_upload(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"GTFS feldolgozási hiba: {e}")
     return {"status": "uploaded"}
 
+# ---- Stop kereső
 @app.get("/api/stops/search")
 async def api_stops_search(q: str = Query(..., min_length=1), limit: int = 20):
     stops = _read_json(DATA_DIR / "stops.json", [])
@@ -422,57 +336,37 @@ async def api_stops_search(q: str = Query(..., min_length=1), limit: int = 20):
     res.sort(key=lambda s: (len(s.get("stop_name","")), s.get("stop_name","")))
     return res[:limit]
 
+# ---- Következő indulások
 @app.get("/api/stops/{stop_id}/next_departures")
-async def api_next_departures(
-    stop_id: str,
-    minutes: int = Query(60, ge=5, le=480),
-    live: bool = True
-):
-    """
-    Következő indulások a megadott időablakban (perc).
-    Csak a **MA érvényes** service_id-k kerülnek be (calendar + calendar_dates alapján).
-    A live flag csak „van-e jármű a vonalon” jelzőt ad; ETA felülírás most nem elérhető SIRI-ből.
-    """
+async def api_next_departures(stop_id: str, minutes: int = Query(60, ge=5, le=480), live: bool = True):
     schedule = _read_json(DATA_DIR / "schedule.json", {})
-    trips = _read_json(DATA_DIR / "trips.json", {})
-    calendars = _read_json(DATA_DIR / "calendars.json", {"base": {}, "dates": []})
-
     base = schedule.get(stop_id, [])
-    now = _now_london()
-    today = now.date()
-    now_min = now.hour * 60 + now.minute  # 0..1439, UK
 
-    # Előszűrés: ma érvényes service_id-k
-    valid_items: List[Dict[str, Any]] = []
-    for d in base:
-        sid = d.get("service_id") or (trips.get(d.get("trip_id") or "", {}).get("service_id") or "")
-        if not _service_active_today(sid, today, calendars):
-            continue
-        valid_items.append(d)
+    now = time.localtime()
+    now_min = (now.tm_hour * 60 + now.tm_min) % (24 * 60)
 
-    # Ablak szerint (0..1440 wrap), idő kezelése 24+ órával is
     upcoming: List[Dict[str, Any]] = []
-    window = max(5, min(minutes, 480))
-    for d in valid_items:
+    window = minutes
+
+    for d in base:
         t = (d.get("time") or "").strip()
         if not t:
             continue
-        dep_total_min = _hhmmss_to_minutes_total(t)  # 0..n, lehet 24+ óra
-        # relatív különbség mosttól (csak a következő 24h körben értelmezzük)
-        in_min = (dep_total_min % (24*60) - now_min) % (24*60)
-        if in_min <= window:
+        dep_min = _hhmm_to_min(t) % (24 * 60)
+        delta = (dep_min - now_min) % (24 * 60)
+        if delta <= window:
             upcoming.append({
                 "route": d.get("route"),
                 "destination": d.get("destination"),
-                "time": t,                 # a frontend formázza 24:xx → 00:xx megjelenítésre
+                "time": t,                  # HH:MM(:SS)
                 "trip_id": d.get("trip_id"),
-                "eta_min": None,
+                "eta_min": None,            # nincs ETA a feedben
                 "delay_min": None,
                 "vehicle_reg": None,
                 "live": False
             })
 
-    # Deduplikálás (route+dest+time)
+    # dedupe route+dest+time
     def k(it): return (str(it.get("route") or ""), str(it.get("destination") or ""), str(it.get("time") or ""))
     dedup = OrderedDict()
     for it in upcoming:
@@ -480,36 +374,106 @@ async def api_next_departures(
             dedup[k(it)] = it
     upcoming = list(dedup.values())
 
-    # LIVE jelzés: ha fut a vonalon jármű
+    # LIVE jelző (ha a feed aktív és fut a vonalon jármű)
     if live and await siri_live.is_available():
         try:
             all_live = await siri_live.vehicles()
-            def norm(x): return str(x or "").strip().lower()
             live_routes = defaultdict(list)
             for v in all_live:
-                rn = norm(v.get("route") or v.get("line_ref"))
-                if rn:
-                    live_routes[rn].append(v)
+                key = norm_route(v.get("route") or v.get("line_ref"))
+                if key:
+                    live_routes[key].append(v)
 
             for it in upcoming:
-                lr = live_routes.get(norm(it.get("route")))
+                lr = live_routes.get(norm_route(it.get("route")))
                 if lr:
                     it["live"] = True
                     it["vehicle_reg"] = lr[0].get("reg")
         except Exception:
             pass
 
-    # rendezés: élők előre, majd idő szerint
-    def sort_key(x):
-        # számszerű összehasonlítás a dep_total_min szerint
-        return (not x["live"], _hhmmss_to_minutes_total(x["time"]) % (24*60))
-    upcoming.sort(key=sort_key)
+    # 24h idő szerinti rendezés: live előre
+    def t_min(x):
+        return _hhmm_to_min((x.get("time") or "00:00").split(":")[0]+":"+ (x.get("time") or "00:00").split(":")[1]) % (24*60)
+    upcoming.sort(key=lambda x: (not x["live"], t_min(x)))
     return upcoming[:120]
 
+# ---- Trip részletek
 @app.get("/api/trips/{trip_id}")
-async def api_trip_details(trip_id: str):
-    """
-    Trip részletek: GTFS megállólánc (ha a feed nem ad tripet).
-    A kliens 24h formázást és színezést intézi.
-    """
+async def api_trip_details(trip_id: str, route: str = Query("", description="hint"), time_s: str = Query("", alias="time", description="HH:MM hint")):
+    """Ha a trip_id BODS-os (BLUS:...), route+time alapú legközelebbi GTFS tripre térünk át."""
     trip_stops = _read_json(DATA_DIR / "trip_stops.json", {})
+    stops_idx = { s["stop_id"]: s for s in _read_json(DATA_DIR / "stops.json", []) }
+    trips_index = _read_json(DATA_DIR / "trips_index.json", {})
+
+    seq = trip_stops.get(trip_id)
+    if not seq:
+        target_route = norm_route(route)
+        target_min = _hhmm_to_min(time_s) if time_s else None
+        candidates = [tid for tid, meta in trips_index.items() if norm_route(meta.get("route")) == target_route]
+
+        best_tid = candidates[0] if candidates else None
+        if target_min is not None and candidates:
+            best_tid = None
+            best_delta = 10**9
+            for tid in candidates:
+                calls = trip_stops.get(tid) or []
+                if not calls:
+                    continue
+                dep = calls[0].get("time")
+                if not dep:
+                    continue
+                dep_min = _hhmm_to_min(dep) % (24*60)
+                delta = (dep_min - target_min) % (24*60)
+                if delta < best_delta:
+                    best_delta, best_tid = delta, tid
+        if best_tid:
+            seq = trip_stops.get(best_tid)
+            trip_id = best_tid
+
+    calls = []
+    for r in (seq or []):
+        st = stops_idx.get(r["stop_id"])
+        calls.append({
+            "time": r.get("time"),
+            "stop_id": r.get("stop_id"),
+            "stop_name": (st or {}).get("stop_name") or r.get("stop_id"),
+            "eta_min": None,
+            "delay_min": None
+        })
+
+    meta = trips_index.get(trip_id) or {}
+    return {"trip_id": trip_id, "route": meta.get("route"), "headsign": meta.get("headsign"), "vehicle": None, "calls": calls}
+
+# ---- Vonal kereső
+@app.get("/api/routes/search")
+async def api_route_search(q: str = Query("", description="Járatszám/név"), limit: int = 40):
+    schedule = _read_json(DATA_DIR / "schedule.json", {})
+    routes = set()
+    for lst in schedule.values():
+        for it in lst:
+            if it.get("route"):
+                routes.add(str(it["route"]))
+    qn = norm_route(q)
+    if qn:
+        res = [r for r in routes if norm_route(r).startswith(qn)]
+    else:
+        res = sorted(routes, key=lambda x: (len(x), x))
+    res = sorted(res, key=lambda x: (len(x), x))
+    return [{"route": r} for r in res[:limit]]
+
+# ---- Vonal járművei (LIVE)
+@app.get("/api/routes/{route}/vehicles")
+async def api_route_vehicles(route: str):
+    if not await siri_live.is_available():
+        return []
+    try:
+        vs = await siri_live.vehicles_by_route(route)
+        return vs[:120]
+    except Exception:
+        return []
+
+# ---- Front file (külön útvonal)
+@app.get("/index.html", include_in_schema=False)
+async def index_file():
+    return FileResponse(str(BASE_DIR / "index.html"), media_type="text/html")
