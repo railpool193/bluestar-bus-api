@@ -84,99 +84,188 @@ const I18N = {
   PL:{app:"Bluestar Bus — wyszukiwarka przystanków i linii",stopTab:"Przystanek",routeTab:"Linia",search:"Szukaj",stopName:"Nazwa przystanku",window:"Okno (min)",resultsChoose:"Wyniki — wybierz przystanek",chosenStop:"Wybrany przystanek:",refreshEvery:"Odświeżanie co 20 s",ukTime:"Czas UK:",mapHint:"Jeśli brak pojazdów na żywo, mapa będzie pusta.",destination:"Kierunek",departure:"Odjazd",due:"Due"},
   RO:{app:"Bluestar Bus — căutare stații & linii",stopTab:"Stație",routeTab:"Linie",search:"Căutare",stopName:"Numele stației",window:"Fereastră (min)",resultsChoose:"Rezultate — alege o stație",chosenStop:"Stație selectată:",refreshEvery:"Reîmprospătare la 20 s",ukTime:"Ora UK:",mapHint:"Dacă nu există vehicule live, harta rămâne goală.",destination:"Destinație",departure:"Plecare",due:"Due"}
 };
-const LANGS=["EN","DE","HU","PL","RO"];
-function guessLang(){const n=(navigator.language||"en").slice(0,2).toUpperCase();return LANGS.includes(n)?n:"EN";}
-let LANG=localStorage.getItem("lang")||guessLang();
+const LANGS = ["EN","DE","HU","PL","RO"];
+function guessLang(){ const n=(navigator.language||"en").slice(0,2).toUpperCase(); return LANGS.includes(n)?n:"EN"; }
+let LANG = localStorage.getItem("lang") || guessLang();
 
 /* ---------------- helpers ---------------- */
-function t(k){return (I18N[LANG]||I18N.EN)[k]||k;}
-function hhmm(x){const d=new Date(x);return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:false});}
-function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
+function tr(key){ return (I18N[LANG]||I18N.EN)[key] || key; }
+function hhmm(x){ const d = typeof x==="string" ? new Date(x) : x; return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false}); }
+function el(tag, cls, txt){ const e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e; }
 
-/* ---------------- UI refs ---------------- */
-const appTitle=document.getElementById("app-title"),langSel=document.getElementById("lang"),tabStop=document.getElementById("tabStop"),tabRoute=document.getElementById("tabRoute"),ukTimeLbl=document.getElementById("ukTime"),refreshLbl=document.getElementById("refreshLbl"),stopCard=document.getElementById("stopCard"),routeCard=document.getElementById("routeCard"),stopQuery=document.getElementById("stopQuery"),windowMin=document.getElementById("windowMin"),stopSearchBtn=document.getElementById("stopSearchBtn"),stopSelect=document.getElementById("stopSelect"),selectedStopLbl=document.getElementById("selectedStopLbl"),refreshEvery=document.getElementById("refreshEvery"),stopList=document.getElementById("stopList"),buildSpan=document.getElementById("build"),routeQuery=document.getElementById("routeQuery"),routeSearchBtn=document.getElementById("routeSearchBtn"),routeSelect=document.getElementById("routeSelect"),mapHint=document.getElementById("mapHint");
+/* ---------------- UI init ---------------- */
+const appTitle=document.getElementById("app-title");
+const langSel=document.getElementById("lang");
+const tabStop=document.getElementById("tabStop");
+const tabRoute=document.getElementById("tabRoute");
+const ukTimeLbl=document.getElementById("ukTime");
+const refreshLbl=document.getElementById("refreshLbl");
+const stopCard=document.getElementById("stopCard");
+const routeCard=document.getElementById("routeCard");
+const stopQuery=document.getElementById("stopQuery");
+const windowMin=document.getElementById("windowMin");
+const stopSearchBtn=document.getElementById("stopSearchBtn");
+const stopSelect=document.getElementById("stopSelect");
+const selectedStopLbl=document.getElementById("selectedStopLbl");
+const refreshEvery=document.getElementById("refreshEvery");
+const stopList=document.getElementById("stopList");
+const buildSpan=document.getElementById("build");
+const routeQuery=document.getElementById("routeQuery");
+const routeSearchBtn=document.getElementById("routeSearchBtn");
+const routeSelect=document.getElementById("routeSelect");
+const mapHint=document.getElementById("mapHint");
 
-/* init i18n */
-function fillLang(){langSel.innerHTML="";LANGS.forEach(c=>{const o=document.createElement("option");o.value=c;o.textContent=c;if(c===LANG)o.selected=true;langSel.appendChild(o);});}
-function applyI18n(){appTitle.textContent=t("app");tabStop.textContent=t("stopTab");tabRoute.textContent=t("routeTab");stopQuery.placeholder=t("stopName");stopSearchBtn.textContent=t("search");routeQuery.placeholder=t("routeTab");routeSearchBtn.textContent=t("search");refreshEvery.textContent=t("refreshEvery");mapHint.textContent=t("mapHint");}
-fillLang();applyI18n();
-langSel.onchange=()=>{LANG=langSel.value;localStorage.setItem("lang",LANG);applyI18n();};
+buildSpan.textContent="–";
+
+/* language selector */
+function fillLang(){
+  langSel.innerHTML="";
+  LANGS.forEach(code=>{
+    const o=document.createElement("option");
+    o.value=code; o.textContent=code; if(code===LANG) o.selected=true;
+    langSel.appendChild(o);
+  });
+}
+langSel.addEventListener("change", ()=>{ LANG=langSel.value; localStorage.setItem("lang",LANG); applyI18n(); });
+function applyI18n(){
+  appTitle.textContent=tr("app");
+  tabStop.textContent=tr("stopTab");
+  tabRoute.textContent=tr("routeTab");
+  stopQuery.placeholder=tr("stopName");
+  stopSearchBtn.textContent=tr("search");
+  routeQuery.placeholder=tr("routeTab");
+  routeSearchBtn.textContent=tr("search");
+  refreshEvery.textContent=tr("refreshEvery");
+  mapHint.textContent=tr("mapHint");
+}
+fillLang(); applyI18n();
 
 /* tabs */
-function showStop(){tabStop.classList.add("active");tabRoute.classList.remove("active");stopCard.style.display="block";routeCard.style.display="none";}
-function showRoute(){tabRoute.classList.add("active");tabStop.classList.remove("active");stopCard.style.display="none";routeCard.style.display="block";}
-tabStop.onclick=showStop;tabRoute.onclick=showRoute;
+function showStop(){ tabStop.classList.add("active"); tabRoute.classList.remove("active"); stopCard.style.display="block"; routeCard.style.display="none"; }
+function showRoute(){ tabRoute.classList.add("active"); tabStop.classList.remove("active"); stopCard.style.display="none"; routeCard.style.display="block"; }
+tabStop.onclick=showStop; tabRoute.onclick=showRoute;
 
-/* status clock */
-async function tick(){try{const r=await fetch("/api/status");const j=await r.json();ukTimeLbl.textContent=`${t("ukTime")} ${j.uk_time}`;buildSpan.textContent=j.build;}catch(e){}}
-setInterval(tick,1000);tick();
-refreshLbl.textContent=t("refreshEvery");
+/* clock & status */
+async function tick(){
+  try{
+    const r = await fetch("/api/status"); const j = await r.json();
+    ukTimeLbl.textContent = `${tr("ukTime")} ${j.uk_time}`;
+    buildSpan.textContent = j.build;
+  }catch(e){}
+}
+setInterval(tick, 1000); tick();
+refreshLbl.textContent = `Refresh every 20 s`;
+refreshEvery.textContent = tr("refreshEvery");
 
-/* stop search */
-stopSearchBtn.onclick=async()=>{const q=stopQuery.value.trim();if(!q)return;const r=await fetch(`/api/stops/search?q=${encodeURIComponent(q)}`);const items=await r.json();stopSelect.innerHTML="";items.forEach(it=>{const o=document.createElement("option");o.value=it.id;o.textContent=it.name;stopSelect.appendChild(o);});selectedStopLbl.textContent=`${t("chosenStop")} ${items[0]?.name||"–"}`;if(items[0]){stopSelect.value=items[0].id;renderDepartures();}};
-stopSelect.onchange=()=>{selectedStopLbl.textContent=`${t("chosenStop")} ${stopSelect.options[stopSelect.selectedIndex]?.text||"–"}`;renderDepartures();};
+/* stop search & list */
+stopSearchBtn.onclick = async ()=>{
+  const q = stopQuery.value.trim();
+  if(!q) return;
+  const r = await fetch(`/api/stops/search?q=${encodeURIComponent(q)}`);
+  const items = await r.json();
+  stopSelect.innerHTML="";
+  items.forEach(it=>{
+    const o=document.createElement("option");
+    o.value=it.id; o.textContent=it.name; stopSelect.appendChild(o);
+  });
+  selectedStopLbl.textContent = `${tr("chosenStop")} ${items[0]?.name || "–"}`;
+  if(items[0]){ stopSelect.value=items[0].id; renderDepartures(); }
+};
+stopSelect.onchange = ()=>{
+  selectedStopLbl.textContent = `${tr("chosenStop")} ${stopSelect.options[stopSelect.selectedIndex]?.text || "–"}`;
+  renderDepartures();
+};
 
-/* departures */
 async function renderDepartures(){
-  const id=stopSelect.value;if(!id)return;
-  const w=Math.max(1,Number(windowMin.value||60));
-  const r=await fetch(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${w}`);
-  const j=await r.json();
+  const id = stopSelect.value; if(!id) return;
+  const w = Math.max(1, Number(windowMin.value||60));
+  const r = await fetch(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${w}`);
+  const j = await r.json();
   stopList.innerHTML="";
   (j.departures||[]).forEach(row=>{
-    const it=el("div","item");
-    const left=el("div","row");left.style.gap="10px";
-    left.appendChild(el("div","pill",row.route||"–"));
-    const mid=el("div");mid.appendChild(el("div","",row.destination||"–"));
-    const right=el("div","");
-    const timeSpan=el("span",(row.is_due?"good blink":(row.is_live?"good":"")),row.is_due?t("due"):row.time_display);
-    right.appendChild(timeSpan);
-    it.appendChild(left);it.appendChild(mid);it.appendChild(right);
-    it.onclick=()=>openTrip(row.trip_id,row.route,row.destination);
+    const it = el("div","item");
+
+    const left = el("div","row"); left.style.gap="10px";
+    left.appendChild(el("div","pill", row.route || "–"));
+    const mid = el("div"); mid.appendChild(el("div","", row.destination || "–"));
+    it.appendChild(left); it.appendChild(mid);
+
+    const right = el("div","");
+    const timeEl = el("span","", row.is_due ? tr("due") : row.time_display);
+    if (row.is_live) timeEl.classList.add("good");
+    if (row.is_due)  timeEl.classList.add("blink");  // VILLOG
+    right.appendChild(timeEl);
+    it.appendChild(right);
+
+    it.onclick = ()=> openTrip(row.trip_id, row.route, row.destination);
     stopList.appendChild(it);
   });
 }
-setInterval(renderDepartures,20000);
+setInterval(renderDepartures, 20000);
 
 /* trip modal */
-let modal;
-function openTrip(tripId,route,headsign){
-  if(!tripId)return;(async()=>{
-    const r=await fetch(`/api/trips/${encodeURIComponent(tripId)}`);const j=await r.json();
-    const wrap=document.createElement("div");wrap.style.position="fixed";wrap.style.inset="0";wrap.style.background="rgba(0,0,0,.6)";wrap.style.display="grid";wrap.style.placeItems="center";wrap.style.zIndex="9999";
-    const box=document.createElement("div");box.className="card";box.style.maxWidth="700px";box.style.width="90%";
-    box.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+function openTrip(tripId, route, headsign){
+  if(!tripId) return;
+  (async()=>{
+    const r = await fetch(`/api/trips/${encodeURIComponent(tripId)}`);
+    const j = await r.json();
+    const wrap = document.createElement("div");
+    wrap.style.position="fixed"; wrap.style.inset="0"; wrap.style.background="rgba(0,0,0,.6)";
+    wrap.style.display="grid"; wrap.style.placeItems="center"; wrap.style.zIndex="9999";
+    const box = document.createElement("div");
+    box.className="card"; box.style.maxWidth="700px"; box.style.width="90%";
+    box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
       <div><strong>Trip</strong> · ${route||""} → ${headsign||""}</div>
       <button class="btn" id="closeTrip">×</button>
     </div>`;
-    const list=document.createElement("div");list.className="list";
-    (j.stops||[]).forEach(s=>{const row=document.createElement("div");row.className="item";
-      const left=document.createElement("div");left.className="muted";left.textContent=s.time_display;if(s.is_past){left.style.opacity=.6;}
-      const name=document.createElement("div");name.textContent=s.stop_name;if(s.is_past){name.style.opacity=.6;}
-      row.appendChild(left);row.appendChild(name);list.appendChild(row);
+    const list = document.createElement("div"); list.className="list";
+    (j.stops||[]).forEach(s=>{
+      const row = document.createElement("div"); row.className="item";
+      const left = document.createElement("div"); left.className="muted"; left.textContent = s.time_display; if(s.is_past) left.style.opacity=.6;
+      const name = document.createElement("div"); name.textContent = s.stop_name; if(s.is_past) name.style.opacity=.6;
+      row.appendChild(left); row.appendChild(name); list.appendChild(row);
     });
-    box.appendChild(list);wrap.appendChild(box);document.body.appendChild(wrap);
-    document.getElementById("closeTrip").onclick=()=>document.body.removeChild(wrap);
-    modal=wrap;
+    box.appendChild(list); wrap.appendChild(box); document.body.appendChild(wrap);
+    document.getElementById("closeTrip").onclick = ()=>{ document.body.removeChild(wrap); };
   })();
 }
 
 /* route + map */
-let map,markers=[];
-function ensureMap(){if(map)return;map=L.map('map',{zoomControl:true}).setView([50.9097,-1.4044],12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'Leaflet | © OpenStreetMap'}).addTo(map);}
-routeSearchBtn.onclick=async()=>{const q=routeQuery.value.trim();if(!q)return;const r=await fetch(`/api/routes/search?q=${encodeURIComponent(q)}`);const items=await r.json();
-  routeSelect.innerHTML="";items.forEach(it=>{const o=document.createElement("option");o.value=it.route;o.textContent=it.route;routeSelect.appendChild(o);});
-  if(items[0]){routeSelect.value=items[0].route;renderVehicles();}
+let map, markers=[];
+function ensureMap(){
+  if(map) return;
+  map = L.map('map', { zoomControl:true }).setView([50.9097, -1.4044], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'Leaflet | © OpenStreetMap'}).addTo(map);
+}
+routeSearchBtn.onclick = async ()=>{
+  const q = routeQuery.value.trim();
+  if(!q) return;
+  const r = await fetch(`/api/routes/search?q=${encodeURIComponent(q)}`);
+  const items = await r.json();
+  routeSelect.innerHTML="";
+  items.forEach(it=>{
+    const o=document.createElement("option");
+    o.value=it.route; o.textContent=it.route; routeSelect.appendChild(o);
+  });
+  if(items[0]){ routeSelect.value=items[0].route; renderVehicles(); }
 };
-routeSelect.onchange=renderVehicles;
+routeSelect.onchange = renderVehicles;
 
 async function renderVehicles(){
-  ensureMap();markers.forEach(m=>m.remove());markers=[];
-  const route=routeSelect.value;if(!route)return;
-  const r=await fetch(`/api/routes/${encodeURIComponent(route)}/vehicles`);const j=await r.json();const vs=j.vehicles||[];
-  vs.forEach(v=>{const m=L.marker([v.lat,v.lon]).addTo(map).bindPopup(`${route} · ${v.label||""}`);markers.push(m);});
-  if(vs.length){const g=L.featureGroup(markers);map.fitBounds(g.getBounds().pad(0.2));}
+  ensureMap();
+  markers.forEach(m=>m.remove()); markers=[];
+  const route = routeSelect.value; if(!route) return;
+  const r = await fetch(`/api/routes/${encodeURIComponent(route)}/vehicles`);
+  const j = await r.json();
+  const vs = j.vehicles||[];
+  vs.forEach(v=>{
+    const m = L.marker([v.lat, v.lon]).addTo(map).bindPopup(`${route} · ${v.label||""}`);
+    markers.push(m);
+  });
+  if(vs.length){
+    const g = L.featureGroup(markers);
+    map.fitBounds(g.getBounds().pad(0.2));
+  }
 }
 
 /* auto start */
