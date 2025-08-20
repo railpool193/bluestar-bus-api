@@ -23,21 +23,18 @@
   .muted{color:var(--muted)}
   .th{opacity:.85;font-weight:700;letter-spacing:.3px}
   .grid{margin-top:12px}
-  .tr{display:grid;grid-template-columns:64px 1fr 110px 90px 120px;gap:10px;align-items:center;padding:12px;border-radius:12px;background:#0f1430;margin:8px 0;cursor:pointer}
+  /* 3 oszlop: járat, cél, indulás */
+  .tr{display:grid;grid-template-columns:64px 1fr 120px;gap:10px;align-items:center;padding:12px;border-radius:12px;background:#0f1430;margin:8px 0;cursor:pointer}
   .tr:hover{background:#10183a}
   .pill{width:42px;height:42px;border-radius:50%;background:var(--pill);display:flex;align-items:center;justify-content:center;font-weight:800}
   .time{font-weight:800}
-  .liveDot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--live);margin-right:6px;box-shadow:0 0 0 0 rgba(24,194,126,.9);animation:pulse 1.4s infinite}
-  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(24,194,126,.7)}70%{box-shadow:0 0 0 10px rgba(24,194,126,0)}100%{box-shadow:0 0 0 0 rgba(24,194,126,0)}}
   .due{color:var(--live);font-weight:800;animation:blink 1s infinite}
   @keyframes blink {0%,49%{opacity:1}50%,100%{opacity:.2}}
-  .hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-  .badge{font-size:12px;padding:3px 9px;border-radius:999px;background:#0f1430;color:#b7c0d4}
+  .hdr{display:flex;gap:14px;flex-wrap:wrap;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .clock{font-variant-numeric:tabular-nums}
   .small{font-size:13px}
   #map{height:420px;border-radius:16px;overflow:hidden}
   .footer{margin-top:12px;color:#8e97ab}
-  .link{color:#9fb3ff;text-decoration:none}
-  /* modal */
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:50}
   .modal .box{background:#0f1430;border:1px solid #233055;border-radius:16px;max-width:760px;width:92%;max-height:80vh;overflow:auto}
   .modal .hd{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #222845}
@@ -49,7 +46,9 @@
 <div class="wrap">
   <div class="hdr">
     <h1>🚌 Bluestar Bus – megálló & járat kereső</h1>
-    <div class="muted small">Frissítés: <span id="tick">–</span></div>
+    <div class="small">
+      UK idő: <b id="nowUK" class="clock">--:--:--</b> · Frissítés: <span id="tick">–</span>
+    </div>
   </div>
 
   <div class="tabs">
@@ -85,7 +84,7 @@
 
     <div class="grid">
       <div class="tr th" style="cursor:default">
-        <div>Járat</div><div>Cél</div><div>Indulás</div><div>Élő</div><div>Rendszám</div>
+        <div>Járat</div><div>Cél</div><div>Indulás</div>
       </div>
       <div id="rows"></div>
     </div>
@@ -141,7 +140,7 @@
 <script>
 const state = {
   stopId:null, minutes:60, route:null, map:null, markers:[],
-  lastUpdate:null, active:"stop"
+  lastUpdate:null, active:"stop", lastClickedLive:false
 }
 const qs = s=>document.querySelector(s);
 
@@ -151,7 +150,17 @@ async function api(path){
   if(!r.ok) throw new Error(await r.text());
   return r.json();
 }
+
 function setTick(txt){ qs('#tick').textContent = txt; }
+
+// Élő UK óra
+function updateClock(){
+  try{
+    const fmt = new Intl.DateTimeFormat('hu-HU', { timeZone:'Europe/London', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false });
+    qs('#nowUK').textContent = fmt.format(new Date());
+  }catch{ /* no-op */ }
+}
+setInterval(updateClock, 1000); updateClock();
 
 // tabs
 qs('#tabStop').onclick = ()=>{ state.active='stop'; qs('#tabStop').classList.add('active'); qs('#tabRoute').classList.remove('active'); qs('#cardStop').style.display='block'; qs('#cardRoute').style.display='none'; }
@@ -172,46 +181,26 @@ qs('#btnStop').onclick = async ()=>{
   if(!q) return;
   const hits = await api(`/api/stops/search?q=${encodeURIComponent(q)}`);
   const sel = qs('#selStops'); sel.innerHTML = '';
-  hits.forEach((s,i)=>{
-    const o=document.createElement('option');
-    o.value = s.stop_id; o.textContent = `${s.stop_name} (${s.stop_id})`;
-    sel.appendChild(o);
-  });
+  hits.forEach((s)=>{ const o=document.createElement('option'); o.value=s.stop_id; o.textContent=`${s.stop_name} (${s.stop_id})`; sel.appendChild(o); });
   if(hits.length){ sel.selectedIndex=0; state.stopId=hits[0].stop_id; qs('#selStopLbl').textContent = hits[0].stop_id; refreshStop(); }
 };
-
 qs('#selStops').onchange = (e)=>{ state.stopId = e.target.value; qs('#selStopLbl').textContent = state.stopId; refreshStop(); }
 
 function fmtTime(t){ if(!t) return '—'; const [h,m]=t.split(':'); return `${h.padStart(2,'0')}:${m.padStart(2,'0')}`; }
 
 function fmtRow(it){
-  const live = !!it.live;
+  state.lastClickedLive = false; // reset (beállítjuk kattintáskor)
   const eta = (typeof it.eta_min === 'number') ? it.eta_min : null;
-
-  let when;
-  if (eta !== null) {
-    when = (eta <= 1) ? `<span class="due">Due</span>` : `<span class="time">${eta} min</span>`;
-  } else {
-    when = `<span class="time">${fmtTime(it.time)}</span>`;
-  }
-  if (it.day_offset && it.day_offset > 0) {
-    when += ` <span class="muted">(+${it.day_offset})</span>`;
-  }
-
-  let liveCell = live ? `<span class="liveDot"></span><span class="muted">LIVE</span>` : `<span class="muted">–</span>`;
-  const reg = it.vehicle_reg || '–';
-  const trip = it.trip_id || '';
-  return `<div class="tr" data-trip="${trip}">
+  let when = eta!==null ? (eta<=1? `<span class="due">Due</span>` : `<span class="time">${eta} min</span>`)
+                        : `<span class="time">${fmtTime(it.time)}</span>`;
+  return `<div class="tr" data-trip="${it.trip_id||''}" data-live="${!!it.live}">
     <div class="pill">${it.route||'–'}</div>
     <div>${it.destination||'–'}</div>
     <div>${when}</div>
-    <div>${liveCell}</div>
-    <div>${reg}</div>
   </div>`;
 }
 
 function renderRows(list){
-  // client-oldali dedupe (biztonsági háló)
   const seen=new Set(); const uniq=[];
   for(const it of list||[]){
     const k=`${it.route}|${it.destination}|${it.time}`;
@@ -222,7 +211,10 @@ function renderRows(list){
   el.innerHTML = uniq.map(fmtRow).join("");
   [...el.querySelectorAll(".tr")].forEach(row=>{
     const tid=row.dataset.trip;
-    if(tid) row.addEventListener("click",()=>showTrip(tid));
+    row.addEventListener("click",()=>{
+      state.lastClickedLive = (row.dataset.live === "true");
+      if(tid) showTrip(tid);
+    });
   });
 }
 
@@ -254,7 +246,7 @@ qs('#btnRoute').onclick = async ()=>{
   const hits = await api(`/api/routes/search?q=${encodeURIComponent(q)}`);
   const sel = qs('#selRoute'); sel.innerHTML='';
   if(!hits.length){ const o=document.createElement('option'); o.textContent='Nincs találat'; sel.appendChild(o); return; }
-  hits.forEach((r,i)=>{ const o=document.createElement('option'); o.value=r.route; o.textContent=r.route; sel.appendChild(o); });
+  hits.forEach(r=>{ const o=document.createElement('option'); o.value=r.route; o.textContent=r.route; sel.appendChild(o); });
   sel.selectedIndex=0; state.route=hits[0].route; refreshRoute();
 };
 qs('#selRoute').onchange=(e)=>{ state.route=e.target.value; refreshRoute(); }
@@ -295,16 +287,33 @@ async function refreshRoute(){
 }
 
 // ------------ TRIP MODAL ------------
+function parseAbsMin(t){ const [h,m]=t.split(':').map(x=>parseInt(x)); return h*60+m; }
+function dispHHMMFromAbs(absMin){ const mm = absMin%(24*60); const h=Math.floor(mm/60), m=mm%60; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; }
+
 function showTrip(tid){
   qs('#tripIdLbl').textContent = tid;
   qs('#tripBody').innerHTML = `<div class="muted">Betöltés…</div>`;
   qs('#tripModal').style.display='flex';
   api(`/api/trips/${encodeURIComponent(tid)}`).then(d=>{
     if(!d || !d.calls || !d.calls.length){ qs('#tripBody').innerHTML = `<div class="muted">Nincs részlet ehhez a járathoz.</div>`; return; }
-    const rows = d.calls.map(c=>`<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #222845">
-      <div style="width:80px;font-weight:700">${fmtTime(c.time||'')}</div>
-      <div>${c.stop_name||c.stop_id}</div>
-    </div>`).join("");
+
+    // UK idő most
+    const nowUK = new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London', hour:'2-digit', minute:'2-digit', hour12:false})
+      .format(new Date());
+    const nowAbs = parseAbsMin(nowUK);
+
+    const isLive = !!state.lastClickedLive;
+
+    const rows = d.calls.map(c=>{
+      const abs = parseAbsMin(c.time); // GTFS adhat 24:xx → 1440+; itt sima H:MM van, ebből szerver oldalon már normalizálva jött
+      const hhmm = dispHHMMFromAbs(abs);
+      const past = (abs%(24*60)) < (nowAbs%(24*60)); // egyszerű összevetés az aktuális napon belül
+      const color = past ? 'var(--muted)' : (isLive ? 'var(--live)' : '#fff');
+      return `<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #222845;color:${color}">
+        <div style="width:80px;font-weight:700">${hhmm}</div>
+        <div>${c.stop_name||c.stop_id}</div>
+      </div>`;
+    }).join("");
     qs('#tripBody').innerHTML = rows;
   }).catch(()=>{ qs('#tripBody').innerHTML = `<div class="muted">Hiba történt.</div>`; })
 }
