@@ -33,6 +33,10 @@
   .star { cursor:pointer; user-select:none }
   .mono{ font-variant-numeric: tabular-nums; }
 
+  /* Modal */
+  .modal{ position:fixed; inset:0; display:grid; place-items:center; background:rgba(0,0,0,.4); padding:20px; z-index:1000; }
+  .modal .box{ width:min(800px,95vw); background:var(--card); border-radius:16px; padding:16px; box-shadow:0 8px 40px rgba(0,0,0,.45); }
+
   /* Board mode */
   .board { max-width:none; margin:0; padding:14px; }
   .board .card{ background:var(--board); }
@@ -42,7 +46,7 @@
   .board .item .dest{ font-size:24px }
   .board .item .time{ font-size:26px; font-weight:800 }
   .board .item .op{ font-size:18px; padding:6px 10px; border:1px solid #2c3c6a; border-radius:8px; }
-  .fs { position:fixed; inset:12px; z-index:9999; overflow:auto; }
+  .fs { position:fixed; inset:12px; z-index:999; overflow:auto; }
 </style>
 </head>
 <body>
@@ -134,6 +138,12 @@
   </div>
 
 <script>
+/* ---------- API base ---------- */
+/* Ha a frontend és az API KÜLÖN domainen fut: add ?api=https://... a link végére.
+   Ha egy domainen vannak (FastAPI szolgálja ki a statikus fájlt), hagyd üresen. */
+const urlParams = new URLSearchParams(location.search);
+const API = (urlParams.get("api") || "").replace(/\/$/, "");
+
 /* ---------- i18n ---------- */
 const I18N = {
  EN:{app:"Bluestar Bus — stop & route finder",stopTab:"Stop",routeTab:"Route",favTab:"Favourites",search:"Search",stopName:"Stop name",window:"Window (min)",resultsChoose:"Results — choose a stop",chosenStop:"Selected stop:",refreshEvery:"Refresh every 20 s",ukTime:"UK time:",mapHint:"If there are no live vehicles on the route, the map will be empty.",destination:"Destination",departure:"Departure",due:"Due",late:"late",early:"early",addFav:"Add to favourites",rmFav:"Remove from favourites"},
@@ -153,6 +163,7 @@ function el(tag, cls, txt){const e=document.createElement(tag); if(cls)e.classNa
 function setSel(select, arr, valKey, textKey){ select.innerHTML=""; arr.forEach(x=>{const o=document.createElement("option"); o.value=x[valKey]; o.textContent=x[textKey]; select.appendChild(o);});}
 function hhmm(x){ const d=new Date(x); return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false}); }
 const UK = new Intl.DateTimeFormat([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false, timeZone:'Europe/London'});
+const apiFetch = (path, init) => fetch(`${API}${path}`, init);
 
 /* ---------- UI refs ---------- */
 const wrap=$("#wrap"), appTitle=$("#app-title"), langSel=$("#lang");
@@ -175,6 +186,7 @@ function applyI18n(){
   stopQuery.placeholder=t("stopName"); stopSearchBtn.textContent=t("search");
   routeQuery.placeholder=t("routeTab"); routeSearchBtn.textContent=t("search");
   refreshEvery.textContent=t("refreshEvery"); mapHint.textContent=t("mapHint");
+  refreshLbl.textContent=`${t("ukTime")} …`;
 }
 langSel.onchange=()=>{LANG=langSel.value; localStorage.setItem("lang",LANG); applyI18n();};
 fillLang(); applyI18n();
@@ -187,46 +199,81 @@ tabStop.onclick=showStop; tabRoute.onclick=showRoute; tabFav.onclick=showFav;
 
 /* ---------- clock & status ---------- */
 async function tick(){
-  try{ const r=await fetch("/api/status"); const j=await r.json();
-       ukTimeLbl.textContent=`${t("ukTime")} ${j.uk_time}`; buildSpan.textContent=j.build;
-  }catch(e){}
+  try{
+    const r=await apiFetch("/api/status");
+    const j=await r.json();
+    ukTimeLbl.textContent=`${t("ukTime")} ${j.uk_time}`;
+    buildSpan.textContent=j.build;
+    refreshLbl.textContent=`${t("refreshEvery")}`;
+  }catch(e){ /* ignore */ }
 }
-setInterval(tick, 1000); tick(); refreshLbl.textContent=`Refresh every 20 s`;
+setInterval(tick, 1000); tick();
 
 /* ---------- config modal ---------- */
-openCfg.onclick=async()=>{ cfgModal.style.display="grid"; try{ const r=await fetch("/api/live/config"); const j=await r.json(); feedUrl.value=j.feed_url||"";}catch(e){} };
+openCfg.onclick=async()=>{
+  cfgModal.style.display="grid";
+  try{ const r=await apiFetch("/api/live/config"); const j=await r.json(); feedUrl.value=j.feed_url||"";}catch(e){}
+};
 closeCfg.onclick=()=> cfgModal.style.display="none";
-saveFeed.onclick=async()=>{ try{ await fetch("/api/live/config",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({feed_url:feedUrl.value.trim()})}); cfgModal.style.display="none"; }catch(e){ alert("Save failed"); } };
+saveFeed.onclick=async()=>{
+  try{
+    await apiFetch("/api/live/config",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({feed_url:feedUrl.value.trim()})});
+    cfgModal.style.display="none";
+  }catch(e){ alert("Save failed"); }
+};
 
 /* ---------- stop search ---------- */
 stopSearchBtn.onclick=async()=>{
   const q=stopQuery.value.trim(); if(!q) return;
-  const r=await fetch(`/api/stops/search?q=${encodeURIComponent(q)}`); const items=await r.json();
+  const r=await apiFetch(`/api/stops/search?q=${encodeURIComponent(q)}`); const items=await r.json();
   setSel(stopSelect, items, "id", "name");
   if(items[0]){ stopSelect.value=items[0].id; selectedStopLbl.textContent=`${t("chosenStop")} ${items[0].name}`; renderDepartures(); }
   else selectedStopLbl.textContent=t("resultsChoose");
 };
 stopSelect.onchange=()=>{ selectedStopLbl.textContent=`${t("chosenStop")} ${stopSelect.options[stopSelect.selectedIndex]?.text||"–"}`; renderDepartures(); };
 
-function delayBadge(d){ if(!d) return ""; const n=Number(d); if(!n) return "";
-  const sign=n>0?"+":""; const cls=n>0?"":"muted";
+function delayBadge(d){
+  if(d==null || d==="") return "";
+  const n=Number(d); if(!Number.isFinite(n)) return "";
+  const sign=n>0?"+":"";
+  const cls=n>0?"":"muted";
   return `<span class="mono ${n>0?'good':''} ${cls}" style="margin-left:8px">${sign}${n} min</span>`;
 }
+
+/* dedup segéd: azonos trip_id + time_display */
+function dedupDepartures(arr){
+  const seen=new Set();
+  return (arr||[]).filter(x=>{
+    const k=`${x.trip_id||""}|${x.time_display||""}`;
+    if(seen.has(k)) return false;
+    seen.add(k); return true;
+  });
+}
+
 async function renderDepartures(){
   const id=stopSelect.value; if(!id) return;
   const w=Math.max(1, Number(windowMin.value||60));
-  const r=await fetch(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${w}`); const j=await r.json();
-  stopList.innerHTML="";
-  (j.departures||[]).forEach(row=>{
-    const it=el("div","item");
-    it.innerHTML = `
-      <div class="pill">${row.route||"–"}</div>
-      <div class="dest">${row.destination||"–"}</div>
-      <div class="time mono ${row.is_due?'good blink':row.is_live?'good':''}">${row.is_due?t("due"):row.time_display}${delayBadge(row.delay_min)}</div>
-      <div class="op muted">bluestar</div>`;
-    it.onclick=()=>openTrip(row.trip_id,row.route,row.destination);
-    stopList.appendChild(it);
-  });
+  try{
+    const r=await apiFetch(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${w}`);
+    const j=await r.json();
+    const rows = dedupDepartures(j.departures||[]);
+    stopList.innerHTML="";
+    rows.forEach(row=>{
+      const it=el("div","item");
+      it.innerHTML = `
+        <div class="pill">${row.route||"–"}</div>
+        <div class="dest">${row.destination||"–"}</div>
+        <div class="time mono ${row.is_due?'good blink':row.is_live?'good':''}">
+          ${row.is_due?t("due"):row.time_display}${delayBadge(row.delay_min)}
+        </div>
+        <div class="op muted">bluestar</div>`;
+      it.onclick=()=>openTrip(row.trip_id,row.route,row.destination);
+      stopList.appendChild(it);
+    });
+    renderFavState();
+  }catch(e){
+    stopList.innerHTML = `<div class="muted">Failed to load departures.</div>`;
+  }
 }
 setInterval(renderDepartures, 20000);
 
@@ -234,34 +281,58 @@ setInterval(renderDepartures, 20000);
 function openTrip(tripId, route, headsign){
   if(!tripId) return;
   (async()=>{
-    const r=await fetch(`/api/trips/${encodeURIComponent(tripId)}`); const j=await r.json();
-    const wrap=document.createElement("div"); wrap.className="modal";
-    const box=document.createElement("div"); box.className="box";
-    box.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <div><strong>Trip</strong> · ${route||""} → ${headsign||""}</div><button class="btn" id="closeTrip">×</button></div>`;
-    const list=document.createElement("div"); list.className="list";
-    (j.stops||[]).forEach(s=>{ const row=document.createElement("div"); row.className="item";
-      const left=el("div","muted mono",s.time_display); if(s.is_past) left.style.opacity=.6;
-      const name=el("div","",s.stop_name); if(s.is_past) name.style.opacity=.6;
-      row.appendChild(el("div","pill", "")); row.appendChild(name); row.appendChild(left); row.appendChild(el("div","op muted","")); list.appendChild(row);});
-    box.appendChild(list); wrap.appendChild(box); document.body.appendChild(wrap);
-    document.getElementById("closeTrip").onclick=()=>document.body.removeChild(wrap);
+    try{
+      const r=await apiFetch(`/api/trips/${encodeURIComponent(tripId)}`); const j=await r.json();
+      const wrap=document.createElement("div"); wrap.className="modal";
+      const box=document.createElement("div"); box.className="box";
+      box.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div><strong>Trip</strong> · ${route||""} → ${headsign||""}</div><button class="btn" id="closeTrip">×</button></div>`;
+      const list=document.createElement("div"); list.className="list";
+      (j.stops||[]).forEach(s=>{
+        const row=document.createElement("div"); row.className="item";
+        const timeEl=el("div","muted mono",s.time_display);
+        const name=el("div","",s.stop_name);
+        if(s.is_past){ timeEl.style.opacity=.6; name.style.opacity=.6; }
+        row.appendChild(el("div","pill",""));
+        row.appendChild(name);
+        row.appendChild(timeEl);
+        row.appendChild(el("div","op muted",""));
+        list.appendChild(row);
+      });
+      box.appendChild(list); wrap.appendChild(box); document.body.appendChild(wrap);
+      document.getElementById("closeTrip").onclick=()=>document.body.removeChild(wrap);
+    }catch(e){ /* ignore */ }
   })();
 }
 
 /* ---------- map / route vehicles ---------- */
 let map, markers=[];
-function ensureMap(){ if(map) return; map = L.map('map',{zoomControl:true}).setView([50.9097,-1.4044],12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'Leaflet | © OpenStreetMap'}).addTo(map); }
-routeSearchBtn.onclick=async()=>{ const q=routeQuery.value.trim(); if(!q) return;
-  const r=await fetch(`/api/routes/search?q=${encodeURIComponent(q)}`); const items=await r.json(); setSel(routeSelect, items, "route","route"); if(items[0]){ routeSelect.value=items[0].route; renderVehicles(); } };
+function ensureMap(){
+  if(map) return;
+  map = L.map('map',{zoomControl:true}).setView([50.9097,-1.4044],12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'Leaflet | © OpenStreetMap'}).addTo(map);
+}
+routeSearchBtn.onclick=async()=>{
+  const q=routeQuery.value.trim(); if(!q) return;
+  const r=await apiFetch(`/api/routes/search?q=${encodeURIComponent(q)}`); const items=await r.json();
+  setSel(routeSelect, items, "route","route");
+  if(items[0]){ routeSelect.value=items[0].route; renderVehicles(); }
+};
 routeSelect.onchange=renderVehicles;
 async function renderVehicles(){
-  ensureMap(); markers.forEach(m=>m.remove()); markers=[];
+  ensureMap();
+  markers.forEach(m=>m.remove()); markers.length=0;
   const route=routeSelect.value; if(!route) return;
-  const r=await fetch(`/api/routes/${encodeURIComponent(route)}/vehicles`); const j=await r.json(); const vs=j.vehicles||[];
-  vs.forEach(v=>{ const m=L.marker([v.lat,v.lon]).addTo(map).bindPopup(`${v.label||""}`); markers.push(m); });
-  if(vs.length){ const g=L.featureGroup(markers); map.fitBounds(g.getBounds().pad(0.2)); }
+  try{
+    const r=await apiFetch(`/api/routes/${encodeURIComponent(route)}/vehicles`);
+    const j=await r.json(); const vs=j.vehicles||[];
+    vs.forEach(v=>{
+      if(!(Number.isFinite(v.lat) && Number.isFinite(v.lon))) return;
+      const m=L.marker([v.lat,v.lon]).addTo(map).bindPopup(`${v.label||""}`);
+      markers.push(m);
+    });
+    if(vs.length){ const g=L.featureGroup(markers); map.fitBounds(g.getBounds().pad(0.2)); }
+  }catch(e){ /* ignore */ }
 }
 
 /* ---------- favourites (localStorage) ---------- */
@@ -275,34 +346,4 @@ function renderFavState(){
 }
 favStopBtn.onclick=()=>{ const f=getFav(); const id=stopSelect.value; if(!id) return; const name=stopSelect.options[stopSelect.selectedIndex]?.text||id;
   const i=f.stops.findIndex(s=>s.id===id); if(i>=0) f.stops.splice(i,1); else f.stops.push({id,name}); setFav(f); };
-favRouteBtn.onclick=()=>{ const f=getFav(); const id=routeSelect.value; if(!id) return; const i=f.routes.findIndex(r=>r.id===id); if(i>=0) f.routes.splice(i,1); else f.routes.push({id}); setFav(f); };
-function renderFavs(){
-  const f=getFav(); favStops.innerHTML=""; favRoutes.innerHTML="";
-  f.stops.forEach(s=>{ const it=el("div","item"); it.innerHTML=`<div class="pill">★</div><div>${s.name}</div><div class="mono">Stop</div><div class="op"><button class="btn ghost">Open</button></div>`;
-    it.querySelector("button").onclick=()=>{ showStop(); stopQuery.value=""; stopSelect.innerHTML=`<option value="${s.id}">${s.name}</option>`; stopSelect.value=s.id; selectedStopLbl.textContent=`${t("chosenStop")} ${s.name}`; renderDepartures(); };
-    favStops.appendChild(it);
-  });
-  f.routes.forEach(r=>{ const it=el("div","item"); it.innerHTML=`<div class="pill">★</div><div>${r.id}</div><div class="mono">Route</div><div class="op"><button class="btn ghost">Open</button></div>`;
-    it.querySelector("button").onclick=()=>{ showRoute(); routeQuery.value=""; routeSelect.innerHTML=`<option value="${r.id}">${r.id}</option>`; routeSelect.value=r.id; renderVehicles(); };
-    favRoutes.appendChild(it);
-  });
-}
-setInterval(renderFavState, 2000);
-
-/* ---------- board mode & fullscreen ---------- */
-let board=false, fs=false;
-function applyBoard(){
-  if(board){ wrap.classList.add("board"); }
-  else { wrap.classList.remove("board"); }
-}
-toggleBoard.onclick=()=>{ board=!board; applyBoard(); };
-toggleFS.onclick=()=>{ fs=!fs; if(fs){ wrap.classList.add("fs"); } else { wrap.classList.remove("fs"); } };
-
-/* ---------- initial ---------- */
-(function init(){
-  refreshLbl.textContent="Refresh every 20 s";
-  showStop(); renderFavs(); renderFavState(); applyBoard();
-})();
-</script>
-</body>
-</html>
+favRouteBtn.onclick=()=>{ const f=getFav(); const
