@@ -2,4 +2,4 @@ fastapi==0.112.2
 uvicorn[standard]==0.30.6
 requests==2.32.3
 pytz==2024.1
-python-multipart==0.0.20
+python-multipart==0.0.9
