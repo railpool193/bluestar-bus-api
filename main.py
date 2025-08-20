@@ -512,4 +512,4 @@ async def api_trip_details(trip_id: str):
     Trip részletek: GTFS megállólánc (ha a feed nem ad tripet).
     A kliens 24h formázást és színezést intézi.
     """
-    trip_stops = _read_json(DATA_DIR / "trip_stops.jso
+    trip_stops = _read_json(DATA_DIR / "trip_stops.json", {})
