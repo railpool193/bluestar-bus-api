@@ -1,4 +1,4 @@
-import io, json, csv, zipfile, time, re
+import io, json, csv, zipfile, time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from collections import defaultdict, OrderedDict
@@ -9,6 +9,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 import httpx, xmltodict
+from datetime import datetime
+from zoneinfo import ZoneInfo  # Python 3.9+
 
 app = FastAPI(title="Bluestar Bus – API", version="3.2.0")
 
@@ -56,7 +58,7 @@ def _find_member(zf: zipfile.ZipFile, name: str) -> Optional[str]:
 
 def _hhmm_to_min(t: str) -> int:
     try:
-        h, m, *rest = t.split(":")
+        h, m, *_ = t.split(":")
         return int(h) * 60 + int(m)
     except:
         return 0
@@ -70,27 +72,12 @@ def _get_live_cfg() -> Dict[str, Any]:
 def _set_live_cfg(cfg: Dict[str, Any]):
     _write_json(LIVE_CFG_PATH, cfg or {"feed_url": ""})
 
-def _norm_route(val: Any) -> str:
-    """
-    Normalizált vonalszám összehasonlításhoz:
-    - kis/nagybetű kioltás
-    - csak betű+szám (pl. '17 ', '  017', 'R1', 'H2') => '17', '17', 'R1', 'H2'
-    """
-    s = str(val or "").strip().upper()
-    s = re.sub(r"[^A-Z0-9]", "", s)
-    # távolítsd el a bal oldali nullákat szám-only esetén
-    if re.fullmatch(r"\d+", s):
-        s = str(int(s))  # '017' -> '17'
-    return s
-
 class BODSAdapter:
     """
-    Egyszerű kliens a BODS datafeedhez (VehicleMonitoring).
-    Várja, hogy live_config.json-ben legyen: {"feed_url": "https://.../api/v1/datafeed/.../?api_key=..."}
-    A feed lehet XML vagy JSON; mindkettőt kezeli.
+    SIRI-VM datafeed olvasó. A /api/live/config-ban megadott URL-ből (api_key-el) dolgozik.
     """
     def __init__(self):
-        self.timeout = httpx.Timeout(12.0)
+        self.timeout = httpx.Timeout(10.0)
         self.client = httpx.AsyncClient(timeout=self.timeout)
 
     async def is_available(self) -> bool:
@@ -101,13 +88,9 @@ class BODSAdapter:
         if not url:
             return None
         try:
-            r = await self.client.get(
-                url,
-                headers={"Cache-Control": "no-cache"},
-                params={"_": int(time.time())}
-            )
+            r = await self.client.get(url, headers={"Cache-Control":"no-cache"}, params={"_": int(time.time())})
             r.raise_for_status()
-            ct = r.headers.get("content-type", "").lower()
+            ct = r.headers.get("content-type","").lower()
             if "json" in ct or r.text.strip().startswith("{"):
                 return r.json()
             return xmltodict.parse(r.text)
@@ -121,28 +104,21 @@ class BODSAdapter:
         return x if isinstance(x, list) else [x]
 
     def _parse_vehicles(self, raw) -> List[Dict[str, Any]]:
-        """
-        Visszaad: [{lat, lon, route, bearing, reg, trip_id, line_ref, dest}]
-        """
         out: List[Dict[str, Any]] = []
 
-        # --- JSON (SIRI-VM)
         def pick_json(d):
             vs = []
             try:
-                vm = d.get("Siri", {}).get("ServiceDelivery", {}).get("VehicleMonitoringDelivery", [])
-                if isinstance(vm, dict):
-                    vm = [vm]
+                vm = d.get("Siri",{}).get("ServiceDelivery",{}).get("VehicleMonitoringDelivery",[])
+                if isinstance(vm, dict): vm=[vm]
                 for deliv in vm:
-                    for mvj in deliv.get("VehicleActivity", []) or []:
-                        mj = mvj.get("MonitoredVehicleJourney", {}) or {}
-                        loc = mj.get("VehicleLocation", {}) or {}
-                        line = (mj.get("LineRef") or mj.get("PublishedLineName") or "")
+                    for mvj in deliv.get("VehicleActivity",[]) or []:
+                        mj = mvj.get("MonitoredVehicleJourney",{}) or {}
+                        loc = mj.get("VehicleLocation",{}) or {}
                         vs.append({
-                            "lat": float(loc.get("Latitude", 0) or 0),
-                            "lon": float(loc.get("Longitude", 0) or 0),
-                            "route": line,
-                            "route_norm": _norm_route(line),
+                            "lat": float(loc.get("Latitude",0) or 0),
+                            "lon": float(loc.get("Longitude",0) or 0),
+                            "route": (mj.get("LineRef") or mj.get("PublishedLineName") or ""),
                             "bearing": mj.get("Bearing"),
                             "reg": mj.get("VehicleRef") or mj.get("VehicleRegistrationMark") or "",
                             "trip_id": mj.get("DatedVehicleJourneyRef") or mj.get("VehicleJourneyRef") or "",
@@ -153,34 +129,29 @@ class BODSAdapter:
                 pass
             return vs
 
-        # --- XML (SIRI-VM → xmltodict)
         def pick_xml(d):
-            def getk(obj, k):
-                v = obj.get(k)
-                if isinstance(v, dict) and "#text" in v:
-                    return v["#text"]
-                return v
-
             vs = []
             try:
-                siri = d.get("Siri", {})
-                sd = siri.get("ServiceDelivery", {})
-                vmd = sd.get("VehicleMonitoringDelivery", {}) or {}
+                siri = d.get("Siri",{})
+                sd = siri.get("ServiceDelivery",{})
+                vmd = sd.get("VehicleMonitoringDelivery",{})
                 vas = BODSAdapter._as_list(vmd.get("VehicleActivity"))
                 for mvj in vas:
-                    mj = mvj.get("MonitoredVehicleJourney", {}) or {}
-                    loc = mj.get("VehicleLocation", {}) or {}
-                    line = getk(mj, "LineRef") or getk(mj, "PublishedLineName") or ""
+                    mj = mvj.get("MonitoredVehicleJourney",{}) or {}
+                    loc = mj.get("VehicleLocation",{}) or {}
+                    def getk(obj, k): 
+                        v = obj.get(k)
+                        if isinstance(v, dict) and "#text" in v: return v["#text"]
+                        return v
                     vs.append({
-                        "lat": float(getk(loc, "Latitude") or 0),
-                        "lon": float(getk(loc, "Longitude") or 0),
-                        "route": line,
-                        "route_norm": _norm_route(line),
-                        "bearing": getk(mj, "Bearing"),
-                        "reg": getk(mj, "VehicleRef") or getk(mj, "VehicleRegistrationMark") or "",
-                        "trip_id": getk(mj, "DatedVehicleJourneyRef") or getk(mj, "VehicleJourneyRef") or "",
-                        "line_ref": getk(mj, "LineRef") or "",
-                        "dest": getk(mj, "DestinationName") or "",
+                        "lat": float(getk(loc,"Latitude") or 0),
+                        "lon": float(getk(loc,"Longitude") or 0),
+                        "route": getk(mj,"LineRef") or getk(mj,"PublishedLineName") or "",
+                        "bearing": getk(mj,"Bearing"),
+                        "reg": getk(mj,"VehicleRef") or getk(mj,"VehicleRegistrationMark") or "",
+                        "trip_id": getk(mj,"DatedVehicleJourneyRef") or getk(mj,"VehicleJourneyRef") or "",
+                        "line_ref": getk(mj,"LineRef") or "",
+                        "dest": getk(mj,"DestinationName") or "",
                     })
             except Exception:
                 pass
@@ -200,17 +171,10 @@ class BODSAdapter:
 
     async def vehicles_by_route(self, route_no: str) -> List[Dict[str, Any]]:
         vs = await self.vehicles()
-        rn = _norm_route(route_no)
-        res = [v for v in vs if v.get("route_norm") == rn]
-        # dedupe reg+trip
-        seen=set(); out=[]
-        for v in res:
-            key=(v.get("reg",""), v.get("trip_id",""))
-            if key in seen: continue
-            seen.add(key); out.append(v)
-        return out
+        route_no = str(route_no).strip().lower()
+        def norm(x): return str(x or "").strip().lower()
+        return [v for v in vs if norm(v.get("route")) == route_no or norm(v.get("line_ref")) == route_no]
 
-    # Ezekhez a feed általában nem ad külön adatot – visszaadunk üreset.
     async def stop_next_departures(self, stop_id: str, minutes: int) -> List[Dict[str, Any]]:
         return []
     async def trip_details(self, trip_id: str) -> Dict[str, Any]:
@@ -227,7 +191,6 @@ def _build_from_zip_bytes(zip_bytes: bytes) -> None:
         if missing:
             raise ValueError(f"Hiányzó GTFS fájlok: {', '.join(missing)}")
 
-        # routes
         routes: Dict[str, Dict[str, str]] = {}
         with zf.open(members["routes.txt"]) as f:
             for row in csv.DictReader(io.TextIOWrapper(f, "utf-8-sig")):
@@ -236,7 +199,6 @@ def _build_from_zip_bytes(zip_bytes: bytes) -> None:
                     "long": (row.get("route_long_name") or "").strip(),
                 }
 
-        # trips
         trips: Dict[str, Dict[str, str]] = {}
         with zf.open(members["trips.txt"]) as f:
             for row in csv.DictReader(io.TextIOWrapper(f, "utf-8-sig")):
@@ -246,7 +208,6 @@ def _build_from_zip_bytes(zip_bytes: bytes) -> None:
                     "headsign": (row.get("trip_headsign") or "").strip(),
                 }
 
-        # stops.json
         stops: List[Dict[str, str]] = []
         with zf.open(members["stops.txt"]) as f:
             for row in csv.DictReader(io.TextIOWrapper(f, "utf-8-sig")):
@@ -257,15 +218,13 @@ def _build_from_zip_bytes(zip_bytes: bytes) -> None:
                 })
         _write_json(DATA_DIR / "stops.json", stops)
 
-        # schedule.json  (stop_id -> list of departures)
         schedule: Dict[str, List[Dict[str, str]]] = defaultdict(list)
-        # trip_stops.json (trip_id -> sequence list)
         trip_stops: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
         with zf.open(members["stop_times.txt"]) as f:
             for row in csv.DictReader(io.TextIOWrapper(f, "utf-8-sig")):
                 tid = row["trip_id"]
-                t = (row.get("departure_time") or "").strip()  # csak indulás!
+                t = (row.get("departure_time") or "").strip()
                 if not t:
                     continue
                 trip = trips.get(tid)
@@ -346,16 +305,17 @@ async def api_stops_search(q: str = Query(..., min_length=1), limit: int = 20):
 @app.get("/api/stops/{stop_id}/next_departures")
 async def api_next_departures(stop_id: str, minutes: int = Query(60, ge=5, le=240), live: bool = True):
     """
-    Következő indulások a megadott időablakban (perc).
-    Csak indulási időket használunk GTFS-ből. LIVE jelző akkor lesz, ha látunk
-    járművet ugyanazon a vonalon (pontos ETA nélkül).
+    Következő indulások a megadott időablakban (perc) – UK idő szerint.
+    Múltbeli indulások kizárva; LIVE feed alapján csak jelölés történik.
     """
     schedule = _read_json(DATA_DIR / "schedule.json", {})
     base = schedule.get(stop_id, [])
 
-    now = time.localtime()
-    now_min = now.tm_hour * 60 + now.tm_min
+    # UK idő (Europe/London)
+    now_uk = datetime.now(ZoneInfo("Europe/London"))
+    now_min = now_uk.hour * 60 + now_uk.minute
 
+    # GTFS alaplista az ablakra (múlt kizárva, 'épp most' ~ 0 perc nem kerül be)
     upcoming: List[Dict[str, Any]] = []
     for d in base:
         t = (d.get("time") or "").strip()
@@ -363,7 +323,7 @@ async def api_next_departures(stop_id: str, minutes: int = Query(60, ge=5, le=24
             continue
         dep_min = _hhmm_to_min(t) % (24 * 60)
         in_min = (dep_min - now_min) % (24 * 60)
-        if in_min <= minutes:
+        if 0 < in_min <= minutes:
             upcoming.append({
                 "route": d.get("route"),
                 "destination": d.get("destination"),
@@ -375,6 +335,7 @@ async def api_next_departures(stop_id: str, minutes: int = Query(60, ge=5, le=24
                 "live": False
             })
 
+    # Deduplikálás (route+dest+time)
     def k(it): return (str(it.get("route") or ""), str(it.get("destination") or ""), str(it.get("time") or ""))
     dedup = OrderedDict()
     for it in upcoming:
@@ -382,30 +343,26 @@ async def api_next_departures(stop_id: str, minutes: int = Query(60, ge=5, le=24
             dedup[k(it)] = it
     upcoming = list(dedup.values())
 
-    # LIVE jelzés: ha fut a vonalon jármű
+    # LIVE jelzés: ha fut a vonalon jármű (nincs ETA, csak flag)
     if live and await siri_live.is_available():
         try:
             all_live = await siri_live.vehicles()
+            def norm(x): return str(x or "").strip().lower()
             live_routes = defaultdict(list)
             for v in all_live:
-                live_routes[v.get("route_norm")].append(v)
+                live_routes[norm(v.get("route") or v.get("line_ref"))].append(v)
             for it in upcoming:
-                rn = _norm_route(it.get("route"))
-                if live_routes.get(rn):
+                lr = live_routes.get(norm(it.get("route")))
+                if lr:
                     it["live"] = True
-                    it["vehicle_reg"] = live_routes[rn][0].get("reg")
         except Exception:
             pass
 
-    upcoming.sort(key=lambda x: (not x["live"], x["time"]))
+    upcoming.sort(key=lambda x: (x["time"]))
     return upcoming[:80]
 
 @app.get("/api/trips/{trip_id}")
 async def api_trip_details(trip_id: str):
-    """
-    Trip részletek: GTFS megállólánc (ha a feed nem ad tripet).
-    Visszaadunk egy egyszerű 'live_on_route' jelzőt is, ha a vonalon látunk járművet.
-    """
     trip_stops = _read_json(DATA_DIR / "trip_stops.json", {})
     stops_idx = { s["stop_id"]: s for s in _read_json(DATA_DIR / "stops.json", []) }
     seq = trip_stops.get(trip_id, [])
@@ -417,37 +374,9 @@ async def api_trip_details(trip_id: str):
             "stop_id": r.get("stop_id"),
             "stop_name": (st or {}).get("stop_name") or r.get("stop_id"),
             "eta_min": None,
-            "delay_min": None,
-            "live": False
+            "delay_min": None
         })
-
-    # Próbáljuk meg kideríteni a trip vonalszámát a schedule-ből
-    route_name: Optional[str] = None
-    schedule = _read_json(DATA_DIR / "schedule.json", {})
-    for stop_list in schedule.values():
-        for it in stop_list:
-            if it.get("trip_id") == trip_id:
-                route_name = it.get("route")
-                break
-        if route_name:
-            break
-
-    live_on_route = False
-    if route_name and await siri_live.is_available():
-        try:
-            vs = await siri_live.vehicles_by_route(route_name)
-            live_on_route = len(vs) > 0
-        except Exception:
-            live_on_route = False
-
-    return {
-        "trip_id": trip_id,
-        "route": route_name,
-        "headsign": None,
-        "vehicle": None,
-        "live_on_route": live_on_route,
-        "calls": calls
-    }
+    return {"trip_id": trip_id, "route": None, "headsign": None, "vehicle": None, "calls": calls}
 
 @app.get("/api/routes/search")
 async def api_route_search(q: str = Query("", description="Járatszám/név"), limit: int = 30):
@@ -457,11 +386,7 @@ async def api_route_search(q: str = Query("", description="Járatszám/név"), l
         for it in lst:
             if it.get("route"):
                 routes.add(it["route"])
-    qn = _norm_route(q)
-    res = sorted(
-        [r for r in routes if qn in _norm_route(r)],
-        key=lambda x: (len(str(x)), str(x))
-    )
+    res = sorted([r for r in routes if q.strip().lower() in str(r).lower()], key=lambda x: (len(str(x)), str(x)))
     return [{"route": r} for r in res[:limit]]
 
 @app.get("/api/routes/{route}/vehicles")
