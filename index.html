@@ -1,17 +1,18 @@
 <!doctype html>
-<html lang="hu">
+<html lang="en">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Bluestar Bus – megálló & járat kereső</title>
+<title>Bluestar Bus – stop & route finder</title>
 <link rel="preconnect" href="https://unpkg.com">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root{--bg:#0e1220;--card:#141a2b;--muted:#a7b0c0;--fg:#eaf0ff;--pill:#2a3350;--accent:#6c82ff;--live:#18c27e;}
   html,body{margin:0;background:var(--bg);color:var(--fg);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial;}
-  .wrap{max-width:980px;margin:30px auto;padding:0 16px;}
-  h1{font-weight:800;letter-spacing:.5px;display:flex;gap:10px;align-items:center}
+  .wrap{max-width:980px;margin:24px auto;padding:0 16px;}
+  h1{font-weight:800;letter-spacing:.3px;margin:0 0 8px 0}
+  .row{display:flex;gap:14px;align-items:end}
   .tabs{display:flex;gap:10px;margin:6px 0 12px}
   .tab{padding:10px 16px;border-radius:999px;background:#1c2440;color:#b9c4da;cursor:pointer;font-weight:600}
   .tab.active{background:var(--accent);color:#fff}
@@ -19,89 +20,88 @@
   label{display:block;font-size:14px;color:#c9d2e4;margin:4px 0}
   input,select{width:100%;background:#0f1430;border:1px solid #223;outline:none;border-radius:10px;color:#fff;padding:14px 12px;font-size:16px}
   button{background:var(--accent);border:none;border-radius:12px;padding:12px 20px;font-weight:700;color:#fff;cursor:pointer}
-  .row{display:flex;gap:14px;align-items:end}
   .muted{color:var(--muted)}
-  .th{opacity:.85;font-weight:700;letter-spacing:.3px}
-  .grid{margin-top:12px}
-  .tr{display:grid;grid-template-columns:64px 1fr 120px;gap:10px;align-items:center;padding:12px;border-radius:12px;background:#0f1430;margin:8px 0;cursor:pointer}
-  .tr:hover{background:#10183a}
+  .small{font-size:13px}
+  .hdr{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
   .pill{width:42px;height:42px;border-radius:50%;background:var(--pill);display:flex;align-items:center;justify-content:center;font-weight:800}
+  .grid{margin-top:12px}
+  .th{opacity:.85;font-weight:700;letter-spacing:.3px}
+  .tr{display:grid;grid-template-columns:64px 1fr 130px;gap:10px;align-items:center;padding:12px;border-radius:12px;background:#0f1430;margin:8px 0;cursor:pointer}
+  .tr:hover{background:#10183a}
   .time{font-weight:800}
   .due{color:var(--live);font-weight:800;animation:blink 1s infinite}
-  @keyframes blink {0%,49%{opacity:1}50%,100%{opacity:.2}}
-  .hdr{display:flex;gap:12px;flex-wrap:wrap;justify-content:space-between;align-items:center;margin-bottom:10px}
-  .badge{font-size:12px;padding:3px 9px;border-radius:999px;background:#0f1430;color:#b7c0d4}
-  .small{font-size:13px}
+  @keyframes blink {0%,49%{opacity:1}50%,100%{opacity:.25}}
   #map{height:420px;border-radius:16px;overflow:hidden}
   .footer{margin-top:12px;color:#8e97ab}
-  .link{color:#9fb3ff;text-decoration:none}
+  .lang{background:#1c2440;border:1px solid #223;border-radius:10px;color:#fff;padding:10px 12px}
   /* modal */
-  .modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:50}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:50}
   .modal .box{background:#0f1430;border:1px solid #233055;border-radius:16px;max-width:760px;width:92%;max-height:80vh;overflow:auto}
   .modal .hd{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #222845}
   .modal .bd{padding:12px 16px}
   .x{cursor:pointer;background:#222a46;border:none;color:#b9c4da;border-radius:10px;padding:6px 10px}
-  .rowbar{display:flex;gap:10px;align-items:center}
-  .clock{font-variant-numeric:tabular-nums;font-weight:800}
+  .call{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #222845}
+  .past{color:#818aa3}
+  .future.live{color:#18c27e;font-weight:700}
+  .future.sched{color:#eaf0ff}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="hdr">
-    <h1>🚌 <span data-i18n="title">Bluestar Bus – megálló & járat kereső</span></h1>
-    <div class="rowbar">
-      <div class="muted small"><span data-i18n="ukt">UK time</span>: <span id="ukclock" class="clock">–</span></div>
-      <div class="muted small"><span data-i18n="refresh">Frissítés</span>: <span id="tick">–</span></div>
-      <select id="langSel" style="width:auto">
-        <option value="hu">HU</option>
-        <option value="en">EN</option>
-        <option value="de">DE</option>
+    <div>
+      <h1>🚌 <span data-t="title"></span></h1>
+      <div class="small muted"><span data-t="uk_time"></span>: <b id="ukClock">--:--:--</b> · <span data-t="refresh"></span>: <span id="tick">–</span></div>
+    </div>
+    <div>
+      <select id="langSel" class="lang">
+        <option value="EN">EN</option>
+        <option value="DE">DE</option>
+        <option value="HU">HU</option>
       </select>
     </div>
   </div>
 
   <div class="tabs">
-    <div id="tabStop" class="tab active" data-i18n="tab_stop">Megálló</div>
-    <div id="tabRoute" class="tab" data-i18n="tab_route">Vonal</div>
+    <div id="tabStop" class="tab active" data-t="tab_stop"></div>
+    <div id="tabRoute" class="tab" data-t="tab_route"></div>
   </div>
 
   <!-- STOP CARD -->
   <div id="cardStop" class="card">
     <div class="row">
       <div style="flex:2">
-        <label data-i18n="lbl_stop">Megálló név</label>
-        <input id="qStop" placeholder="pl. Albion, Vincent, ...">
+        <label data-t="stop_name"></label>
+        <input id="qStop" placeholder="Albion, Vincent, ...">
       </div>
       <div style="flex:1">
-        <label data-i18n="lbl_minutes">Időablak (perc)</label>
-        <input id="minutes" type="number" min="5" max="240" value="60">
+        <label data-t="window_mins"></label>
+        <input id="minutes" type="number" min="5" max="480" value="60">
       </div>
       <div style="flex:0">
-        <button id="btnStop" data-i18n="btn_search">Keresés</button>
+        <button id="btnStop" data-t="search"></button>
       </div>
     </div>
 
     <div style="margin-top:12px">
-      <label data-i18n="lbl_hits_stop">Találatok – válassz megállót</label>
+      <label data-t="results_choose_stop"></label>
       <select id="selStops"></select>
     </div>
 
     <div class="hdr" style="margin-top:12px">
-      <div class="small"><span data-i18n="chosen_stop">Választott megálló</span>: <b id="selStopLbl">–</b></div>
-      <div class="small"><span data-i18n="auto20">Frissítés 20 mp-enként</span></div>
+      <div class="small"><span data-t="selected_stop"></span>: <b id="selStopLbl">–</b></div>
+      <div class="small"><span data-t="refresh_every"></span> 20 s</div>
     </div>
 
     <div class="grid">
       <div class="tr th" style="cursor:default">
-        <div data-i18n="col_route">Járat</div>
-        <div data-i18n="col_dest">Cél</div>
-        <div data-i18n="col_dep">Indulás</div>
+        <div data-t="col_route"></div><div data-t="col_dest"></div><div data-t="col_depart"></div>
       </div>
       <div id="rows"></div>
     </div>
 
     <div class="footer small">
-      Build: <span id="build">-</span> · <span id="cache" data-i18n="cache_on">Cache-bypass aktív</span>
+      Build: <span id="build">-</span> · <span id="cache">Cache-bypass</span>
     </div>
   </div>
 
@@ -109,29 +109,27 @@
   <div id="cardRoute" class="card" style="display:none">
     <div class="row">
       <div style="flex:1">
-        <label data-i18n="lbl_route">Vonal száma</label>
-        <input id="qRoute" placeholder="pl. 9, 17, 18...">
+        <label data-t="route_no"></label>
+        <input id="qRoute" placeholder="9, 17, 18...">
       </div>
       <div style="flex:0">
-        <button id="btnRoute" data-i18n="btn_search">Keresés</button>
+        <button id="btnRoute" data-t="search"></button>
       </div>
     </div>
 
     <div style="margin-top:12px">
-      <label data-i18n="lbl_hits_route">Találatok – válassz vonalat</label>
+      <label data-t="results_choose_route"></label>
       <select id="selRoute"></select>
     </div>
 
     <div id="map" style="margin-top:12px"></div>
     <div id="vehList" class="small" style="margin-top:10px"></div>
 
-    <div class="footer small" data-i18n="no_veh_hint">
-      Ha nincs élő jármű, a térkép üres marad.
-    </div>
+    <div class="footer small" data-t="map_hint"></div>
   </div>
 
   <div style="margin-top:16px" class="small muted">
-    <span data-i18n="live_cfg_hint">Élő feed beállítása:</span> <code>/api/live/config</code> – <span data-i18n="live_cfg_hint2">a BODS URL-t (api_key-kel) POST-olhatod.</span>
+    <span data-t="live_cfg_hint"></span>: <code>/api/live/config</code>
   </div>
 </div>
 
@@ -139,8 +137,8 @@
 <div id="tripModal" class="modal">
   <div class="box">
     <div class="hd">
-      <div><b data-i18n="trip_title">Járat részletei</b> · <span id="tripIdLbl" class="muted"></span></div>
-      <button class="x" onclick="hideTrip()" data-i18n="close">Bezár</button>
+      <div><b data-t="trip_details"></b> · <span id="tripIdLbl" class="muted"></span></div>
+      <button class="x" onclick="hideTrip()" data-t="close"></button>
     </div>
     <div class="bd">
       <div id="tripBody" class="small"></div>
@@ -149,107 +147,134 @@
 </div>
 
 <script>
-const i18n = {
-  hu:{
-    title:"Bluestar Bus – megálló & járat kereső",
-    ukt:"UK idő",
-    refresh:"Frissítés",
-    tab_stop:"Megálló", tab_route:"Vonal",
-    lbl_stop:"Megálló név", lbl_minutes:"Időablak (perc)", btn_search:"Keresés",
-    lbl_hits_stop:"Találatok – válassz megállót",
-    chosen_stop:"Választott megálló", auto20:"Frissítés 20 mp-enként",
-    col_route:"Járat", col_dest:"Cél", col_dep:"Indulás",
-    cache_on:"Cache-bypass aktív",
-    lbl_route:"Vonal száma", lbl_hits_route:"Találatok – válassz vonalat",
-    no_veh_hint:"Ha nincs élő jármű, a térkép üres marad.",
-    live_cfg_hint:"Élő feed beállítása:", live_cfg_hint2:"a BODS URL-t (api_key-kel) POST-olhatod.",
-    trip_title:"Járat részletei", close:"Bezár",
-    no_data:"Nincs adat erre az időablakra.", loading:"Betöltés…", err:"Hiba történt.",
-    no_trip:"Nincs részlet ehhez a járathoz."
+// -------- i18n --------
+const I18N = {
+  EN: {
+    title: "Bluestar Bus — stop & route finder",
+    uk_time: "UK time",
+    refresh: "Refresh in",
+    tab_stop: "Stop",
+    tab_route: "Route",
+    stop_name: "Stop name",
+    window_mins: "Time window (mins)",
+    search: "Search",
+    results_choose_stop: "Results — choose a stop",
+    selected_stop: "Selected stop",
+    refresh_every: "Refresh every",
+    col_route: "Route",
+    col_dest: "Destination",
+    col_depart: "Departure",
+    route_no: "Route number",
+    results_choose_route: "Results — choose a route",
+    map_hint: "If no live vehicles are available, the map stays empty.",
+    live_cfg_hint: "Set live feed",
+    trip_details: "Trip details",
+    close: "Close",
+    no_data: "No data for this window.",
+    no_trip: "No details for this trip.",
+    vehicles_for: (r)=>`Vehicles on route ${r}`,
+    uk: "UK"
   },
-  en:{
-    title:"Bluestar Bus – stop & route finder",
-    ukt:"UK time",
-    refresh:"Refresh",
-    tab_stop:"Stop", tab_route:"Route",
-    lbl_stop:"Stop name", lbl_minutes:"Window (min)", btn_search:"Search",
-    lbl_hits_stop:"Results – choose a stop",
-    chosen_stop:"Selected stop", auto20:"Refresh every 20 s",
-    col_route:"Route", col_dest:"Destination", col_dep:"Departure",
-    cache_on:"Cache-bypass active",
-    lbl_route:"Route number", lbl_hits_route:"Results – choose a route",
-    no_veh_hint:"If there is no live vehicle, the map will be empty.",
-    live_cfg_hint:"Set live feed:", live_cfg_hint2:"POST the BODS URL (with api_key).",
-    trip_title:"Trip details", close:"Close",
-    no_data:"No data in this window.", loading:"Loading…", err:"Something went wrong.",
-    no_trip:"No details for this trip."
+  HU: {
+    title: "Bluestar Bus – megálló & járat kereső",
+    uk_time: "UK idő",
+    refresh: "Frissítés",
+    tab_stop: "Megálló",
+    tab_route: "Vonal",
+    stop_name: "Megálló név",
+    window_mins: "Időablak (perc)",
+    search: "Keresés",
+    results_choose_stop: "Találatok – válassz megállót",
+    selected_stop: "Választott megálló",
+    refresh_every: "Frissítés",
+    col_route: "Járat",
+    col_dest: "Cél",
+    col_depart: "Indulás",
+    route_no: "Vonal száma",
+    results_choose_route: "Találatok – válassz vonalat",
+    map_hint: "Ha nincs élő jármű, a térkép üres marad.",
+    live_cfg_hint: "Élő feed beállítása",
+    trip_details: "Járat részletei",
+    close: "Bezár",
+    no_data: "Nincs adat erre az időablakra.",
+    no_trip: "Nincs részlet ehhez a járathoz.",
+    vehicles_for: (r)=>`Járművek a(z) ${r} vonalon`,
+    uk: "UK"
   },
-  de:{
-    title:"Bluestar Bus – Haltestellen- & Linien-Suche",
-    ukt:"UK-Zeit",
-    refresh:"Aktualisierung",
-    tab_stop:"Haltestelle", tab_route:"Linie",
-    lbl_stop:"Haltestellenname", lbl_minutes:"Zeitfenster (Min.)", btn_search:"Suchen",
-    lbl_hits_stop:"Treffer – wähle eine Haltestelle",
-    chosen_stop:"Gewählte Haltestelle", auto20:"Alle 20 s aktualisieren",
-    col_route:"Linie", col_dest:"Ziel", col_dep:"Abfahrt",
-    cache_on:"Cache-Bypass aktiv",
-    lbl_route:"Liniennummer", lbl_hits_route:"Treffer – wähle eine Linie",
-    no_veh_hint:"Wenn kein Live-Fahrzeug vorhanden ist, bleibt die Karte leer.",
-    live_cfg_hint:"Live-Feed einstellen:", live_cfg_hint2:"BODS-URL (mit api_key) per POST senden.",
-    trip_title:"Fahrtdetails", close:"Schließen",
-    no_data:"Keine Daten in diesem Zeitfenster.", loading:"Laden…", err:"Fehler ist aufgetreten.",
-    no_trip:"Keine Details für diese Fahrt."
+  DE: {
+    title: "Bluestar Bus – Haltestellen & Linien",
+    uk_time: "UK-Zeit",
+    refresh: "Aktualisierung in",
+    tab_stop: "Haltestelle",
+    tab_route: "Linie",
+    stop_name: "Haltestellenname",
+    window_mins: "Zeitfenster (Min.)",
+    search: "Suchen",
+    results_choose_stop: "Ergebnisse – Haltestelle wählen",
+    selected_stop: "Ausgewählte Haltestelle",
+    refresh_every: "Alle",
+    col_route: "Linie",
+    col_dest: "Ziel",
+    col_depart: "Abfahrt",
+    route_no: "Liniennummer",
+    results_choose_route: "Ergebnisse – Linie wählen",
+    map_hint: "Wenn keine Live-Fahrzeuge vorhanden sind, bleibt die Karte leer.",
+    live_cfg_hint: "Live-Feed einstellen",
+    trip_details: "Fahrt-Details",
+    close: "Schließen",
+    no_data: "Keine Daten für dieses Fenster.",
+    no_trip: "Keine Details zu dieser Fahrt.",
+    vehicles_for: (r)=>`Fahrzeuge auf Linie ${r}`,
+    uk: "UK"
   }
 };
 
+function autodetectLang(){
+  const saved = localStorage.getItem("lang");
+  if(saved && I18N[saved]) return saved;
+  const n = navigator.language || "en";
+  if(n.toLowerCase().startsWith("hu")) return "HU";
+  if(n.toLowerCase().startsWith("de")) return "DE";
+  return "EN";
+}
+let LANG = autodetectLang();
+const $ = (s)=>document.querySelector(s);
+function applyI18N(){
+  const dict = I18N[LANG];
+  $("[data-t='title']").textContent = dict.title;
+  $("[data-t='uk_time']").textContent = dict.uk_time;
+  $("[data-t='refresh']").textContent = dict.refresh;
+  $("[data-t='tab_stop']").textContent = dict.tab_stop;
+  $("[data-t='tab_route']").textContent = dict.tab_route;
+  $("[data-t='stop_name']").textContent = dict.stop_name;
+  $("[data-t='window_mins']").textContent = dict.window_mins;
+  $("[data-t='search']").textContent = dict.search;
+  $("[data-t='results_choose_stop']").textContent = dict.results_choose_stop;
+  $("[data-t='selected_stop']").textContent = dict.selected_stop;
+  $("[data-t='refresh_every']").textContent = dict.refresh_every;
+  $("[data-t='col_route']").textContent = dict.col_route;
+  $("[data-t='col_dest']").textContent = dict.col_dest;
+  $("[data-t='col_depart']").textContent = dict.col_depart;
+  $("[data-t='route_no']").textContent = dict.route_no;
+  $("[data-t='results_choose_route']").textContent = dict.results_choose_route;
+  $("[data-t='map_hint']").textContent = dict.map_hint;
+  $("[data-t='live_cfg_hint']").textContent = dict.live_cfg_hint;
+  $("[data-t='trip_details']").textContent = dict.trip_details;
+  $("[data-t='close']").textContent = dict.close;
+  $("#langSel").value = LANG;
+}
+$("#langSel").addEventListener("change", ()=>{
+  LANG = $("#langSel").value;
+  localStorage.setItem("lang", LANG);
+  applyI18N();
+});
+applyI18N();
+
+// -------- állapot --------
 const state = {
   stopId:null, minutes:60, route:null, map:null, markers:[],
-  lastUpdate:null, active:"stop",
-  lang: localStorage.getItem('lang') || 'hu'
-}
-const qs = s=>document.querySelector(s);
-
-// ---------- i18n ----------
-function applyI18n(){
-  const dict = i18n[state.lang] || i18n.hu;
-  document.title = dict.title;
-  document.querySelectorAll('[data-i18n]').forEach(el=>{
-    const k = el.getAttribute('data-i18n');
-    if(dict[k]) el.textContent = dict[k];
-  });
-}
-document.getElementById('langSel').onchange = (e)=>{
-  state.lang = e.target.value; localStorage.setItem('lang', state.lang);
-  applyI18n();
+  lastUpdate:null, active:"stop"
 };
-
-// ---------- helpers ----------
-function setTick(txt){ qs('#tick').textContent = txt; }
-function two(n){return String(n).padStart(2,'0');}
-function fmt24(h,m){return `${two(h)}:${two(m)}`;}
-function minsUntil(hhmm){
-  const [h,m]=hhmm.split(':').map(x=>parseInt(x));
-  const now=new Date();
-  // UK időhöz igazodó diff – csak kijelzéshez kell
-  const nowMin=now.getHours()*60+now.getMinutes();
-  let dep=h*60+m; let d=(dep-nowMin)%(24*60); if(d<0)d+=24*60; return d;
-}
-
-// UK óra
-function startUkClock(){
-  function tick(){
-    const now = new Date();
-    // Feltételezzük, hogy a kliens idejét használjuk UK mutatáshoz is.
-    const hh = two(now.getHours()), mm=two(now.getMinutes()), ss=two(now.getSeconds());
-    qs('#ukclock').textContent = `${hh}:${mm}:${ss}`;
-  }
-  tick(); setInterval(tick, 1000);
-}
-
-// tabs
-qs('#tabStop').onclick = ()=>{ state.active='stop'; qs('#tabStop').classList.add('active'); qs('#tabRoute').classList.remove('active'); qs('#cardStop').style.display='block'; qs('#cardRoute').style.display='none'; }
-qs('#tabRoute').onclick= ()=>{ state.active='route'; qs('#tabRoute').classList.add('active'); qs('#tabStop').classList.remove('active'); qs('#cardStop').style.display='none'; qs('#cardRoute').style.display='block'; if(!state.map) initMap(); }
 
 async function api(path){
   const u = `${path}${path.includes('?')?'&':'?'}_=${Date.now()}`;
@@ -258,86 +283,90 @@ async function api(path){
   return r.json();
 }
 
-async function boot(){
-  // autodetect alapértelmezett nyelv
-  if(!localStorage.getItem('lang')){
-    const navLang = navigator.language?.toLowerCase() || '';
-    if(navLang.startsWith('hu')) state.lang = 'hu';
-    else if(navLang.startsWith('de')) state.lang = 'de';
-    else state.lang = 'en';
-    localStorage.setItem('lang', state.lang);
-  } else {
-    state.lang = localStorage.getItem('lang');
-  }
-  document.getElementById('langSel').value = state.lang;
-  applyI18n();
-  startUkClock();
+function setTick(txt){ $("#tick").textContent = txt; }
 
+// tabs
+$("#tabStop").onclick = ()=>{ state.active='stop'; $("#tabStop").classList.add('active'); $("#tabRoute").classList.remove('active'); $("#cardStop").style.display='block'; $("#cardRoute").style.display='none'; }
+$("#tabRoute").onclick= ()=>{ state.active='route'; $("#tabRoute").classList.add('active'); $("#tabStop").classList.remove('active'); $("#cardStop").style.display='none'; $("#cardRoute").style.display='block'; if(!state.map) initMap(); }
+
+// UK élő óra
+function tickClock(){
+  const now = new Date();
+  // UK idő: egyszerűen UTC offset +0 (BST/UTC külön kezelés nélkül, megjelenítés célra oké)
+  const hh = String(now.getUTCHours()).padStart(2,'0');
+  const mm = String(now.getUTCMinutes()).padStart(2,'0');
+  const ss = String(now.getUTCSeconds()).padStart(2,'0');
+  $("#ukClock").textContent = `${hh}:${mm}:${ss}`;
+}
+setInterval(tickClock, 1000); tickClock();
+
+// boot
+(async function boot(){
   try{
     const st = await api('/api/status');
-    qs('#build').textContent = st.build;
+    $("#build").textContent = st.build;
   }catch{}
-}
-boot();
+})();
 
 // ------------ STOP ------------
-qs('#btnStop').onclick = async ()=>{
-  const q = qs('#qStop').value.trim();
-  state.minutes = Math.max(5, Math.min(240, parseInt(qs('#minutes').value||'60')));
+$("#btnStop").onclick = async ()=>{
+  const q = $("#qStop").value.trim();
+  state.minutes = Math.max(5, Math.min(480, parseInt($("#minutes").value||'60')));
   if(!q) return;
   const hits = await api(`/api/stops/search?q=${encodeURIComponent(q)}`);
-  const sel = qs('#selStops'); sel.innerHTML = '';
+  const sel = $("#selStops"); sel.innerHTML = '';
   hits.forEach((s,i)=>{
     const o=document.createElement('option');
     o.value = s.stop_id; o.textContent = `${s.stop_name} (${s.stop_id})`;
     sel.appendChild(o);
   });
-  if(hits.length){ sel.selectedIndex=0; state.stopId=hits[0].stop_id; qs('#selStopLbl').textContent = hits[0].stop_id; refreshStop(); }
+  if(hits.length){ sel.selectedIndex=0; state.stopId=hits[0].stop_id; $("#selStopLbl").textContent = hits[0].stop_id; refreshStop(); }
 };
 
-qs('#selStops').onchange = (e)=>{ state.stopId = e.target.value; qs('#selStopLbl').textContent = state.stopId; refreshStop(); }
+$("#selStops").onchange = (e)=>{ state.stopId = e.target.value; $("#selStopLbl").textContent = state.stopId; refreshStop(); }
+
+function fmtHHMM(t){ if(!t) return '—'; const [h,m]=t.split(':'); return `${String(h%24).padStart(2,'0')}:${String(m).padStart(2,'0')}`; }
+function minsUntil(hhmm){
+  const [h,m]=hhmm.split(':').map(x=>parseInt(x));
+  const now=new Date(); const nowMin=(now.getUTCHours()*60+now.getUTCMinutes())%1440; // UK
+  const dep=(h%24)*60+m; let d=(dep-nowMin)%1440; if(d<0)d+=1440; return d;
+}
 
 function fmtRow(it){
+  // csak 3 oszlop: Járat, Cél, Indulás
   const due = minsUntil(it.time) <= 1;
-  let when = due ? `<span class="due">Due</span>` : `<span class="time">${it.time}</span>`;
-  // Ha a szerver később ETA-t adna (percben), azt itt előrébb vennénk
+  let when = due ? `<span class="due">Due</span>` : `<span class="time">${fmtHHMM(it.time)}</span>`;
   if(typeof it.eta_min === 'number'){
-    if(it.eta_min<=1) when = `<span class="due">Due</span>`;
-    else when = `<span class="time">${it.eta_min} min</span>`;
+    when = it.eta_min<=1 ? `<span class="due">Due</span>` : `<span class="time">${it.eta_min} min</span>`;
   }
-  return `<div class="tr" data-trip="${it.trip_id||''}">
-    <div class="pill">${it.route||'–'}</div>
+  const trip = it.trip_id || '';
+  const route = it.route || '';
+  const time = it.time || '';
+  return `<div class="tr" data-trip="${trip}" data-route="${route}" data-time="${time}" data-live="${it.live?'1':'0'}">
+    <div class="pill">${route||'–'}</div>
     <div>${it.destination||'–'}</div>
     <div>${when}</div>
   </div>`;
 }
 
 function renderRows(list){
-  const dict=i18n[state.lang];
   const seen=new Set(); const uniq=[];
   for(const it of list||[]){
     const k=`${it.route}|${it.destination}|${it.time}`;
     if(seen.has(k)) continue; seen.add(k); uniq.push(it);
   }
-  const el=qs('#rows');
-  if(!uniq.length){ el.innerHTML=`<div class="muted" style="padding:10px 4px">${dict.no_data}</div>`; return; }
+  const el=$("#rows");
+  if(!uniq.length){ el.innerHTML=`<div class="muted" style="padding:10px 4px">${I18N[LANG].no_data}</div>`; return; }
   el.innerHTML = uniq.map(fmtRow).join("");
   [...el.querySelectorAll(".tr")].forEach(row=>{
-    const tid=row.dataset.trip;
-    if(tid) row.addEventListener("click",()=>showTrip(tid));
+    const tid=row.dataset.trip; const route=row.dataset.route||""; const time=row.dataset.time||""; const live=row.dataset.live==="1";
+    if(tid) row.addEventListener("click",()=>showTrip(tid, route, time, live));
   });
 }
 
 async function refreshStop(){
   if(!state.stopId) return;
   const items = await api(`/api/stops/${encodeURIComponent(state.stopId)}/next_departures?minutes=${state.minutes}&live=true`);
-  // Normalizált 24h kijelzés (ha a backend már így küldi, ez csak pass-through)
-  items.forEach(it=>{
-    if(it.time && /^\d{1,2}:\d{2}$/.test(it.time)){
-      const [h,m]=it.time.split(':').map(Number);
-      it.time = fmt24(h%24,m%60);
-    }
-  });
   renderRows(items);
   state.lastUpdate=new Date();
 }
@@ -357,30 +386,29 @@ function initMap(){
   state.map=L.map('map').setView([50.909, -1.404], 12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(state.map);
 }
-qs('#btnRoute').onclick = async ()=>{
-  const q = qs('#qRoute').value.trim();
+$("#btnRoute").onclick = async ()=>{
+  const q = $("#qRoute").value.trim();
   if(!q) return;
   const hits = await api(`/api/routes/search?q=${encodeURIComponent(q)}`);
-  const sel = qs('#selRoute'); sel.innerHTML='';
+  const sel = $("#selRoute"); sel.innerHTML='';
   if(!hits.length){ const o=document.createElement('option'); o.textContent='—'; sel.appendChild(o); return; }
   hits.forEach((r,i)=>{ const o=document.createElement('option'); o.value=r.route; o.textContent=r.route; sel.appendChild(o); });
   sel.selectedIndex=0; state.route=hits[0].route; refreshRoute();
 };
-qs('#selRoute').onchange=(e)=>{ state.route=e.target.value; refreshRoute(); }
+$("#selRoute").onchange=(e)=>{ state.route=e.target.value; refreshRoute(); }
 
 function clearMarkers(){ state.markers.forEach(m=>state.map.removeLayer(m)); state.markers=[]; }
 function renderRouteList(vs){
-  const dict=i18n[state.lang];
   const el = document.getElementById("vehList");
-  if(!vs || !vs.length){ el.innerHTML = `<span class="muted">${dict.no_veh_hint}</span>`; return; }
+  if(!vs || !vs.length){ el.innerHTML = `<span class="muted">${I18N[LANG].map_hint}</span>`; return; }
   const rows = vs
     .sort((a,b)=>String(a.reg||"").localeCompare(String(b.reg||"")))
     .map(v=>`<div style="padding:6px 0;border-bottom:1px solid #222845">
-      <b>${v.reg||"–"}</b>
+      <b>${v.reg||"—"}</b>
       ${v.trip_id?` · trip: <span class="muted">${v.trip_id}</span>`:""}
-      ${v.bearing!=null?` · bearing: <span class="muted">${v.bearing}</span>`:""}
+      ${v.bearing!=null?` · brg: <span class="muted">${v.bearing}</span>`:""}
     </div>`).join("");
-  el.innerHTML = rows;
+  el.innerHTML = `<div class="th" style="margin:10px 0 6px 0">${I18N[LANG].vehicles_for(state.route)}</div>${rows}`;
 }
 
 async function refreshRoute(){
@@ -406,32 +434,30 @@ async function refreshRoute(){
 }
 
 // ------------ TRIP MODAL ------------
-function showTrip(tid){
-  const dict=i18n[state.lang];
-  qs('#tripIdLbl').textContent = tid;
-  qs('#tripBody').innerHTML = `<div class="muted">${dict.loading}</div>`;
-  qs('#tripModal').style.display='flex';
-  api(`/api/trips/${encodeURIComponent(tid)}`).then(d=>{
-    if(!d || !d.calls || !d.calls.length){ qs('#tripBody').innerHTML = `<div class="muted">${dict.no_trip}</div>`; return; }
-    const nowMin = new Date().getHours()*60 + new Date().getMinutes();
+function showTrip(tid, route, time, isLive){
+  $("#tripIdLbl").textContent = tid;
+  $("#tripBody").innerHTML = `<div class="muted">Betöltés…</div>`;
+  $("#tripModal").style.display='flex';
+  const q = new URLSearchParams();
+  if(route) q.set("route", route);
+  if(time)  q.set("time",  time);
+  api(`/api/trips/${encodeURIComponent(tid)}?${q.toString()}`).then(d=>{
+    if(!d || !d.calls || !d.calls.length){ $("#tripBody").innerHTML = `<div class="muted">${I18N[LANG].no_trip}</div>`; return; }
+    const now = new Date(); const nowMin = (now.getUTCHours()*60+now.getUTCMinutes())%1440; // UK referenciához
     const rows = d.calls.map(c=>{
-      let hhmm = c.time || '';
-      if(hhmm && /^\d{1,2}:\d{2}$/.test(hhmm)){
-        const [h,m]=hhmm.split(':').map(Number); hhmm = fmt24(h%24,m%60);
-      }
-      const dep = (()=>{ if(!c.time) return 0; const [h,m]=c.time.split(':').map(Number); return (h%24)*60+(m%60); })();
-      const past = ((dep - nowMin + 1440) % 1440) > 1000; // primitív megkülönböztetés
-      const color = past ? '#7f8799' : (typeof c.eta_min==='number' ? '#18c27e' : '#eaf0ff');
-      return `<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #222845;color:${color}">
-        <div style="width:80px;font-weight:700">${hhmm||''}</div>
+      const depMin = (parseInt(c.time.split(':')[0])%24)*60 + parseInt(c.time.split(':')[1]);
+      const klass = ((depMin - nowMin + 1440) % 1440) === 0 ? "future "+(isLive?"live":"sched")
+                  : ((depMin - nowMin + 1440) % 1440) < 1 ? "future "+(isLive?"live":"sched")
+                  : depMin >= nowMin ? "future "+(isLive?"live":"sched") : "past";
+      return `<div class="call ${klass}">
+        <div style="width:80px;font-weight:700">${fmtHHMM(c.time||'')}</div>
         <div>${c.stop_name||c.stop_id}</div>
       </div>`;
     }).join("");
-    qs('#tripBody').innerHTML = rows;
-  }).catch(()=>{ qs('#tripBody').innerHTML = `<div class="muted">${dict.err}</div>`; })
+    $("#tripBody").innerHTML = rows;
+  }).catch(()=>{ $("#tripBody").innerHTML = `<div class="muted">${I18N[LANG].no_trip}</div>`; })
 }
-function hideTrip(){ qs('#tripModal').style.display='none'; }
-
+function hideTrip(){ $("#tripModal").style.display='none'; }
 </script>
 </body>
 </html>
