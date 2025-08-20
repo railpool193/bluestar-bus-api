@@ -2,412 +2,379 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Bluestar Bus – stop & route finder</title>
-<link rel="preconnect" href="https://unpkg.com">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="preconnect" href="https://unpkg.com"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-  :root{--bg:#0e1220;--card:#141a2b;--muted:#a7b0c0;--fg:#eaf0ff;--pill:#2a3350;--accent:#6c82ff;--live:#18c27e;}
-  html,body{margin:0;background:var(--bg);color:var(--fg);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial;}
-  .wrap{max-width:980px;margin:24px auto;padding:0 16px;}
-  h1{font-weight:800;letter-spacing:.3px;margin:0 0 8px 0}
-  .row{display:flex;gap:14px;align-items:end}
-  .tabs{display:flex;gap:10px;margin:6px 0 12px}
-  .tab{padding:10px 16px;border-radius:999px;background:#1c2440;color:#b9c4da;cursor:pointer;font-weight:600}
-  .tab.active{background:var(--accent);color:#fff}
-  .card{background:var(--card);border-radius:16px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
-  label{display:block;font-size:14px;color:#c9d2e4;margin:4px 0}
-  input,select{width:100%;background:#0f1430;border:1px solid #223;outline:none;border-radius:10px;color:#fff;padding:14px 12px;font-size:16px}
-  button{background:var(--accent);border:none;border-radius:12px;padding:12px 20px;font-weight:700;color:#fff;cursor:pointer}
+  :root { --bg:#0c1220; --card:#111a2f; --muted:#95a3b8; --text:#eaf0ff; --accent:#8ea2ff; --green:#48d597; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px system-ui,Segoe UI,Roboto,Arial,sans-serif}
+  .wrap{max-width:980px;margin:24px auto;padding:0 16px}
+  h1{display:flex;align-items:center;gap:12px;font-size:28px;margin:0 0 12px}
+  .bus{font-size:32px}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+  .pill{background:var(--card);padding:10px 14px;border-radius:12px;border:1px solid #22314f}
   .muted{color:var(--muted)}
-  .small{font-size:13px}
-  .hdr{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-  .pill{width:42px;height:42px;border-radius:50%;background:var(--pill);display:flex;align-items:center;justify-content:center;font-weight:800}
-  .grid{margin-top:12px}
-  .th{opacity:.85;font-weight:700;letter-spacing:.3px}
-  .tr{display:grid;grid-template-columns:64px 1fr 150px;gap:10px;align-items:center;padding:12px;border-radius:12px;background:#0f1430;margin:8px 0;cursor:pointer}
-  .tr:hover{background:#10183a}
-  .time{font-weight:800}
-  .due{color:var(--live);font-weight:800;animation:blink 1s infinite}
-  .liveTag{background:var(--live);color:#0a1a12;border-radius:8px;padding:2px 6px;font-weight:800;margin-left:8px}
-  @keyframes blink {0%,49%{opacity:1}50%,100%{opacity:.25}}
-  #map{height:420px;border-radius:16px;overflow:hidden}
-  .footer{margin-top:12px;color:#8e97ab}
-  .lang{background:#1c2440;border:1px solid #223;border-radius:10px;color:#fff;padding:10px 12px}
-  /* modal */
-  .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:50}
-  .modal .box{background:#0f1430;border:1px solid #233055;border-radius:16px;max-width:760px;width:92%;max-height:80vh;overflow:auto}
-  .modal .hd{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #222845}
-  .modal .bd{padding:12px 16px}
-  .x{cursor:pointer;background:#222a46;border:none;color:#b9c4da;border-radius:10px;padding:6px 10px}
-  .call{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #222845}
-  .past{color:#818aa3}
-  .future.live{color:#18c27e;font-weight:700}
-  .future.sched{color:#eaf0ff}
+  .tabs{display:flex;gap:8px;margin:10px 0}
+  .tab{padding:8px 14px;border-radius:999px;background:#1a2540;color:#cfe0ff;cursor:pointer;user-select:none}
+  .tab.active{background:#5568ff;color:#fff}
+  .card{background:var(--card);border:1px solid #22314f;border-radius:20px;padding:16px;margin-top:12px}
+  label{display:block;margin-bottom:6px;color:#c6d1e9}
+  input,select{width:100%;padding:12px;border-radius:12px;border:1px solid #2b3a5c;background:#0f1830;color:#fff}
+  button{padding:12px 16px;border:none;border-radius:12px;background:#6b7dff;color:#fff;font-weight:600;cursor:pointer}
+  .grid{display:grid;gap:10px}
+  .two{grid-template-columns:1fr auto}
+  .list{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+  .item{background:#0f1830;border:1px solid #233258;border-radius:16px;padding:14px 16px;display:grid;grid-template-columns:64px 1fr auto;gap:14px;align-items:center}
+  .route{width:44px;height:44px;border-radius:999px;background:#1b2746;display:grid;place-items:center;font-weight:700}
+  .live{color:var(--green);font-weight:700}
+  .muter{color:#9fb0cc}
+  .time{font-variant-numeric:tabular-nums;font-weight:700}
+  .foot{margin-top:8px;color:#8d9bb8;font-size:13px}
+  #tripModal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;padding:16px}
+  .modal{max-width:700px;width:100%;background:#0f1830;border:1px solid #2b3a5c;border-radius:16px;padding:8px 8px 12px}
+  .modal h3{margin:8px 8px 4px}
+  .triprow{padding:10px 12px;border-radius:10px;display:flex;gap:12px}
+  .triprow.past{color:#9aa8c2}
+  .triprow.live{color:#48d597;font-weight:700}
+  .triprow.sched{color:#eaf0ff}
+  #map{height:360px;border-radius:16px;border:1px solid #233258}
+  .select-lang{margin-left:auto}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="hdr">
-    <div>
-      <h1>🚌 <span data-t="title"></span></h1>
-      <div class="small muted"><span data-t="uk_time"></span>: <b id="ukClock">--:--:--</b> · <span data-t="refresh"></span>: <span id="tick">–</span></div>
-    </div>
-    <div>
-      <select id="langSel" class="lang">
-        <option value="EN">EN</option>
-        <option value="DE">DE</option>
-        <option value="HU">HU</option>
-        <option value="PL">PL</option>
-        <option value="RO">RO</option>
+  <div class="row">
+    <h1><span class="bus">🚌</span><span id="title">Bluestar Bus — stop & route finder</span></h1>
+    <div class="pill select-lang">
+      <select id="langSel" style="background:#0f1830;color:#fff;border-radius:8px;padding:6px;border:1px solid #2b3a5c">
+        <option value="en">EN</option>
+        <option value="de">DE</option>
+        <option value="hu">HU</option>
+        <option value="pl">PL</option>
+        <option value="ro">RO</option>
       </select>
     </div>
   </div>
+  <div class="row muted">
+    <span id="clockLbl">UK time:</span>&nbsp;<strong id="clock">--:--:--</strong>
+    <span>&nbsp;·&nbsp;</span>
+    <span id="refresh">Refresh: –</span>
+  </div>
 
   <div class="tabs">
-    <div id="tabStop" class="tab active" data-t="tab_stop"></div>
-    <div id="tabRoute" class="tab" data-t="tab_route"></div>
+    <div id="tabStop" class="tab active" data-tab="stop"></div>
+    <div id="tabRoute" class="tab" data-tab="route"></div>
   </div>
 
-  <!-- STOP CARD -->
-  <div id="cardStop" class="card">
-    <div class="row">
-      <div style="flex:2">
-        <label data-t="stop_name"></label>
-        <input id="qStop" placeholder="Albion, Vincent, ...">
+  <div id="paneStop" class="card">
+    <div class="grid two">
+      <div>
+        <label id="lblStop"></label>
+        <input id="qStop" placeholder="Shirley, Central, ..."/>
       </div>
-      <div style="flex:1">
-        <label data-t="window_mins"></label>
-        <input id="minutes" type="number" min="5" max="480" value="60">
+      <div>
+        <label id="lblWin"></label>
+        <input id="win" type="number" min="5" max="720" step="5" value="60"/>
       </div>
-      <div style="flex:0">
-        <button id="btnStop" data-t="search"></button>
+      <div style="grid-column:1/-1;display:flex;gap:10px;align-items:end">
+        <select id="stopSel"></select>
+        <button id="btnSearch"></button>
       </div>
     </div>
 
-    <div style="margin-top:12px">
-      <label data-t="results_choose_stop"></label>
-      <select id="selStops"></select>
-    </div>
+    <div class="foot"><span id="selStop">–</span> <span style="float:right" id="every">Refresh every 20 s</span></div>
 
-    <div class="hdr" style="margin-top:12px">
-      <div class="small"><span data-t="selected_stop"></span>: <b id="selStopLbl">–</b></div>
-      <div class="small"><span data-t="refresh_every"></span> 20 s</div>
-    </div>
+    <div id="list" class="list"></div>
 
-    <div class="grid">
-      <div class="tr th" style="cursor:default">
-        <div data-t="col_route"></div><div data-t="col_dest"></div><div data-t="col_depart"></div>
-      </div>
-      <div id="rows"></div>
-    </div>
-
-    <div class="footer small">
-      Build: <span id="build">-</span> · <span id="cache">Cache-bypass</span>
+    <div class="foot">Build: <span id="build">-</span> · <span id="cache">Cache-bypass</span><br/>
+      <span id="livehint"></span>
     </div>
   </div>
 
-  <!-- ROUTE CARD -->
-  <div id="cardRoute" class="card" style="display:none">
-    <div class="row">
-      <div style="flex:1">
-        <label data-t="route_no"></label>
-        <input id="qRoute" placeholder="9, 17, 18...">
+  <div id="paneRoute" class="card" style="display:none">
+    <div class="grid two">
+      <div>
+        <label id="lblRoute"></label>
+        <input id="qRoute" placeholder="17"/>
       </div>
-      <div style="flex:0">
-        <button id="btnRoute" data-t="search"></button>
+      <div style="display:flex;align-items:flex-end;justify-content:flex-end">
+        <button id="btnRouteSearch"></button>
+      </div>
+      <div style="grid-column:1/-1">
+        <select id="routeSel"></select>
       </div>
     </div>
-
-    <div style="margin-top:12px">
-      <label data-t="results_choose_route"></label>
-      <select id="selRoute"></select>
-    </div>
-
-    <div id="map" style="margin-top:12px"></div>
-    <div id="vehList" class="small" style="margin-top:10px"></div>
-
-    <div class="footer small" data-t="map_hint"></div>
-  </div>
-
-  <div style="margin-top:16px" class="small muted">
-    <span data-t="live_cfg_hint"></span>: <code>/api/live/config</code>
+    <div id="map" class="card" style="margin-top:12px"></div>
+    <div class="foot" id="vehHelp"></div>
   </div>
 </div>
 
-<!-- Trip modal -->
-<div id="tripModal" class="modal">
-  <div class="box">
-    <div class="hd">
-      <div><b data-t="trip_details"></b> · <span id="tripIdLbl" class="muted"></span></div>
-      <button class="x" onclick="hideTrip()" data-t="close"></button>
+<div id="tripModal">
+  <div class="modal">
+    <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">
+      <h3 id="tripTitle">Trip</h3>
+      <button onclick="hideTrip()">×</button>
     </div>
-    <div class="bd">
-      <div id="tripBody" class="small"></div>
-    </div>
+    <div id="tripList" style="max-height:60vh;overflow:auto;padding:8px"></div>
   </div>
 </div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// -------- i18n --------
-const I18N = {
-  EN:{title:"Bluestar Bus — stop & route finder",uk_time:"UK time",refresh:"Refresh in",
-      tab_stop:"Stop",tab_route:"Route",stop_name:"Stop name",window_mins:"Time window (mins)",
-      search:"Search",results_choose_stop:"Results — choose a stop",selected_stop:"Selected stop",
-      refresh_every:"Refresh every",col_route:"Route",col_dest:"Destination",col_depart:"Departure",
-      route_no:"Route number",results_choose_route:"Results — choose a route",
-      map_hint:"If no live vehicles are available, the map stays empty.",live_cfg_hint:"Set live feed",
-      trip_details:"Trip details",close:"Close",no_data:"No data for this window.",
-      no_trip:"No details for this trip.",vehicles_for:(r)=>`Vehicles on route ${r}`,uk:"UK",
-      live:"LIVE"},
-  HU:{title:"Bluestar Bus – megálló & járat kereső",uk_time:"UK idő",refresh:"Frissítés",
-      tab_stop:"Megálló",tab_route:"Vonal",stop_name:"Megálló név",window_mins:"Időablak (perc)",
-      search:"Keresés",results_choose_stop:"Találatok – válassz megállót",selected_stop:"Választott megálló",
-      refresh_every:"Frissítés",col_route:"Járat",col_dest:"Cél",col_depart:"Indulás",
-      route_no:"Vonal száma",results_choose_route:"Találatok – válassz vonalat",
-      map_hint:"Ha nincs élő jármű, a térkép üres marad.",live_cfg_hint:"Élő feed beállítása",
-      trip_details:"Járat részletei",close:"Bezár",no_data:"Nincs adat erre az időablakra.",
-      no_trip:"Nincs részlet ehhez a járathoz.",vehicles_for:(r)=>`Járművek a(z) ${r} vonalon`,uk:"UK",
-      live:"ÉLŐ"},
-  DE:{title:"Bluestar Bus – Haltestellen & Linien",uk_time:"UK-Zeit",refresh:"Aktualisierung in",
-      tab_stop:"Haltestelle",tab_route:"Linie",stop_name:"Haltestellenname",window_mins:"Zeitfenster (Min.)",
-      search:"Suchen",results_choose_stop:"Ergebnisse – Haltestelle wählen",selected_stop:"Ausgewählte Haltestelle",
-      refresh_every:"Alle",col_route:"Linie",col_dest:"Ziel",col_depart:"Abfahrt",
-      route_no:"Liniennummer",results_choose_route:"Ergebnisse – Linie wählen",
-      map_hint:"Wenn keine Live-Fahrzeuge vorhanden sind, bleibt die Karte leer.",live_cfg_hint:"Live-Feed einstellen",
-      trip_details:"Fahrt-Details",close:"Schließen",no_data:"Keine Daten für dieses Fenster.",
-      no_trip:"Keine Details zu dieser Fahrt.",vehicles_for:(r)=>`Fahrzeuge auf Linie ${r}`,uk:"UK",
-      live:"LIVE"},
-  PL:{title:"Bluestar Bus — wyszukiwarka przystanków i linii",uk_time:"Czas UK",refresh:"Odświeżanie za",
-      tab_stop:"Przystanek",tab_route:"Linia",stop_name:"Nazwa przystanku",window_mins:"Okno czasu (min)",
-      search:"Szukaj",results_choose_stop:"Wyniki — wybierz przystanek",selected_stop:"Wybrany przystanek",
-      refresh_every:"Odświeżanie co",col_route:"Linia",col_dest:"Kierunek",col_depart:"Odjazd",
-      route_no:"Numer linii",results_choose_route:"Wyniki — wybierz linię",
-      map_hint:"Jeśli nie ma pojazdów na żywo, mapa pozostanie pusta.",live_cfg_hint:"Ustaw źródło LIVE",
-      trip_details:"Szczegóły kursu",close:"Zamknij",no_data:"Brak danych w tym przedziale.",
-      no_trip:"Brak szczegółów dla tego kursu.",vehicles_for:(r)=>`Pojazdy na linii ${r}`,uk:"UK",
-      live:"LIVE"},
-  RO:{title:"Bluestar Bus — căutare stații & linii",uk_time:"Ora UK",refresh:"Reîmprospătare în",
-      tab_stop:"Stație",tab_route:"Linie",stop_name:"Nume stație",window_mins:"Interval (min)",
-      search:"Caută",results_choose_stop:"Rezultate — alege o stație",selected_stop:"Stația selectată",
-      refresh_every:"Actualizare la",col_route:"Linie",col_dest:"Destinație",col_depart:"Plecare",
-      route_no:"Număr linie",results_choose_route:"Rezultate — alege o linie",
-      map_hint:"Dacă nu sunt vehicule live, harta rămâne goală.",live_cfg_hint:"Setează feed-ul LIVE",
-      trip_details:"Detalii cursă",close:"Închide",no_data:"Nu există date pentru acest interval.",
-      no_trip:"Nu există detalii pentru această cursă.",vehicles_for:(r)=>`Vehicule pe linia ${r}`,uk:"UK",
-      live:"LIVE"}
+const T = {
+  en: {
+    title: "Bluestar Bus — stop & route finder",
+    clock: "UK time:",
+    tabStop: "Stop",
+    tabRoute: "Route",
+    lblStop: "Stop name",
+    lblWin: "Window (min)",
+    search: "Search",
+    results: "Results — choose a stop",
+    selected: "Selected stop:",
+    refresh: "Refresh every 20 s",
+    routeHdr: "Route",
+    destHdr: "Destination",
+    depHdr: "Departure",
+    tripTitle: "Trip details",
+    noTrip: "No details for this trip.",
+    vehiclesHelp: "If there are no live vehicles on this route, the map stays empty.",
+    liveHint: "Set live feed at: /api/live/config",
+  },
+  de: {
+    title: "Bluestar Bus — Haltestellen & Linien",
+    clock: "UK-Zeit:",
+    tabStop: "Haltestelle",
+    tabRoute: "Linie",
+    lblStop: "Haltestellenname",
+    lblWin: "Zeitfenster (Min)",
+    search: "Suche",
+    results: "Treffer — wähle eine Haltestelle",
+    selected: "Gewählte Haltestelle:",
+    refresh: "Aktualisierung alle 20 s",
+    routeHdr: "Linie",
+    destHdr: "Ziel",
+    depHdr: "Abfahrt",
+    tripTitle: "Fahrtdetails",
+    noTrip: "Keine Details zu dieser Fahrt.",
+    vehiclesHelp: "Wenn keine Live-Fahrzeuge vorhanden sind, bleibt die Karte leer.",
+    liveHint: "Live-Feed setzen unter: /api/live/config",
+  },
+  hu: {
+    title: "Bluestar Bus – megálló & járat kereső",
+    clock: "UK idő:",
+    tabStop: "Megálló",
+    tabRoute: "Vonal",
+    lblStop: "Megálló név",
+    lblWin: "Időablak (perc)",
+    search: "Keresés",
+    results: "Találatok – válassz megállót",
+    selected: "Választott megálló:",
+    refresh: "Frissítés 20 s",
+    routeHdr: "Járat",
+    destHdr: "Cél",
+    depHdr: "Indulás",
+    tripTitle: "Járat részletei",
+    noTrip: "Nincs részlet ehhez a járathoz.",
+    vehiclesHelp: "Ha nincs élő jármű a vonalon, a térkép üres marad.",
+    liveHint: "Élő feed beállítása: /api/live/config",
+  },
+  pl: {
+    title: "Bluestar Bus — wyszukiwarka przystanków i linii",
+    clock: "Czas UK:",
+    tabStop: "Przystanek",
+    tabRoute: "Linia",
+    lblStop: "Nazwa przystanku",
+    lblWin: "Okno (min)",
+    search: "Szukaj",
+    results: "Wyniki — wybierz przystanek",
+    selected: "Wybrany przystanek:",
+    refresh: "Odświeżanie co 20 s",
+    routeHdr: "Linia",
+    destHdr: "Kierunek",
+    depHdr: "Odjazd",
+    tripTitle: "Szczegóły kursu",
+    noTrip: "Brak szczegółów dla tego kursu.",
+    vehiclesHelp: "Jeśli brak pojazdów na żywo, mapa zostanie pusta.",
+    liveHint: "Ustaw feed live: /api/live/config",
+  },
+  ro: {
+    title: "Bluestar Bus — căutare stații & linii",
+    clock: "Ora UK:",
+    tabStop: "Stație",
+    tabRoute: "Linie",
+    lblStop: "Numele stației",
+    lblWin: "Fereastră (min)",
+    search: "Caută",
+    results: "Rezultate — alege o stație",
+    selected: "Stație selectată:",
+    refresh: "Reîmprospătare la 20 s",
+    routeHdr: "Linie",
+    destHdr: "Destinație",
+    depHdr: "Plecarea",
+    tripTitle: "Detalii cursă",
+    noTrip: "Nu există detalii pentru această cursă.",
+    vehiclesHelp: "Dacă nu sunt vehicule live pe linie, harta rămâne goală.",
+    liveHint: "Setează feed live: /api/live/config",
+  },
 };
 
-function autodetectLang(){
-  const saved = localStorage.getItem("lang");
-  if(saved && I18N[saved]) return saved;
-  const n = (navigator.language || "en").toLowerCase();
-  if(n.startsWith("hu")) return "HU";
-  if(n.startsWith("de")) return "DE";
-  if(n.startsWith("pl")) return "PL";
-  if(n.startsWith("ro")) return "RO";
-  return "EN";
+let lang = (localStorage.getItem("lang") || (navigator.language||"en").slice(0,2) || "en").toLowerCase();
+if (!T[lang]) lang = "en";
+const $ = sel => document.querySelector(sel);
+const listEl = $("#list");
+const stopSel = $("#stopSel");
+const routeSel = $("#routeSel");
+let refreshTimer = null;
+let map, markersLayer;
+
+function t(key){ return (T[lang]||T.en)[key]; }
+function setTexts(){
+  $("#title").textContent = t("title");
+  $("#clockLbl").textContent = t("clock");
+  $("#tabStop").textContent = t("tabStop");
+  $("#tabRoute").textContent = t("tabRoute");
+  $("#lblStop").textContent = t("lblStop");
+  $("#lblWin").textContent = t("lblWin");
+  $("#btnSearch").textContent = t("search");
+  $("#lblRoute").textContent = t("tabRoute");
+  $("#btnRouteSearch").textContent = t("search");
+  $("#every").textContent = t("refresh");
+  $("#livehint").textContent = t("liveHint");
+  $("#vehHelp").textContent = t("vehiclesHelp");
 }
-let LANG = autodetectLang();
-const $ = (s)=>document.querySelector(s);
-function applyI18N(){
-  const d = I18N[LANG];
-  $("[data-t='title']").textContent = d.title;
-  $("[data-t='uk_time']").textContent = d.uk_time;
-  $("[data-t='refresh']").textContent = d.refresh;
-  $("[data-t='tab_stop']").textContent = d.tab_stop;
-  $("[data-t='tab_route']").textContent = d.tab_route;
-  $("[data-t='stop_name']").textContent = d.stop_name;
-  $("[data-t='window_mins']").textContent = d.window_mins;
-  $("[data-t='search']").textContent = d.search;
-  $("[data-t='results_choose_stop']").textContent = d.results_choose_stop;
-  $("[data-t='selected_stop']").textContent = d.selected_stop;
-  $("[data-t='refresh_every']").textContent = d.refresh_every;
-  $("[data-t='col_route']").textContent = d.col_route;
-  $("[data-t='col_dest']").textContent = d.col_dest;
-  $("[data-t='col_depart']").textContent = d.col_depart;
-  $("[data-t='route_no']").textContent = d.route_no;
-  $("[data-t='results_choose_route']").textContent = d.results_choose_route;
-  $("[data-t='map_hint']").textContent = d.map_hint;
-  $("[data-t='live_cfg_hint']").textContent = d.live_cfg_hint;
-  $("[data-t='trip_details']").textContent = d.trip_details;
-  $("[data-t='close']").textContent = d.close;
-  $("#langSel").value = LANG;
-}
-$("#langSel").addEventListener("change", ()=>{
-  LANG = $("#langSel").value;
-  localStorage.setItem("lang", LANG);
-  applyI18N();
+$("#langSel").value = lang;
+$("#langSel").addEventListener("change", e=>{
+  lang = e.target.value; localStorage.setItem("lang", lang); setTexts();
 });
-applyI18N();
 
-// -------- state --------
-const state = { stopId:null, minutes:60, route:null, map:null, markers:[], lastUpdate:null, active:"stop" };
-
-async function api(path){
-  const u = `${path}${path.includes('?')?'&':'?'}_=${Date.now()}`;
-  const r = await fetch(u, {headers:{'Cache-Control':'no-cache'}});
-  if(!r.ok) throw new Error(await r.text());
-  return r.json();
+function tabSwitch(which){
+  $("#tabStop").classList.toggle("active", which==="stop");
+  $("#tabRoute").classList.toggle("active", which==="route");
+  $("#paneStop").style.display = which==="stop" ? "" : "none";
+  $("#paneRoute").style.display = which==="route" ? "" : "none";
 }
-function setTick(txt){ $("#tick").textContent = txt; }
+$("#tabStop").onclick = ()=>tabSwitch("stop");
+$("#tabRoute").onclick = ()=>tabSwitch("route");
 
-// UK time helpers (fix BST vs UTC)
-function ukNow(){
-  // trükk: lokális string Europe/London zónával, majd Date-ként vissza
-  return new Date(new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' }));
+async function tickClock(){
+  try{
+    const r = await fetch("/api/status").then(r=>r.json());
+    $("#clock").textContent = r.uk_time || "--:--:--";
+    $("#refresh").textContent = (t("refresh").split(" ")[0]==="Refresh" ? "Refresh:" : "Frissítés:") + " 10s";
+    $("#build").textContent = r.build || "-";
+  }catch(e){}
 }
-function ukHH(){ return String(ukNow().getHours()).padStart(2,'0'); }
-function ukMM(){ return String(ukNow().getMinutes()).padStart(2,'0'); }
-function ukSS(){ return String(ukNow().getSeconds()).padStart(2,'0'); }
-function ukMinutesOfDay(){ const n=ukNow(); return (n.getHours()*60 + n.getMinutes())%1440; }
+setInterval(tickClock, 10000);
+tickClock();
 
-function tickClock(){
-  $("#ukClock").textContent = `${ukHH()}:${ukMM()}:${ukSS()}`;
-}
-setInterval(tickClock, 1000); tickClock();
-
-// tabs
-$("#tabStop").onclick = ()=>{ state.active='stop'; $("#tabStop").classList.add('active'); $("#tabRoute").classList.remove('active'); $("#cardStop").style.display='block'; $("#cardRoute").style.display='none'; }
-$("#tabRoute").onclick= ()=>{ state.active='route'; $("#tabRoute").classList.add('active'); $("#tabStop").classList.remove('active'); $("#cardStop").style.display='none'; $("#cardRoute").style.display='block'; if(!state.map) initMap(); }
-
-// ------------ STOP ------------
-$("#btnStop").onclick = async ()=>{
+async function searchStops(){
   const q = $("#qStop").value.trim();
-  state.minutes = Math.max(5, Math.min(480, parseInt($("#minutes").value||'60')));
-  if(!q) return;
-  const hits = await api(`/api/stops/search?q=${encodeURIComponent(q)}`);
-  const sel = $("#selStops"); sel.innerHTML = '';
-  hits.forEach((s)=>{
-    const o=document.createElement('option');
-    o.value = s.stop_id; o.textContent = `${s.stop_name} (${s.stop_id})`;
-    sel.appendChild(o);
+  if (q.length<2) return;
+  const res = await fetch(`/api/stops/search?q=${encodeURIComponent(q)}`).then(r=>r.json());
+  stopSel.innerHTML = "";
+  res.forEach(o=>{
+    const opt = document.createElement("option");
+    opt.value = o.id; opt.textContent = o.name;
+    stopSel.appendChild(opt);
   });
-  if(hits.length){ sel.selectedIndex=0; state.stopId=hits[0].stop_id; $("#selStopLbl").textContent = hits[0].stop_id; refreshStop(); }
-};
-$("#selStops").onchange = (e)=>{ state.stopId = e.target.value; $("#selStopLbl").textContent = state.stopId; refreshStop(); }
+  $("#selStop").textContent = (res.length? (t("selected")+" "+res[0].name) : "–");
+  if (res.length) loadDepartures();
+}
+$("#btnSearch").onclick = searchStops;
 
-function fmtHHMM(t){ if(!t) return '—'; const [h,m]=t.split(':'); return `${String(h%24).padStart(2,'0')}:${String(m).padStart(2,'0')}`; }
-function minsUntil(hhmm){
-  const [h,m]=hhmm.split(':').map(x=>parseInt(x));
-  const nowMin = ukMinutesOfDay();
-  const dep = (h%24)*60 + m;
-  let d = (dep - nowMin) % 1440; if(d<0) d+=1440; return d;
+async function loadDepartures(){
+  const id = stopSel.value;
+  const mins = +$("#win").value || 60;
+  if (!id) { listEl.innerHTML=""; return; }
+  const res = await fetch(`/api/stops/${encodeURIComponent(id)}/next_departures?minutes=${mins}`).then(r=>r.json());
+  listEl.innerHTML = "";
+  res.forEach(row=>{
+    const div = document.createElement("div");
+    div.className = "item";
+    div.innerHTML = `
+      <div class="route">${row.route}</div>
+      <div>
+        <div>${row.headsign}</div>
+        <div class="muter">${t("destHdr")}</div>
+      </div>
+      <div class="time ${row.live?'live':''}">${row.live?'Due':row.departure}</div>`;
+    div.onclick = ()=>openTrip(row.trip_id, row.route, row.headsign);
+    listEl.appendChild(div);
+  });
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(loadDepartures, 20000);
 }
 
-function fmtRow(it){
-  const due = (typeof it.eta_min==='number') ? (it.eta_min<=1) : (minsUntil(it.time)<=1);
-  const when = due ? `<span class="due">Due</span>` : `<span class="time">${fmtHHMM(it.time)}</span>`;
-  const liveTag = it.live ? ` <span class="liveTag">${I18N[LANG].live}</span>` : "";
-  return `<div class="tr" data-trip="${it.trip_id||''}" data-route="${it.route||''}" data-time="${it.time||''}" data-live="${it.live?'1':'0'}">
-    <div class="pill">${it.route||'–'}</div>
-    <div>${it.destination||'–'}${liveTag}</div>
-    <div>${when}</div>
-  </div>`;
-}
-
-function renderRows(list){
-  const seen=new Set(); const uniq=[];
-  for(const it of list||[]){
-    const k=`${it.route}|${it.destination}|${it.time}`;
-    if(seen.has(k)) continue; seen.add(k); uniq.push(it);
+async function openTrip(trip_id, route, headsign){
+  $("#tripTitle").textContent = `${t("tripTitle")} · ${route} → ${headsign}`;
+  $("#tripList").innerHTML = "";
+  $("#tripModal").style.display = "flex";
+  try{
+    const r = await fetch(`/api/trips/${encodeURIComponent(trip_id)}`).then(r=>r.json());
+    r.stops.forEach(s=>{
+      const row = document.createElement("div");
+      row.className = `triprow ${s.status}`;
+      row.innerHTML = `<div class="time" style="width:70px">${s.time}</div><div>${s.stop_name}</div>`;
+      $("#tripList").appendChild(row);
+    });
+    if (!r.stops.length){
+      $("#tripList").textContent = t("noTrip");
+    }
+  }catch(e){
+    $("#tripList").textContent = t("noTrip");
   }
-  const el=$("#rows");
-  if(!uniq.length){ el.innerHTML=`<div class="muted" style="padding:10px 4px">${I18N[LANG].no_data}</div>`; return; }
-  el.innerHTML = uniq.map(fmtRow).join("");
-  [...el.querySelectorAll(".tr")].forEach(row=>{
-    const tid=row.dataset.trip; const route=row.dataset.route||""; const time=row.dataset.time||""; const live=row.dataset.live==="1";
-    if(tid) row.addEventListener("click",()=>showTrip(tid, route, time, live));
-  });
 }
+function hideTrip(){ $("#tripModal").style.display="none"; }
 
-async function refreshStop(){
-  if(!state.stopId) return;
-  const items = await api(`/api/stops/${encodeURIComponent(state.stopId)}/next_departures?minutes=${state.minutes}&live=true`);
-  renderRows(items);
-  state.lastUpdate=new Date();
-}
-
-function startTicker(){
-  let t=20;
-  setInterval(async ()=>{
-    if(state.active==='stop' && state.stopId){ if(--t<=0){ await refreshStop(); t=20; } setTick(`${t}s`); }
-    else if(state.active==='route' && state.route){ if(--t<=0){ await refreshRoute(); t=20; } setTick(`${t}s`); }
-    else setTick('–');
-  },1000);
-}
-startTicker();
-
-// ------------ ROUTE ------------
-function initMap(){
-  state.map=L.map('map').setView([50.909, -1.404], 12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(state.map);
-}
-$("#btnRoute").onclick = async ()=>{
+async function searchRoutes(){
   const q = $("#qRoute").value.trim();
-  if(!q) return;
-  const hits = await api(`/api/routes/search?q=${encodeURIComponent(q)}`);
-  const sel = $("#selRoute"); sel.innerHTML='';
-  if(!hits.length){ const o=document.createElement('option'); o.textContent='—'; sel.appendChild(o); return; }
-  hits.forEach((r)=>{ const o=document.createElement('option'); o.value=r.route; o.textContent=r.route; sel.appendChild(o); });
-  sel.selectedIndex=0; state.route=hits[0].route; refreshRoute();
-};
-$("#selRoute").onchange=(e)=>{ state.route=e.target.value; refreshRoute(); }
-
-function clearMarkers(){ state.markers.forEach(m=>state.map.removeLayer(m)); state.markers=[]; }
-function renderRouteList(vs){
-  const el = document.getElementById("vehList");
-  if(!vs || !vs.length){ el.innerHTML = `<span class="muted">${I18N[LANG].map_hint}</span>`; return; }
-  const rows = vs
-    .sort((a,b)=>String(a.reg||"").localeCompare(String(b.reg||"")))
-    .map(v=>`<div style="padding:6px 0;border-bottom:1px solid #222845">
-      <b>${v.reg||"—"}</b>
-      ${v.trip_id?` · trip: <span class="muted">${v.trip_id}</span>`:""}
-      ${v.dest?` · ${v.dest}`:""}
-    </div>`).join("");
-  el.innerHTML = `<div class="th" style="margin:10px 0 6px 0">${I18N[LANG].vehicles_for(state.route)}</div>${rows}`;
-}
-
-async function refreshRoute(){
-  if(!state.route) return;
-  const vs = await api(`/api/routes/${encodeURIComponent(state.route)}/vehicles`);
-  clearMarkers();
-  const seen = new Set();
-  const list=[];
-  vs.forEach(v=>{
-    const key = `${v.reg||""}|${v.trip_id||""}`; if(seen.has(key)) return; seen.add(key);
-    list.push(v);
-    const icon = L.divIcon({className:'', html:`<div style="background:#2a4bff;color:#fff;border-radius:6px;padding:2px 5px;font-weight:800">${state.route}</div>`});
-    const m=L.marker([v.lat,v.lon],{icon}).addTo(state.map);
-    m.bindPopup(`<b>${state.route}</b><br>${v.reg||""}${v.trip_id?`<br>trip: ${v.trip_id}`:""}${v.dest?`<br>${v.dest}`:""}`);
-    state.markers.push(m);
+  if (!q) return;
+  const rows = await fetch(`/api/routes/search?q=${encodeURIComponent(q)}`).then(r=>r.json());
+  routeSel.innerHTML = "";
+  rows.forEach(r=>{
+    const opt = document.createElement("option");
+    opt.value = r.label;
+    opt.textContent = r.label;
+    routeSel.appendChild(opt);
   });
-  if(list.length){
-    state.map.setView([list[0].lat,list[0].lon], 12);
-  }
-  renderRouteList(list);
-  state.lastUpdate=new Date();
+  if (rows.length) loadVehicles();
+}
+$("#btnRouteSearch").onclick = searchRoutes;
+
+function ensureMap(){
+  if (map) return;
+  map = L.map('map').setView([50.908, -1.404], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+  markersLayer = L.layerGroup().addTo(map);
 }
 
-// ------------ TRIP MODAL ------------
-function showTrip(tid, route, time, isLive){
-  $("#tripIdLbl").textContent = tid;
-  $("#tripBody").innerHTML = `<div class="muted">...</div>`;
-  $("#tripModal").style.display='flex';
-  const q = new URLSearchParams();
-  if(route) q.set("route", route);
-  if(time)  q.set("time",  time);
-  api(`/api/trips/${encodeURIComponent(tid)}?${q.toString()}`).then(d=>{
-    if(!d || !d.calls || !d.calls.length){ $("#tripBody").innerHTML = `<div class="muted">${I18N[LANG].no_trip}</div>`; return; }
-    const nowMin = ukMinutesOfDay();
-    const rows = d.calls.map(c=>{
-      const depMin = (parseInt(c.time.split(':')[0])%24)*60 + parseInt(c.time.split(':')[1]);
-      const klass = depMin >= nowMin ? ("future "+(isLive?"live":"sched")) : "past";
-      return `<div class="call ${klass}">
-        <div style="width:80px;font-weight:700">${fmtHHMM(c.time||'')}</div>
-        <div>${c.stop_name||c.stop_id}</div>
-      </div>`;
-    }).join("");
-    $("#tripBody").innerHTML = rows;
-  }).catch(()=>{ $("#tripBody").innerHTML =
+async function loadVehicles(){
+  ensureMap();
+  markersLayer.clearLayers();
+  const r = routeSel.value;
+  if (!r) return;
+  const items = await fetch(`/api/routes/${encodeURIComponent(r)}/vehicles`).then(r=>r.json());
+  if (!items.length) return;
+  items.forEach(v=>{
+    L.marker([v.lat, v.lon]).addTo(markersLayer)
+     .bindPopup(`${r} · ${v.id || ""}`);
+  });
+}
+
+setTexts();
+tabSwitch("stop");
+
+// auto-detect language once (only first visit)
+if (!localStorage.getItem("langSetOnce")){
+  localStorage.setItem("langSetOnce","1");
+  $("#langSel").value = lang;
+  setTexts();
+}
+</script>
+</body>
+</html>
