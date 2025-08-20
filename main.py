@@ -3,13 +3,13 @@ import json
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pytz
 import requests
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 # -------------------------------------------------------------------
 # Alap beállítások
@@ -20,13 +20,12 @@ BUILD = str(int(datetime.now(timezone.utc).timestamp()))
 UK_TZ = pytz.timezone("Europe/London")
 
 BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "data"            # ide kerül a statikus/kinyert GTFS
-CACHE_DIR = BASE_DIR / "cache"          # ide a feldolgozott/gyorsítótár
+DATA_DIR = BASE_DIR / "data"            # statikus/kinyert GTFS
+CACHE_DIR = BASE_DIR / "cache"          # gyorsítótár
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# FONTOS: a / gyökér a frontend, a Swagger a /docs alatt
-app = FastAPI(title="Bluestar Bus – API", version=APP_VERSION, docs_url="/docs", redoc_url=None)
+app = FastAPI(title="Bluestar Bus – API", version=APP_VERSION, docs_url="/api", redoc_url=None)
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,18 +33,6 @@ app.add_middleware(
     allow_headers=["*"],
     allow_methods=["*"],
 )
-
-# Frontend kiszolgálás
-@app.get("/", include_in_schema=False)
-def root_html():
-    idx = BASE_DIR / "index.html"
-    if not idx.exists():
-        return HTMLResponse("<h1>Frontend hiányzik (index.html)</h1>", status_code=200)
-    return HTMLResponse(idx.read_text(encoding="utf-8"))
-
-@app.get("/index.html", include_in_schema=False)
-def index_file():
-    return FileResponse(str(BASE_DIR / "index.html"), media_type="text/html")
 
 # -------------------------------------------------------------------
 # Kicsi utilok
@@ -96,26 +83,30 @@ def set_live_cfg(payload: Dict[str, str]):
         raise HTTPException(400, "feed_url is required")
     _write_json(LIVE_CFG_PATH, {"feed_url": payload["feed_url"]})
 
+
 @app.get("/api/status")
 def api_status():
     return JSONResponse(_status_ok())
 
+
 @app.get("/api/live/config")
 def api_get_live_cfg():
     return JSONResponse(get_live_cfg())
+
 
 @app.post("/api/live/config")
 def api_set_live_cfg(cfg: Dict[str, str]):
     set_live_cfg(cfg)
     return JSONResponse({"ok": True})
 
+
 # -------------------------------------------------------------------
-# GTFS statikus adatok – loader
-# Előállított fájlok:
+# GTFS statikus adatok – egyszerűsített loader
+# Előfeldolgozott fájlok:
 #   - stops.json: [{id,name}]
-#   - routes.json: [{route}]
-#   - trip_index.json: { TRIP_ID: {"route":"17","headsign":"..."} }
-#   - trip_stops.json: { TRIP_ID: [ {"stop_id":"...","stop_name":"...","dep_utc":"...","stop_sequence":N}, ...] }
+#   - routes.json: [{route}] (kijelzett név/szám)
+#   - trip_index.json: { TRIP_ID: {route_id, route, headsign} }
+#   - trip_stops.json: { TRIP_ID: [ {stop_id, stop_name, dep_utc, stop_sequence} ] }
 # -------------------------------------------------------------------
 
 STOPS_JSON = DATA_DIR / "stops.json"
@@ -127,70 +118,88 @@ def require_data():
     if not all(p.exists() for p in [STOPS_JSON, ROUTES_JSON, TRIP_INDEX_JSON, TRIP_STOPS_JSON]):
         raise HTTPException(503, "Static data not uploaded/processed yet.")
 
+# -------------------------------------------------------------------
+# /api/upload – GTFS zip feldolgozás
+# -------------------------------------------------------------------
+
 @app.post("/api/upload")
 def api_upload(file: UploadFile = File(...)):
     raw = file.file.read()
     z = zipfile.ZipFile(io.BytesIO(raw))
+
     import csv
 
     # stops
     stops = []
     with z.open("stops.txt") as f:
         for row in csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig")):
-            stops.append({"id": row["stop_id"], "name": (row.get("stop_name") or "").strip()})
+            stops.append({"id": row["stop_id"], "name": row.get("stop_name", "").strip()})
     _write_json(STOPS_JSON, stops)
 
-    # routes
-    routes_raw = []
+    # routes – mapping route_id -> display (short > long > id)
+    routes = []
+    route_name_map: Dict[str, str] = {}
     with z.open("routes.txt") as f:
         for row in csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig")):
-            name = row.get("route_short_name") or row.get("route_long_name") or row.get("route_id")
-            routes_raw.append({"route": str(name).strip()})
-    seen, routes = set(), []
-    for r in routes_raw:
-        if r["route"] and r["route"] not in seen:
-            seen.add(r["route"])
-            routes.append(r)
-    routes.sort(key=lambda x: (len(x["route"]), x["route"]))
-    _write_json(ROUTES_JSON, routes)
+            rid = row["route_id"]
+            display = (row.get("route_short_name")
+                       or row.get("route_long_name")
+                       or rid).strip()
+            routes.append({"route": display})
+            route_name_map[rid] = display
+
+    # dedup + rendezés
+    seen = set()
+    uniq_routes = []
+    for r in routes:
+        k = r["route"]
+        if k not in seen:
+            seen.add(k)
+            uniq_routes.append({"route": k})
+    _write_json(ROUTES_JSON, sorted(uniq_routes, key=lambda x: (len(x["route"]), x["route"])))
 
     # trips
-    trips = {}
+    trips: Dict[str, Dict[str, str]] = {}
     with z.open("trips.txt") as f:
         for row in csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig")):
+            rid = row.get("route_id", "")
             trips[row["trip_id"]] = {
-                "route": str(row.get("route_id") or "").strip(),
-                "headsign": (row.get("trip_headsign") or "").strip(),
+                "route_id": rid,
+                "route": route_name_map.get(rid, rid),  # KIJELZETT NÉV/SZÁM
+                "headsign": row.get("trip_headsign", "") or "",
             }
 
-    # stop_times -> CSAK indulási idő
+    # idő konvert segéd
     def parse_hhmmss(s: str) -> timedelta:
         h, m, s2 = s.split(":")
         return timedelta(hours=int(h), minutes=int(m), seconds=int(s2))
 
+    # stop_times – CSAK indulás
     trip_stops: Dict[str, List[Dict[str, Any]]] = {}
     with z.open("stop_times.txt") as f:
         for row in csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig")):
             tid = row["trip_id"]
-            dep = (row.get("departure_time") or "").strip()
+            dep = row.get("departure_time")
             if not dep:
                 continue
             base_date = _now_utc().astimezone(UK_TZ).date()
-            dep_local = datetime.combine(base_date, datetime.min.time()).replace(tzinfo=UK_TZ) + parse_hhmmss(dep)
+            dep_delta = parse_hhmmss(dep)  # támogatja a 24+ órát is
+            dep_local = datetime.combine(base_date, datetime.min.time()).replace(tzinfo=UK_TZ) + dep_delta
             dep_utc = dep_local.astimezone(timezone.utc)
+
             trip_stops.setdefault(tid, []).append({
                 "stop_id": row["stop_id"],
-                "stop_name": "",
+                "stop_name": "",  # később kitöltjük
                 "dep_utc": dep_utc.isoformat(),
-                "stop_sequence": int(row.get("stop_sequence") or 0)
+                "stop_sequence": int(row.get("stop_sequence") or 0),
             })
 
-    # stop nevek hozzárendelése
-    name_map = {s["id"]: s["name"] for s in stops}
-    for tid, segs in trip_stops.items():
-        for s in segs:
-            s["stop_name"] = name_map.get(s["stop_id"], s["stop_id"])
-        segs.sort(key=lambda x: x["stop_sequence"])
+    # stop nevek hozzárendelése + sorrend
+    stop_name_map = {s["id"]: s["name"] for s in stops}
+    for tid, arr in trip_stops.items():
+        for it in arr:
+            it["stop_name"] = stop_name_map.get(it["stop_id"], it["stop_id"])
+        arr.sort(key=lambda x: x["stop_sequence"])
 
     _write_json(TRIP_INDEX_JSON, trips)
     _write_json(TRIP_STOPS_JSON, trip_stops)
@@ -206,10 +215,11 @@ def api_stops_search(q: str):
     require_data()
     ql = q.strip().lower()
     items = _read_json(STOPS_JSON, [])
-    return JSONResponse([s for s in items if ql in s["name"].lower()][:20])
+    res = [s for s in items if ql in s["name"].lower()][:20]
+    return JSONResponse(res)
 
 # -------------------------------------------------------------------
-# Élő cache + normalizálás
+# Élő adat (SIRI-VM) – cache
 # -------------------------------------------------------------------
 
 LIVE_CACHE_PATH = CACHE_DIR / "siri_vm.json"
@@ -218,21 +228,14 @@ LIVE_CACHE_MAX_AGE = 20  # mp
 def fetch_live() -> Dict[str, Any]:
     cfg = get_live_cfg()
     url = cfg.get("feed_url")
-    cache = _read_json(LIVE_CACHE_PATH, default=None)
-
-    # friss cache elég
-    if cache:
-        try:
-            age = _now_utc() - datetime.fromisoformat(cache["ts"])
-            if age.total_seconds() <= LIVE_CACHE_MAX_AGE:
-                return cache
-        except Exception:
-            pass
-
     if not url:
-        empty = {"records": [], "ts": _now_utc().isoformat()}
-        _write_json(LIVE_CACHE_PATH, empty)
-        return empty
+        return {"records": [], "ts": _now_utc().isoformat()}
+
+    cache = _read_json(LIVE_CACHE_PATH, default=None)
+    if cache:
+        age = _now_utc() - datetime.fromisoformat(cache["ts"])
+        if age.total_seconds() <= LIVE_CACHE_MAX_AGE:
+            return cache
 
     try:
         r = requests.get(url, timeout=10)
@@ -246,32 +249,24 @@ def fetch_live() -> Dict[str, Any]:
         deliveries = payload.get("Siri", {}).get("ServiceDelivery", {}).get("VehicleMonitoringDelivery", [])
         for d in deliveries:
             for va in d.get("VehicleActivity", []):
-                mvj = va.get("MonitoredVehicleJourney", {}) or {}
+                mvj = va.get("MonitoredVehicleJourney", {})
                 vt = va.get("RecordedAtTime") or va.get("ValidUntilTime")
                 try:
-                    ts = datetime.fromisoformat((vt or "").replace("Z", "+00:00"))
+                    ts = datetime.fromisoformat((vt or "").replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
                 except Exception:
                     ts = _now_utc()
-                loc = mvj.get("VehicleLocation") or {}
-                line = (mvj.get("PublishedLineName") or mvj.get("LineRef") or "") or ""
-                vref = (mvj.get("VehicleRef") or mvj.get("VehicleId") or "") or ""
-
-                # csak ha van azonosítható jármű + pozíció
-                if not vref or loc.get("Latitude") is None or loc.get("Longitude") is None:
-                    continue
 
                 records.append({
-                    "line": str(line).strip(),
-                    "vehicle_ref": str(vref).strip(),
+                    "line": str(mvj.get("PublishedLineName") or mvj.get("LineRef") or "").strip(),
+                    "vehicle_ref": str(mvj.get("VehicleRef") or mvj.get("VehicleId") or "").strip(),
                     "destination": (mvj.get("DestinationName") or "").strip(),
                     "bearing": mvj.get("Bearing"),
-                    "lat": loc.get("Latitude"),
-                    "lon": loc.get("Longitude"),
-                    "timestamp_utc": ts.replace(tzinfo=timezone.utc).isoformat(),
-                    # ha lenne per-stop ETA:
+                    "lat": (mvj.get("VehicleLocation") or {}).get("Latitude"),
+                    "lon": (mvj.get("VehicleLocation") or {}).get("Longitude"),
+                    "timestamp_utc": ts.isoformat(),
                     "expected_departure_utc": (
                         ((mvj.get("MonitoredCall") or {}).get("ExpectedDepartureTime"))
-                        or (((mvj.get("OnwardCalls") or {}).get("OnwardCall") or [{}])[0].get("ExpectedDepartureTime"))
+                        or ((mvj.get("OnwardCalls") or {}).get("OnwardCall") or [{}])[0].get("ExpectedDepartureTime")
                     ),
                 })
     except Exception:
@@ -281,15 +276,17 @@ def fetch_live() -> Dict[str, Any]:
     _write_json(LIVE_CACHE_PATH, cache)
     return cache
 
-# route-szintű Live jelzés (ExpectedDepartureTime nélkül is)
 def live_lookup_for_stop(stop_id: str) -> Dict[str, Dict[str, Any]]:
+    """Megállóhoz a legfrissebb élő (route-szintű) indulás jelzés."""
     live = fetch_live()["records"]
     now = _now_utc()
     best: Dict[str, Dict[str, Any]] = {}
+
     for r in live:
-        route = (r.get("line") or "").strip()
+        route = r.get("line", "").strip()
         if not route:
             continue
+
         exp = r.get("expected_departure_utc")
         exp_dt = None
         if exp:
@@ -297,56 +294,64 @@ def live_lookup_for_stop(stop_id: str) -> Dict[str, Dict[str, Any]]:
                 exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00")).astimezone(timezone.utc)
             except Exception:
                 exp_dt = None
-        try:
-            ts = datetime.fromisoformat(r["timestamp_utc"])
-        except Exception:
-            ts = now
-        # csak friss activity (<= 120 mp)
+
+        ts = datetime.fromisoformat(r["timestamp_utc"])
         if (now - ts).total_seconds() > 120:
             continue
+
         cur = best.get(route)
         cand = {"is_live": True, "expected_dep_utc": exp_dt, "ts": ts}
         if not cur or ts > cur["ts"]:
             best[route] = cand
+
     return best
 
 # -------------------------------------------------------------------
-# Következő indulások – csak indulás, HH:MM, Due/live jelzés
+# Következő indulások
 # -------------------------------------------------------------------
 
 @app.get("/api/stops/{stop_id}/next_departures")
 def api_next_departures(stop_id: str, window: int = 60):
     """
-    Visszaadja a következő indulásokat adott megállóból (csak indulás, HH:MM).
-    'Due' ha élő és ~1 percen belül.
+    Következő indulások (csak indulás, HH:MM).
+    'Due' ha élő és esedékes (<= 0 perc és >= -1 perc).
     """
     require_data()
-
     trips: Dict[str, Dict[str, Any]] = _read_json(TRIP_INDEX_JSON, {})
     trip_stops: Dict[str, List[Dict[str, Any]]] = _read_json(TRIP_STOPS_JSON, {})
 
     now = _now_utc()
     end = now + timedelta(minutes=max(1, min(window, 480)))
+
     live_by_route = live_lookup_for_stop(stop_id)
 
     rows: List[Dict[str, Any]] = []
+
     for tid, meta in trips.items():
-        for s in trip_stops.get(tid, []):
+        segments = trip_stops.get(tid) or []
+        for s in segments:
             if s["stop_id"] != stop_id:
                 continue
             dep = datetime.fromisoformat(s["dep_utc"])
-            if dep < now - timedelta(minutes=1) or dep > end:
+            if dep < now - timedelta(minutes=1):
                 continue
-            route = str(meta.get("route") or "").strip()
+            if dep > end:
+                continue
+
+            route_display = str(meta.get("route") or "").strip()
             headsign = meta.get("headsign") or ""
-            live_info = live_by_route.get(route)
-            is_live = bool(live_info and live_info.get("is_live"))
-            dep_use = live_info.get("expected_dep_utc") if (is_live and live_info.get("expected_dep_utc")) else dep
+            live_info = live_by_route.get(route_display)
+            is_live = bool(live_info and live_info.get("is_live", False))
+
+            dep_use = dep
+            if is_live and live_info.get("expected_dep_utc"):
+                dep_use = live_info["expected_dep_utc"]
+
             mins_to = int((dep_use - now).total_seconds() // 60)
-            is_due = is_live and -1 <= mins_to <= 0
+            is_due = is_live and (-1 <= mins_to <= 0)
 
             rows.append({
-                "route": route or headsign or "–",
+                "route": route_display or headsign or "–",
                 "destination": headsign or "–",
                 "time_iso": dep_use.isoformat(),
                 "time_display": "Due" if is_due else fmt_hhmm(dep_use),
@@ -355,18 +360,8 @@ def api_next_departures(stop_id: str, window: int = 60):
                 "trip_id": tid,
             })
 
-    # egyszerű dedupe (route+dest+time_display)
-    seen = set()
-    clean = []
-    for r in rows:
-        key = (r["route"], r["destination"], r["time_display"])
-        if key in seen:
-            continue
-        seen.add(key)
-        clean.append(r)
-
-    clean.sort(key=lambda r: (not r["is_due"], r["time_iso"]))
-    return {"departures": clean}
+    rows.sort(key=lambda r: (not r["is_due"], r["time_iso"]))
+    return {"departures": rows}
 
 # -------------------------------------------------------------------
 # Trip részletek – csak indulás
@@ -381,8 +376,9 @@ def api_trip_details(trip_id: str):
     if not meta:
         raise HTTPException(404, "Trip not found")
 
-    segments = trip_stops.get(trip_id, [])
+    segments = trip_stops.get(trip_id) or []
     now = _now_utc()
+
     out = []
     for s in segments:
         dep = datetime.fromisoformat(s["dep_utc"])
@@ -394,10 +390,15 @@ def api_trip_details(trip_id: str):
             "is_live": False,
             "is_due": False,
         })
-    return {"route": meta.get("route") or "", "headsign": meta.get("headsign") or "", "stops": out}
+
+    return {
+        "route": meta.get("route") or "",
+        "headsign": meta.get("headsign") or "",
+        "stops": out
+    }
 
 # -------------------------------------------------------------------
-# Vonal kereső + járművek (csak ténylegesen közlekedők)
+# Vonal járművek (≤60s friss)
 # -------------------------------------------------------------------
 
 @app.get("/api/routes/search")
@@ -405,45 +406,48 @@ def api_routes_search(q: str):
     require_data()
     ql = q.strip().lower()
     items = _read_json(ROUTES_JSON, [])
-    return JSONResponse([r for r in items if ql in r["route"].lower()][:20])
+    res = [r for r in items if ql in r["route"].lower()][:20]
+    return JSONResponse(res)
 
 @app.get("/api/routes/{route}/vehicles")
 def api_route_vehicles(route: str):
-    """
-    Csak a megadott vonal valósan közlekedő járművei:
-      - vehicle_ref KÖTELEZŐ
-      - csak friss rekord (<= 30 mp)
-      - vehicle_ref szerinti dedupe (legfrissebb állapot marad)
-    """
     live = fetch_live()["records"]
     now = _now_utc()
-    fresh_limit = 30  # mp
+    fresh_limit = 60  # mp
 
     by_vehicle: Dict[str, Dict[str, Any]] = {}
     for r in live:
-        if str(r.get("line", "")).strip().lower() != str(route).strip().lower():
+        if str(r.get("line", "")).strip() != str(route).strip():
             continue
-        vref = (r.get("vehicle_ref") or "").strip()
-        if not vref:
+        if not r.get("lat") or not r.get("lon"):
             continue
-        lat, lon = r.get("lat"), r.get("lon")
-        if lat is None or lon is None:
-            continue
-        try:
-            ts = datetime.fromisoformat(r["timestamp_utc"])
-        except Exception:
-            continue
+        ts = datetime.fromisoformat(r["timestamp_utc"])
         if (now - ts).total_seconds() > fresh_limit:
+            continue
+        vref = r.get("vehicle_ref") or ""
+        if not vref:
             continue
         cur = by_vehicle.get(vref)
         if not cur or ts > datetime.fromisoformat(cur["timestamp"]):
             by_vehicle[vref] = {
                 "vehicle_ref": vref,
-                "lat": lat,
-                "lon": lon,
+                "lat": r["lat"],
+                "lon": r["lon"],
                 "bearing": r.get("bearing"),
                 "timestamp": ts.isoformat(),
                 "label": f'{route} · {r.get("destination","")}'.strip(),
             }
 
     return {"vehicles": list(by_vehicle.values())}
+
+# -------------------------------------------------------------------
+# Frontend (index.html) kiszolgálása
+# -------------------------------------------------------------------
+
+INDEX_PATH = BASE_DIR / "index.html"
+
+@app.get("/", response_class=HTMLResponse)
+def serve_index():
+    if INDEX_PATH.exists():
+        return INDEX_PATH.read_text(encoding="utf-8")
+    return HTMLResponse("<h1>Bluestar Bus</h1><p>Upload GTFS at /api</p>")
