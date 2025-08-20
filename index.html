@@ -4,160 +4,250 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Bluestar Bus — stop & route finder</title>
+
 <link rel="preconnect" href="https://unpkg.com">
 <link rel="stylesheet" href="https://unpkg.com/modern-css-reset/dist/reset.min.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
 <style>
-  :root { --bg:#0d1220; --card:#131a2c; --text:#e6e8ef; --muted:#9aa3b2; --accent:#7c8cff; --good:#2bd576; }
-  body { background:var(--bg); color:var(--text); font:16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-  .container{ max-width:980px; margin:24px auto; padding:0 12px; }
-  .row{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-  .card{ background:var(--card); border-radius:16px; padding:16px; box-shadow:0 4px 24px rgba(0,0,0,.25); }
-  .btn{ background:var(--accent); color:#fff; border:none; border-radius:12px; padding:10px 14px; font-weight:600; cursor:pointer; }
-  .input, select{ background:#0f1424; color:var(--text); border:1px solid #202844; border-radius:12px; padding:10px 12px; width:100%; }
-  .list{ display:grid; gap:10px; margin-top:12px; }
-  .item{ background:#0f1424; border-radius:12px; padding:12px; display:flex; align-items:center; justify-content:space-between; }
-  .pill{ width:42px; height:42px; border-radius:999px; background:#1a2442; display:grid; place-items:center; font-weight:800; }
+  /* ——— Board look (mint a fotón) ——— */
+  :root{
+    --bg:#0a0e12;           /* sötét háttér */
+    --panel:#0f1419;        /* kijelző panel */
+    --row:#0c1116;          /* sor háttér */
+    --text:#f3f6f9;         /* fő szöveg (fehér) */
+    --muted:#a9b3bf;        /* halvány */
+    --accent:#7c8cff;       /* gomb */
+    --brand:#2da0ff;        /* bluestar “badge” */
+    --good:#2bd576;         /* élő */
+    --divider:#1a242e;
+  }
+
+  html,body{ background:var(--bg); color:var(--text);
+    font:16px/1.3 "Inter",system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  }
+
+  .wrap{ max-width:1100px; margin:28px auto; padding:0 14px; }
+
+  .header{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    margin-bottom:16px;
+  }
+  .title{
+    display:flex; align-items:center; gap:12px;
+    font-size:clamp(22px,3.4vw,34px); font-weight:800;
+  }
+  .clock{ color:var(--muted); font-weight:600; }
+
+  .lang{ background:#0d1319; color:var(--text); border:1px solid #233040;
+    padding:10px 12px; border-radius:10px; min-width:100px;
+  }
+
+  .tabs{ display:flex; gap:10px; margin:12px 0 16px; }
+  .tab{ background:#0d1319; border:1px solid #233040; color:var(--text);
+    padding:10px 16px; border-radius:999px; cursor:pointer; font-weight:700;
+  }
+  .tab.active{ background:#1b2430; }
+
+  .panel{ background:var(--panel); border-radius:14px; padding:14px; box-shadow:0 8px 30px rgba(0,0,0,.35); }
+
+  .row{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .input, select{
+    background:#0d1319; color:var(--text); border:1px solid #233040;
+    padding:12px 12px; border-radius:10px; min-height:44px;
+  }
+  .btn{
+    background:var(--accent); border:none; color:#fff; font-weight:800;
+    padding:12px 16px; border-radius:10px; cursor:pointer;
+  }
+
+  /* ——— “Departures board” lista ——— */
+  .board{ background:#0b1015; border-radius:12px; overflow:hidden; border:1px solid var(--divider); }
+  .board-head{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 14px; background:#0c1218; border-bottom:1px solid var(--divider);
+    font-weight:800; letter-spacing:.2px;
+  }
+  .board-head .r{
+    display:flex; align-items:center; gap:18px;
+  }
+  .board-rows{ display:grid; }
+
+  .dep{
+    display:grid; grid-template-columns: 86px 1fr 120px 90px;
+    align-items:center; gap:18px;
+    padding:14px 16px; border-bottom:1px solid var(--divider);
+    background:var(--row);
+  }
+  .dep:nth-child(even){ background:#0b1218; }
+
+  .num{
+    font-weight:900; font-size:28px; letter-spacing:.5px;
+    display:flex; align-items:center; gap:10px;
+  }
+  .num .badge{
+    background:#12202c; color:#cfe6ff; padding:4px 8px; border-radius:6px;
+    border:1px solid #203042; font-size:11px; font-weight:800;
+  }
+
+  .dest{ font-size:22px; font-weight:800; }
+  .when{ font-size:22px; font-weight:900; text-align:right; }
+  .brand{
+    margin-left:auto; justify-self:end;
+    padding:8px 10px; border-radius:6px; background:#0a1520; border:1px solid #1a3146;
+    color:#cfe6ff; font-weight:900; text-transform:lowercase;
+  }
+
   .muted{ color:var(--muted); }
-  .good{ color:var(--good); }
-  .blink{ animation:blink 1s step-start infinite; }
-  @keyframes blink { 50%{ opacity:0; } }
-  .tabs{ display:flex; gap:8px; margin:16px 0; }
-  .tab{ padding:10px 14px; border-radius:999px; background:#0f1424; cursor:pointer; }
-  .tab.active{ background:#2a3354; }
-  .map{ height:360px; border-radius:12px; overflow:hidden; }
-  .lang{ margin-left:auto; }
-  .title { font-size:clamp(22px, 4vw, 34px); font-weight:800; display:flex; align-items:center; gap:10px }
+  .live{ color:var(--good); }
+  .blink{ animation:blink 1s steps(1,end) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+
+  /* ——— kártyák a másik oldalon (útvonal + térkép) ——— */
+  .map{ height:420px; border-radius:12px; overflow:hidden; margin-top:12px; }
+  .hint{ color:var(--muted); margin-top:8px; }
+
+  /* mobil finomítás */
+  @media (max-width: 640px){
+    .dep{ grid-template-columns: 70px 1fr 90px 74px; gap:12px; padding:12px; }
+    .num{ font-size:24px; }
+    .dest{ font-size:19px; }
+    .when{ font-size:19px; }
+  }
 </style>
 </head>
 <body>
-  <div class="container">
-    <div class="row">
-      <div class="title">🚌 <span id="app-title"></span></div>
-      <select id="lang" class="input lang" style="width:100px"></select>
-    </div>
-
-    <div class="muted" style="margin:6px 0 18px">
-      <span id="ukTime">–:–</span> · <span id="refreshLbl"></span>
+  <div class="wrap">
+    <div class="header">
+      <div class="title">🚌 <span id="appTitle">Bluestar Bus — stop & route finder</span></div>
+      <div class="clock"><span id="ukTime">--:--:--</span></div>
+      <select id="lang" class="lang"></select>
     </div>
 
     <div class="tabs">
-      <div id="tabStop" class="tab active"></div>
-      <div id="tabRoute" class="tab"></div>
+      <button id="tabStop"  class="tab active">Stop</button>
+      <button id="tabRoute" class="tab">Route</button>
     </div>
 
-    <!-- Stop card -->
-    <div id="stopCard" class="card">
+    <!-- STOP PANEL -->
+    <section id="stopCard" class="panel">
       <div class="row">
-        <input id="stopQuery" class="input" placeholder="" />
-        <input id="windowMin" class="input" type="number" value="60" style="max-width:140px" />
-        <button id="stopSearchBtn" class="btn"></button>
+        <input id="stopQuery" class="input" placeholder="Stop name" style="flex:1 1 380px" />
+        <input id="windowMin" class="input" type="number" value="60" style="width:130px" />
+        <button id="stopSearchBtn" class="btn">Search</button>
       </div>
-      <select id="stopSelect" class="input" style="margin-top:10px"></select>
-      <div class="muted" style="margin-top:6px">
-        <span id="selectedStopLbl"></span>
-        <span style="float:right"><span id="refreshEvery"></span></span>
-      </div>
-      <div id="stopList" class="list"></div>
-      <div class="muted" style="margin-top:8px">Build: <span id="build"></span> · Cache-bypass</div>
-    </div>
+      <select id="stopSelect" class="input" style="width:100%; margin-bottom:12px"></select>
 
-    <!-- Route card -->
-    <div id="routeCard" class="card" style="display:none">
-      <div class="row">
-        <input id="routeQuery" class="input" placeholder="" />
-        <button id="routeSearchBtn" class="btn"></button>
+      <div class="board">
+        <div class="board-head">
+          <div>Departures</div>
+          <div class="r">
+            <div class="muted" id="selStopLbl">Selected stop: –</div>
+            <div class="muted">Refresh every 20 s</div>
+          </div>
+        </div>
+        <div id="depRows" class="board-rows"></div>
       </div>
-      <select id="routeSelect" class="input" style="margin-top:10px"></select>
-      <div id="map" class="map" style="margin-top:12px"></div>
-      <div class="muted" style="margin-top:8px" id="mapHint"></div>
-    </div>
+
+      <div class="muted" style="margin-top:8px">
+        Build: <span id="build">–</span>
+      </div>
+    </section>
+
+    <!-- ROUTE PANEL -->
+    <section id="routeCard" class="panel" style="display:none">
+      <div class="row">
+        <input id="routeQuery" class="input" placeholder="Route" style="flex:1 1 380px" />
+        <button id="routeSearchBtn" class="btn">Search</button>
+      </div>
+      <select id="routeSelect" class="input" style="width:100%; margin-top:10px"></select>
+      <div id="map" class="map"></div>
+      <div class="hint">If there are no live vehicles on the route, the map will be empty.</div>
+    </section>
   </div>
 
 <script>
-/* ---------------- i18n ---------------- */
-const I18N = {
-  EN:{app:"Bluestar Bus — stop & route finder",stopTab:"Stop",routeTab:"Route",search:"Search",stopName:"Stop name",window:"Window (min)",resultsChoose:"Results — choose a stop",chosenStop:"Selected stop:",refreshEvery:"Refresh every 20 s",ukTime:"UK time:",mapHint:"If there are no live vehicles on the route, the map will be empty.",destination:"Destination",departure:"Departure",due:"Due"},
-  DE:{app:"Bluestar Bus — Haltestellen & Linien",stopTab:"Haltestelle",routeTab:"Linie",search:"Suche",stopName:"Haltestellenname",window:"Zeitfenster (Min.)",resultsChoose:"Treffer — wähle eine Haltestelle",chosenStop:"Gewählte Haltestelle:",refreshEvery:"Aktualisierung alle 20 s",ukTime:"UK-Zeit:",mapHint:"Wenn keine Live-Fahrzeuge vorhanden sind, bleibt die Karte leer.",destination:"Ziel",departure:"Abfahrt",due:"Due"},
-  HU:{app:"Bluestar Bus — megálló & járat kereső",stopTab:"Megálló",routeTab:"Vonal",search:"Keresés",stopName:"Megálló név",window:"Időablak (perc)",resultsChoose:"Találatok — válassz megállót",chosenStop:"Választott megálló:",refreshEvery:"Frissítés 20 s",ukTime:"UK idő:",mapHint:"Ha nincs élő jármű a vonalon, a térkép üres marad.",destination:"Cél",departure:"Indulás",due:"Due"},
-  PL:{app:"Bluestar Bus — wyszukiwarka przystanków i linii",stopTab:"Przystanek",routeTab:"Linia",search:"Szukaj",stopName:"Nazwa przystanku",window:"Okno (min)",resultsChoose:"Wyniki — wybierz przystanek",chosenStop:"Wybrany przystanek:",refreshEvery:"Odświeżanie co 20 s",ukTime:"Czas UK:",mapHint:"Jeśli brak pojazdów na żywo, mapa będzie pusta.",destination:"Kierunek",departure:"Odjazd",due:"Due"},
-  RO:{app:"Bluestar Bus — căutare stații & linii",stopTab:"Stație",routeTab:"Linie",search:"Căutare",stopName:"Numele stației",window:"Fereastră (min)",resultsChoose:"Rezultate — alege o stație",chosenStop:"Stație selectată:",refreshEvery:"Reîmprospătare la 20 s",ukTime:"Ora UK:",mapHint:"Dacă nu există vehicule live, harta rămâne goală.",destination:"Destinație",departure:"Plecare",due:"Due"}
+/* ================== I18N ================== */
+const I18N={
+  EN:{app:"Bluestar Bus — stop & route finder", Stop:"Stop", Route:"Route", Search:"Search",
+      StopName:"Stop name", Window:"Window (min)", Departures:"Departures",
+      SelectedStop:"Selected stop:", Refresh:"Refresh every 20 s", Due:"Due",
+      MapHint:"If there are no live vehicles on the route, the map will be empty.",
+      Brand:"bluestar"},
+  HU:{app:"Bluestar Bus — megálló & járat kereső", Stop:"Megálló", Route:"Vonal", Search:"Keresés",
+      StopName:"Megálló név", Window:"Időablak (perc)", Departures:"Indulások",
+      SelectedStop:"Választott megálló:", Refresh:"Frissítés 20 s", Due:"Due",
+      MapHint:"Ha nincs élő jármű a vonalon, a térkép üres marad.",
+      Brand:"bluestar"},
+  DE:{app:"Bluestar Bus — Haltestellen & Linien", Stop:"Haltestelle", Route:"Linie", Search:"Suche",
+      StopName:"Haltestellenname", Window:"Zeitfenster (Min.)", Departures:"Abfahrten",
+      SelectedStop:"Gewählte Haltestelle:", Refresh:"Aktualisierung alle 20 s", Due:"Due",
+      MapHint:"Wenn keine Live-Fahrzeuge vorhanden sind, bleibt die Karte leer.",
+      Brand:"bluestar"}
 };
-const LANGS = ["EN","DE","HU","PL","RO"];
+const LANGS=["EN","HU","DE"];
 function guessLang(){ const n=(navigator.language||"en").slice(0,2).toUpperCase(); return LANGS.includes(n)?n:"EN"; }
-let LANG = localStorage.getItem("lang") || guessLang();
+let LANG=localStorage.getItem("lang")||guessLang();
+function t(k){ return (I18N[LANG]||I18N.EN)[k] || k; }
 
-/* ---------------- helpers ---------------- */
-function tr(key){ return (I18N[LANG]||I18N.EN)[key] || key; }
-function hhmm(x){ const d = typeof x==="string" ? new Date(x) : x; return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false}); }
-function el(tag, cls, txt){ const e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e; }
-
-/* ---------------- UI init ---------------- */
-const appTitle=document.getElementById("app-title");
+/* ================== DOM ================== */
+const appTitle=document.getElementById("appTitle");
 const langSel=document.getElementById("lang");
+const ukTime=document.getElementById("ukTime");
 const tabStop=document.getElementById("tabStop");
 const tabRoute=document.getElementById("tabRoute");
-const ukTimeLbl=document.getElementById("ukTime");
-const refreshLbl=document.getElementById("refreshLbl");
 const stopCard=document.getElementById("stopCard");
 const routeCard=document.getElementById("routeCard");
+
 const stopQuery=document.getElementById("stopQuery");
 const windowMin=document.getElementById("windowMin");
 const stopSearchBtn=document.getElementById("stopSearchBtn");
 const stopSelect=document.getElementById("stopSelect");
-const selectedStopLbl=document.getElementById("selectedStopLbl");
-const refreshEvery=document.getElementById("refreshEvery");
-const stopList=document.getElementById("stopList");
+const selStopLbl=document.getElementById("selStopLbl");
+const depRows=document.getElementById("depRows");
 const buildSpan=document.getElementById("build");
+
 const routeQuery=document.getElementById("routeQuery");
 const routeSearchBtn=document.getElementById("routeSearchBtn");
 const routeSelect=document.getElementById("routeSelect");
-const mapHint=document.getElementById("mapHint");
 
-buildSpan.textContent="–";
-
-/* language selector */
+/* ================== INIT ================== */
 function fillLang(){
   langSel.innerHTML="";
   LANGS.forEach(code=>{
-    const o=document.createElement("option");
-    o.value=code; o.textContent=code; if(code===LANG) o.selected=true;
-    langSel.appendChild(o);
+    const o=document.createElement("option"); o.value=code; o.textContent=code;
+    if(code===LANG) o.selected=true; langSel.appendChild(o);
   });
 }
-langSel.addEventListener("change", ()=>{ LANG=langSel.value; localStorage.setItem("lang",LANG); applyI18n(); });
-function applyI18n(){
-  appTitle.textContent=tr("app");
-  tabStop.textContent=tr("stopTab");
-  tabRoute.textContent=tr("routeTab");
-  stopQuery.placeholder=tr("stopName");
-  stopSearchBtn.textContent=tr("search");
-  routeQuery.placeholder=tr("routeTab");
-  routeSearchBtn.textContent=tr("search");
-  refreshEvery.textContent=tr("refreshEvery");
-  mapHint.textContent=tr("mapHint");
+function applyI18N(){
+  appTitle.textContent=t("app");
+  tabStop.textContent=t("Stop"); tabRoute.textContent=t("Route");
+  stopQuery.placeholder=t("StopName"); stopSearchBtn.textContent=t("Search");
+  routeQuery.placeholder=t("Route"); routeSearchBtn.textContent=t("Search");
+  document.querySelector(".board-head div").textContent=t("Departures");
+  document.querySelector(".hint").textContent=t("MapHint");
 }
-fillLang(); applyI18n();
+fillLang(); applyI18N();
+langSel.onchange=()=>{ LANG=langSel.value; localStorage.setItem("lang",LANG); applyI18N(); };
 
-/* tabs */
-function showStop(){ tabStop.classList.add("active"); tabRoute.classList.remove("active"); stopCard.style.display="block"; routeCard.style.display="none"; }
-function showRoute(){ tabRoute.classList.add("active"); tabStop.classList.remove("active"); stopCard.style.display="none"; routeCard.style.display="block"; }
-tabStop.onclick=showStop; tabRoute.onclick=showRoute;
-
-/* clock & status */
+/* ================== CLOCK + STATUS ================== */
 async function tick(){
   try{
-    const r = await fetch("/api/status"); const j = await r.json();
-    ukTimeLbl.textContent = `${tr("ukTime")} ${j.uk_time}`;
-    buildSpan.textContent = j.build;
-  }catch(e){}
+    const r=await fetch("/api/status"); const j=await r.json();
+    ukTime.textContent=j.uk_time; buildSpan.textContent=j.build;
+  }catch{}
 }
-setInterval(tick, 1000); tick();
-refreshLbl.textContent = `Refresh every 20 s`;
-refreshEvery.textContent = tr("refreshEvery");
+setInterval(tick,1000); tick();
 
-/* stop search & list */
+/* ================== TABS ================== */
+function showStop(){ tabStop.classList.add("active"); tabRoute.classList.remove("active");
+  stopCard.style.display="block"; routeCard.style.display="none"; }
+function showRoute(){ tabRoute.classList.add("active"); tabStop.classList.remove("active");
+  stopCard.style.display="none"; routeCard.style.display="block"; ensureMap(); }
+tabStop.onclick=showStop; tabRoute.onclick=showRoute;
+
+/* ================== STOP SEARCH ================== */
 stopSearchBtn.onclick = async ()=>{
   const q = stopQuery.value.trim();
   if(!q) return;
@@ -165,110 +255,121 @@ stopSearchBtn.onclick = async ()=>{
   const items = await r.json();
   stopSelect.innerHTML="";
   items.forEach(it=>{
-    const o=document.createElement("option");
-    o.value=it.id; o.textContent=it.name; stopSelect.appendChild(o);
+    const o=document.createElement("option"); o.value=it.id; o.textContent=it.name; stopSelect.appendChild(o);
   });
-  selectedStopLbl.textContent = `${tr("chosenStop")} ${items[0]?.name || "–"}`;
-  if(items[0]){ stopSelect.value=items[0].id; renderDepartures(); }
+  if(items[0]){ stopSelect.value=items[0].id; selStopLbl.textContent=`${t("SelectedStop")} ${items[0].name}`;
+    renderDepartures(); }
 };
 stopSelect.onchange = ()=>{
-  selectedStopLbl.textContent = `${tr("chosenStop")} ${stopSelect.options[stopSelect.selectedIndex]?.text || "–"}`;
+  selStopLbl.textContent=`${t("SelectedStop")} ${stopSelect.options[stopSelect.selectedIndex]?.text||"–"}`;
   renderDepartures();
 };
 
+function hhmm(s){ const d=new Date(s); return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false}); }
+
 async function renderDepartures(){
-  const id = stopSelect.value; if(!id) return;
-  const w = Math.max(1, Number(windowMin.value||60));
-  const r = await fetch(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${w}`);
-  const j = await r.json();
-  stopList.innerHTML="";
+  const id=stopSelect.value; if(!id) return;
+  const w=Math.max(1,Number(windowMin.value||60));
+  const r=await fetch(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${w}`);
+  const j=await r.json();
+
+  depRows.innerHTML="";
   (j.departures||[]).forEach(row=>{
-    const it = el("div","item");
+    const el=document.createElement("div"); el.className="dep";
 
-    const left = el("div","row"); left.style.gap="10px";
-    left.appendChild(el("div","pill", row.route || "–"));
-    const mid = el("div"); mid.appendChild(el("div","", row.destination || "–"));
-    it.appendChild(left); it.appendChild(mid);
+    // bal: nagy járatszám + kis badge
+    const num=document.createElement("div"); num.className="num";
+    num.textContent=row.route || "–";
+    const bd=document.createElement("span"); bd.className="badge"; bd.textContent="route";
+    num.appendChild(bd);
+    el.appendChild(num);
 
-    const right = el("div","");
-    const timeEl = el("span","", row.is_due ? tr("due") : row.time_display);
-    if (row.is_live) timeEl.classList.add("good");
-    if (row.is_due)  timeEl.classList.add("blink");  // VILLOG
-    right.appendChild(timeEl);
-    it.appendChild(right);
+    // célállomás
+    const dest=document.createElement("div"); dest.className="dest"; dest.textContent=row.destination || "–";
+    el.appendChild(dest);
 
-    it.onclick = ()=> openTrip(row.trip_id, row.route, row.destination);
-    stopList.appendChild(it);
+    // indulás: Due villog, élő zöld
+    const when=document.createElement("div");
+    when.className="when"; when.textContent=row.is_due ? t("Due") : row.time_display;
+    if(row.is_due){ when.classList.add("live","blink"); }
+    else if(row.is_live){ when.classList.add("live"); }
+    el.appendChild(when);
+
+    // jobb szélen “bluestar” badge
+    const brand=document.createElement("div"); brand.className="brand"; brand.textContent=t("Brand");
+    el.appendChild(brand);
+
+    // katt – trip részletek
+    el.onclick=()=>openTrip(row.trip_id, row.route, row.destination);
+    depRows.appendChild(el);
   });
 }
 setInterval(renderDepartures, 20000);
 
-/* trip modal */
+/* ================== TRIP MODAL ================== */
+let modal;
 function openTrip(tripId, route, headsign){
   if(!tripId) return;
   (async()=>{
-    const r = await fetch(`/api/trips/${encodeURIComponent(tripId)}`);
-    const j = await r.json();
-    const wrap = document.createElement("div");
-    wrap.style.position="fixed"; wrap.style.inset="0"; wrap.style.background="rgba(0,0,0,.6)";
+    const r=await fetch(`/api/trips/${encodeURIComponent(tripId)}`); const j=await r.json();
+    const wrap=document.createElement("div");
+    wrap.style.position="fixed"; wrap.style.inset="0"; wrap.style.background="rgba(0,0,0,.55)";
     wrap.style.display="grid"; wrap.style.placeItems="center"; wrap.style.zIndex="9999";
-    const box = document.createElement("div");
-    box.className="card"; box.style.maxWidth="700px"; box.style.width="90%";
-    box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <div><strong>Trip</strong> · ${route||""} → ${headsign||""}</div>
-      <button class="btn" id="closeTrip">×</button>
-    </div>`;
-    const list = document.createElement("div"); list.className="list";
+
+    const box=document.createElement("div"); box.className="panel"; box.style.width="min(780px,92vw)";
+    const head=document.createElement("div");
+    head.style.display="flex"; head.style.justifyContent="space-between"; head.style.alignItems="center";
+    head.style.marginBottom="10px";
+    head.innerHTML=`<div style="font-weight:800">Trip · ${route||""} → ${headsign||""}</div>
+                    <button id="closeTrip" class="btn" style="padding:.5rem 0.8rem">×</button>`;
+    box.appendChild(head);
+
     (j.stops||[]).forEach(s=>{
-      const row = document.createElement("div"); row.className="item";
-      const left = document.createElement("div"); left.className="muted"; left.textContent = s.time_display; if(s.is_past) left.style.opacity=.6;
-      const name = document.createElement("div"); name.textContent = s.stop_name; if(s.is_past) name.style.opacity=.6;
-      row.appendChild(left); row.appendChild(name); list.appendChild(row);
+      const row=document.createElement("div"); row.className="dep";
+      row.style.gridTemplateColumns="100px 1fr"; row.style.background="transparent";
+      const t=document.createElement("div"); t.className="muted"; t.style.fontWeight="800"; t.textContent=s.time_display;
+      if(s.is_past) t.style.opacity=.6;
+      const n=document.createElement("div"); n.textContent=s.stop_name;
+      if(s.is_past) n.style.opacity=.6;
+      row.appendChild(t); row.appendChild(n); box.appendChild(row);
     });
-    box.appendChild(list); wrap.appendChild(box); document.body.appendChild(wrap);
-    document.getElementById("closeTrip").onclick = ()=>{ document.body.removeChild(wrap); };
+
+    wrap.appendChild(box); document.body.appendChild(wrap);
+    document.getElementById("closeTrip").onclick=()=>document.body.removeChild(wrap);
   })();
 }
 
-/* route + map */
+/* ================== ROUTE + MAP ================== */
 let map, markers=[];
 function ensureMap(){
   if(map) return;
-  map = L.map('map', { zoomControl:true }).setView([50.9097, -1.4044], 12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'Leaflet | © OpenStreetMap'}).addTo(map);
+  map=L.map('map',{zoomControl:true}).setView([50.9097,-1.4044],12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,
+    attribution:'Leaflet | © OpenStreetMap'}).addTo(map);
 }
+
 routeSearchBtn.onclick = async ()=>{
-  const q = routeQuery.value.trim();
-  if(!q) return;
-  const r = await fetch(`/api/routes/search?q=${encodeURIComponent(q)}`);
-  const items = await r.json();
-  routeSelect.innerHTML="";
-  items.forEach(it=>{
-    const o=document.createElement("option");
-    o.value=it.route; o.textContent=it.route; routeSelect.appendChild(o);
-  });
+  const q=routeQuery.value.trim(); if(!q) return;
+  const r=await fetch(`/api/routes/search?q=${encodeURIComponent(q)}`); const items=await r.json();
+  routeSelect.innerHTML=""; items.forEach(it=>{ const o=document.createElement("option"); o.value=it.route; o.textContent=it.route; routeSelect.appendChild(o); });
   if(items[0]){ routeSelect.value=items[0].route; renderVehicles(); }
 };
-routeSelect.onchange = renderVehicles;
+routeSelect.onchange=renderVehicles;
 
 async function renderVehicles(){
   ensureMap();
   markers.forEach(m=>m.remove()); markers=[];
-  const route = routeSelect.value; if(!route) return;
-  const r = await fetch(`/api/routes/${encodeURIComponent(route)}/vehicles`);
-  const j = await r.json();
-  const vs = j.vehicles||[];
+  const route=routeSelect.value; if(!route) return;
+  const r=await fetch(`/api/routes/${encodeURIComponent(route)}/vehicles`); const j=await r.json();
+  const vs=j.vehicles||[];
   vs.forEach(v=>{
-    const m = L.marker([v.lat, v.lon]).addTo(map).bindPopup(`${route} · ${v.label||""}`);
+    const m=L.marker([v.lat,v.lon]).addTo(map).bindPopup(`${route} · ${v.label||""}`);
     markers.push(m);
   });
-  if(vs.length){
-    const g = L.featureGroup(markers);
-    map.fitBounds(g.getBounds().pad(0.2));
-  }
+  if(vs.length){ const g=L.featureGroup(markers); map.fitBounds(g.getBounds().pad(0.2)); }
 }
 
-/* auto start */
+/* ================== AUTOSTART ================== */
 showStop();
 </script>
 </body>
