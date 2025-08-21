@@ -30,9 +30,6 @@
   .map{ height:360px; border-radius:12px; overflow:hidden; }
   .lang{ margin-left:auto; }
   .title { font-size:clamp(22px,4vw,34px); font-weight:800; display:flex; align-items:center; gap:10px }
-  .gear { background:#213058; border:1px solid #2c3c6a; border-radius:10px; padding:8px 10px; cursor:pointer; }
-  .star { cursor:pointer; user-select:none }
-  .mono{ font-variant-numeric: tabular-nums; }
   .toast{ position:fixed; right:16px; bottom:16px; background:#0f1424; border:1px solid #273153; padding:10px 12px; border-radius:10px; z-index:9999; }
   .modal{ position:fixed; inset:0; display:none; place-items:center; background:rgba(0,0,0,.5); z-index:9998; }
   .box{ background:#0f1424; border:1px solid #233055; border-radius:16px; padding:16px; width:min(720px,92vw); }
@@ -45,7 +42,7 @@
     <div class="row">
       <div class="title">🚌 <span id="app-title">Bluestar Bus — stop & route finder</span></div>
       <div class="muted" id="ukTime" style="margin-left:12px">UK: –:–</div>
-      <button class="btn ghost" id="openCfg" title="Settings">⚙️ Settings</button>
+      <button class="btn ghost" id="openCfg" type="button" title="Settings">⚙️ Settings</button>
       <select id="lang" class="input lang" style="width:100px"></select>
     </div>
 
@@ -64,7 +61,7 @@
       <div class="row">
         <input id="stopQuery" class="input" placeholder="Stop name" />
         <input id="windowMin" class="input" type="number" value="60" style="max-width:140px" />
-        <button id="stopSearchBtn" class="btn">Search</button>
+        <button id="stopSearchBtn" class="btn" type="button">Search</button>
       </div>
       <select id="stopSelect" class="input" style="margin-top:10px"></select>
       <div class="row" style="margin-top:6px; justify-content:space-between">
@@ -78,7 +75,7 @@
     <div id="routeCard" class="card" style="display:none">
       <div class="row">
         <input id="routeQuery" class="input" placeholder="Route number (e.g. 17)" />
-        <button id="routeSearchBtn" class="btn">Search</button>
+        <button id="routeSearchBtn" class="btn" type="button">Search</button>
       </div>
       <select id="routeSelect" class="input" style="margin-top:10px"></select>
       <div id="map" class="map" style="margin-top:12px"></div>
@@ -106,7 +103,7 @@
     <div class="box">
       <div class="row" style="justify-content:space-between;align-items:center">
         <strong>Settings</strong>
-        <button id="closeCfg" class="btn">×</button>
+        <button id="closeCfg" class="btn" type="button">×</button>
       </div>
 
       <div class="hr"></div>
@@ -114,7 +111,7 @@
       <h4>Live feed (BODS SIRI-VM)</h4>
       <div class="row" style="gap:10px">
         <input id="feedUrl" class="input" placeholder="https://data.bus-data.dft.gov.uk/api/v1/datafeed/...?...api_key=..." />
-        <button id="saveFeed" class="btn">Save Live URL</button>
+        <button id="saveFeed" class="btn" type="button">Save Live URL</button>
       </div>
       <div class="muted hint" style="margin-top:6px">Paste the full BODS Vehicle Monitoring URL including <code>api_key</code>.</div>
 
@@ -123,7 +120,7 @@
       <h4>Upload GTFS ZIP</h4>
       <form id="gtfsForm" class="row" style="gap:10px" onsubmit="return false;">
         <input id="gtfsFile" class="input" type="file" accept=".zip" />
-        <button id="uploadGtfsBtn" class="btn">Upload GTFS</button>
+        <button id="uploadGtfsBtn" class="btn" type="button">Upload GTFS</button>
       </form>
       <div class="muted hint" style="margin-top:6px">Sent to <code>/api/upload</code> as <code>multipart/form-data</code> with field <code>file</code>.</div>
     </div>
@@ -132,240 +129,237 @@
   <div id="toast" class="toast" style="display:none"></div>
 
 <script>
-/* =========================================================
-   i18n (EN, HU, DE, PL, RO) – rövidített szövegek
-========================================================= */
-const I18N = {
- EN:{stop:"Stop",route:"Route",fav:"Favourites",search:"Search",stopName:"Stop name",routeNum:"Route number (e.g. 17)",selStop:"Selected stop:",refresh20:"Refresh every 20 s",settings:"Settings",upload:"Upload GTFS",save:"Save Live URL",uk:"UK",noRes:"No results",due:"Due"},
- HU:{stop:"Megálló",route:"Vonal",fav:"Kedvencek",search:"Keresés",stopName:"Megálló név",routeNum:"Vonal száma (pl. 17)",selStop:"Választott megálló:",refresh20:"Frissítés 20 s",settings:"Beállítások",upload:"GTFS feltöltés",save:"Élő URL mentése",uk:"UK",noRes:"Nincs találat",due:"Due"},
- DE:{stop:"Haltestelle",route:"Linie",fav:"Favoriten",search:"Suche",stopName:"Haltestellenname",routeNum:"Liniennummer (z. B. 17)",selStop:"Gewählte Haltestelle:",refresh20:"Aktualisierung 20 s",settings:"Einstellungen",upload:"GTFS hochladen",save:"Live-URL speichern",uk:"UK",noRes:"Keine Ergebnisse",due:"Fällig"},
- PL:{stop:"Przystanek",route:"Linia",fav:"Ulubione",search:"Szukaj",stopName:"Nazwa przystanku",routeNum:"Numer linii (np. 17)",selStop:"Wybrany przystanek:",refresh20:"Odświeżanie 20 s",settings:"Ustawienia",upload:"Wyślij GTFS",save:"Zapisz Live URL",uk:"UK",noRes:"Brak wyników",due:"Za chwilę"},
- RO:{stop:"Stație",route:"Linie",fav:"Preferate",search:"Căutare",stopName:"Numele stației",routeNum:"Număr linie (ex. 17)",selStop:"Stație selectată:",refresh20:"Reîmprospătare 20 s",settings:"Setări",upload:"Încărcare GTFS",save:"Salvează Live URL",uk:"UK",noRes:"Fără rezultate",due:"Imediat"}
-};
-const LANGS=["EN","HU","DE","PL","RO"];
-function guessLang(){const n=(navigator.language||"en").slice(0,2).toUpperCase();return LANGS.includes(n)?n:"EN";}
-let LANG=localStorage.getItem("lang")||guessLang();
-const $=s=>document.querySelector(s);
+window.addEventListener('DOMContentLoaded', () => {
+  /* ===== global error -> toast ===== */
+  const toastEl = document.getElementById('toast');
+  function toast(msg, ok=true){
+    toastEl.textContent = msg;
+    toastEl.style.display = 'block';
+    toastEl.style.borderColor = ok ? '#273153' : '#5b2a2a';
+    toastEl.style.background = ok ? '#0f1424' : '#5b2a2a';
+    setTimeout(()=>toastEl.style.display='none', 3500);
+  }
+  window.addEventListener('error', e => {
+    toast('JS error: ' + (e.message || 'unknown'), false);
+  });
 
-/* =========================================================
-   Helpers
-========================================================= */
-function text(k){return (I18N[LANG]||I18N.EN)[k]||k;}
-function toast(msg, ok=true){const t=$("#toast"); t.textContent=msg; t.style.display="block"; t.style.borderColor=ok?"#273153":"#5b2a2a"; t.style.background=ok?"#0f1424":"#5b2a2a"; setTimeout(()=>t.style.display="none", 3200);}
-function setOptions(el, arr, valueKey, textKey){
-  el.innerHTML="";
-  (arr||[]).forEach(x=>{const o=document.createElement("option"); o.value=String(x[valueKey]); o.textContent=String(x[textKey]); el.appendChild(o);});
-}
-function dedupeBy(arr, key){const m=new Set(); return (arr||[]).filter(x=>{const k=x[key]; if(m.has(k)) return false; m.add(k); return true;});}
-function hhmm(s){const d=new Date(s); return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",hour12:false});}
+  /* ===== i18n ===== */
+  const I18N = {
+    EN:{stop:"Stop",route:"Route",fav:"Favourites",search:"Search",stopName:"Stop name",routeNum:"Route number (e.g. 17)",selStop:"Selected stop:",refresh20:"Refresh every 20 s",settings:"Settings",upload:"Upload GTFS",save:"Save Live URL",uk:"UK",noRes:"No results",due:"Due"},
+    HU:{stop:"Megálló",route:"Vonal",fav:"Kedvencek",search:"Keresés",stopName:"Megálló név",routeNum:"Vonal száma (pl. 17)",selStop:"Választott megálló:",refresh20:"Frissítés 20 s",settings:"Beállítások",upload:"GTFS feltöltés",save:"Élő URL mentése",uk:"UK",noRes:"Nincs találat",due:"Due"},
+    DE:{stop:"Haltestelle",route:"Linie",fav:"Favoriten",search:"Suche",stopName:"Haltestellenname",routeNum:"Liniennummer (z. B. 17)",selStop:"Gewählte Haltestelle:",refresh20:"Aktualisierung 20 s",settings:"Einstellungen",upload:"GTFS hochladen",save:"Live-URL speichern",uk:"UK",noRes:"Keine Ergebnisse",due:"Fällig"},
+    PL:{stop:"Przystanek",route:"Linia",fav:"Ulubione",search:"Szukaj",stopName:"Nazwa przystanku",routeNum:"Numer linii (np. 17)",selStop:"Wybrany przystanek:",refresh20:"Odświeżanie 20 s",settings:"Ustawienia",upload:"Wyślij GTFS",save:"Zapisz Live URL",uk:"UK",noRes:"Brak wyników",due:"Za chwilę"},
+    RO:{stop:"Stație",route:"Linie",fav:"Preferate",search:"Căutare",stopName:"Numele stației",routeNum:"Număr linie (ex. 17)",selStop:"Stație selectată:",refresh20:"Reîmprospătare 20 s",settings:"Setări",upload:"Încărcare GTFS",save:"Salvează Live URL",uk:"UK",noRes:"Fără rezultate",due:"Imediat"}
+  };
+  const LANGS=["EN","HU","DE","PL","RO"];
+  const $=s=>document.querySelector(s);
+  function guessLang(){const n=(navigator.language||"en").slice(0,2).toUpperCase();return LANGS.includes(n)?n:"EN";}
+  let LANG=localStorage.getItem("lang")||guessLang();
+  function text(k){return (I18N[LANG]||I18N.EN)[k]||k;}
 
-/* =========================================================
-   UI refs
-========================================================= */
-const ukTime=$("#ukTime"), buildSpan=$("#build"), refreshLbl=$("#refreshLbl");
-const tabStop=$("#tabStop"), tabRoute=$("#tabRoute"), tabFav=$("#tabFav");
-const stopCard=$("#stopCard"), routeCard=$("#routeCard"), favCard=$("#favCard");
-const stopQuery=$("#stopQuery"), windowMin=$("#windowMin"), stopSearchBtn=$("#stopSearchBtn"), stopSelect=$("#stopSelect"), selectedStopLbl=$("#selectedStopLbl"), stopList=$("#stopList");
-const routeQuery=$("#routeQuery"), routeSearchBtn=$("#routeSearchBtn"), routeSelect=$("#routeSelect");
-const langSel=$("#lang");
+  /* ===== refs ===== */
+  const ukTime=$("#ukTime"), buildSpan=$("#build"), refreshLbl=$("#refreshLbl");
+  const tabStop=$("#tabStop"), tabRoute=$("#tabRoute"), tabFav=$("#tabFav");
+  const stopCard=$("#stopCard"), routeCard=$("#routeCard"), favCard=$("#favCard");
+  const stopQuery=$("#stopQuery"), windowMin=$("#windowMin"), stopSearchBtn=$("#stopSearchBtn"), stopSelect=$("#stopSelect"), selectedStopLbl=$("#selectedStopLbl"), stopList=$("#stopList");
+  const routeQuery=$("#routeQuery"), routeSearchBtn=$("#routeSearchBtn"), routeSelect=$("#routeSelect");
+  const langSel=$("#lang");
+  const cfgModal=$("#cfgModal"), openCfg=$("#openCfg"), closeCfg=$("#closeCfg"),
+        feedUrl=$("#feedUrl"), saveFeed=$("#saveFeed"),
+        gtfsFile=$("#gtfsFile"), uploadGtfsBtn=$("#uploadGtfsBtn");
 
-const cfgModal=$("#cfgModal"), openCfg=$("#openCfg"), closeCfg=$("#closeCfg"),
-      feedUrl=$("#feedUrl"), saveFeed=$("#saveFeed"),
-      gtfsFile=$("#gtfsFile"), uploadGtfsBtn=$("#uploadGtfsBtn");
+  /* ===== i18n apply ===== */
+  function fillLang(){
+    langSel.innerHTML="";
+    LANGS.forEach(c=>{const o=document.createElement("option"); o.value=c; o.textContent=c; if(c===LANG)o.selected=true; langSel.appendChild(o);});
+  }
+  function applyI18n(){
+    tabStop.textContent=text("stop");
+    tabRoute.textContent=text("route");
+    tabFav.textContent=text("fav");
+    stopQuery.placeholder=text("stopName");
+    routeQuery.placeholder=text("routeNum");
+    stopSearchBtn.textContent=text("search");
+    routeSearchBtn.textContent=text("search");
+    refreshLbl.textContent=text("refresh20");
+    openCfg.textContent = "⚙️ " + text("settings");
+    uploadGtfsBtn.textContent = text("upload");
+    saveFeed.textContent = text("save");
+    selectedStopLbl.textContent = `${text("selStop")} –`;
+    $("#refreshEvery").textContent = text("refresh20");
+  }
+  langSel.onchange=()=>{LANG=langSel.value; localStorage.setItem("lang",LANG); applyI18n();};
+  fillLang(); applyI18n();
 
-/* =========================================================
-   Apply i18n
-========================================================= */
-function applyI18n(){
-  tabStop.textContent=text("stop");
-  tabRoute.textContent=text("route");
-  tabFav.textContent=text("fav");
-  stopQuery.placeholder=text("stopName");
-  routeQuery.placeholder=text("routeNum");
-  stopSearchBtn.textContent=text("search");
-  routeSearchBtn.textContent=text("search");
-  refreshLbl.textContent=text("refresh20");
-  $("#openCfg").textContent = "⚙️ " + text("settings");
-  $("#uploadGtfsBtn").textContent = text("upload");
-  $("#saveFeed").textContent = text("save");
-  selectedStopLbl.textContent = `${text("selStop")} –`;
-  $("#refreshEvery").textContent = text("refresh20");
-}
-function fillLang(){
-  langSel.innerHTML="";
-  LANGS.forEach(c=>{const o=document.createElement("option"); o.value=c; o.textContent=c; if(c===LANG)o.selected=true; langSel.appendChild(o);});
-}
-langSel.onchange=()=>{LANG=langSel.value; localStorage.setItem("lang",LANG); applyI18n();};
-fillLang(); applyI18n();
+  /* ===== tabs ===== */
+  function showStop(){ tabStop.classList.add("active"); tabRoute.classList.remove("active"); tabFav.classList.remove("active"); stopCard.style.display="block"; routeCard.style.display="none"; favCard.style.display="none"; }
+  function showRoute(){ tabRoute.classList.add("active"); tabStop.classList.remove("active"); tabFav.classList.remove("active"); routeCard.style.display="block"; stopCard.style.display="none"; favCard.style.display="none"; }
+  function showFav(){ tabFav.classList.add("active"); tabStop.classList.remove("active"); tabRoute.classList.remove("active"); favCard.style.display="block"; stopCard.style.display="none"; routeCard.style.display="none"; }
+  tabStop.addEventListener('click', showStop);
+  tabRoute.addEventListener('click', showRoute);
+  tabFav.addEventListener('click', showFav);
 
-/* =========================================================
-   Tabs
-========================================================= */
-function showStop(){ tabStop.classList.add("active"); tabRoute.classList.remove("active"); tabFav.classList.remove("active"); stopCard.style.display="block"; routeCard.style.display="none"; favCard.style.display="none"; }
-function showRoute(){ tabRoute.classList.add("active"); tabStop.classList.remove("active"); tabFav.classList.remove("active"); routeCard.style.display="block"; stopCard.style.display="none"; favCard.style.display="none"; }
-function showFav(){ tabFav.classList.add("active"); tabStop.classList.remove("active"); tabRoute.classList.remove("active"); favCard.style.display="block"; stopCard.style.display="none"; routeCard.style.display="none"; renderFavs(); }
-tabStop.onclick=showStop; tabRoute.onclick=showRoute; tabFav.onclick=showFav;
-
-/* =========================================================
-   Clock + status
-========================================================= */
-async function tick(){
-  try{
-    const r=await fetch("/api/status");
-    const j=await r.json();
-    ukTime.textContent = `${text("uk")}: ${j.uk_time||"--:--:--"}`;
-    buildSpan.textContent = j.build || "-";
-  }catch(e){}
-}
-setInterval(tick, 1000); tick();
-
-/* =========================================================
-   Settings (live url + GTFS upload)
-========================================================= */
-openCfg.onclick=async()=>{ cfgModal.style.display="grid"; try{ const r=await fetch("/api/live/config"); const j=await r.json(); feedUrl.value=j.feed_url||""; }catch{} };
-closeCfg.onclick=()=> cfgModal.style.display="none";
-
-saveFeed.onclick=async()=>{
-  const url=feedUrl.value.trim();
-  if(!url){ toast("Paste the BODS URL incl. api_key", false); return; }
-  try{
-    const r=await fetch("/api/live/config",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({feed_url:url})});
-    if(!r.ok) throw new Error(await r.text());
-    toast("Live URL saved ✓");
-  }catch(e){ toast("Save failed: "+(e.message||"error"), false); }
-};
-
-uploadGtfsBtn.onclick=async()=>{
-  const f=gtfsFile.files?.[0];
-  if(!f){ toast("Choose a GTFS .zip first", false); return; }
-  const fd=new FormData(); fd.append("file", f);
-  try{
-    const r=await fetch("/api/upload",{method:"POST", body:fd});
-    if(!r.ok) throw new Error(await r.text());
-    toast("GTFS uploaded ✓");
-  }catch(e){ toast("Upload failed: "+(e.message||"error"), false); }
-};
-
-/* =========================================================
-   Stop search + departures
-========================================================= */
-stopSearchBtn.onclick=doStopSearch;
-stopQuery.addEventListener("keydown", e=>{ if(e.key==="Enter") doStopSearch(); });
-
-async function doStopSearch(){
-  const q=stopQuery.value.trim();
-  if(!q){ toast("Type a stop name", false); return; }
-  try{
-    const r=await fetch(`/api/stops/search?q=${encodeURIComponent(q)}`);
-    if(!r.ok) throw new Error(await r.text());
-    const items=await r.json();
-    const rows = Array.isArray(items)?items: (items.results||[]);
-    if(!rows.length){ toast(text("noRes"), false); stopSelect.innerHTML=""; selectedStopLbl.textContent=`${text("selStop")} –`; stopList.innerHTML=""; return; }
-    setOptions(stopSelect, rows, "id", "name");
-    stopSelect.value = rows[0].id;
-    selectedStopLbl.textContent = `${text("selStop")} ${rows[0].name}`;
-    await renderDepartures();
-  }catch(e){ toast("Search failed: "+(e.message||"error"), false); }
-}
-stopSelect.onchange=()=>{ selectedStopLbl.textContent=`${text("selStop")} ${stopSelect.options[stopSelect.selectedIndex]?.text||"–"}`; renderDepartures(); };
-
-function delayBadge(d){
-  if(d==null) return "";
-  const n=Number(d); if(!Number.isFinite(n)) return "";
-  const sign=n>0?"+":""; const cls=n>0?"good":"muted";
-  return `<span class="mono ${cls}" style="margin-left:8px">${sign}${n} min</span>`;
-}
-
-async function renderDepartures(){
-  const id=stopSelect.value; if(!id) return;
-  const w=Math.max(1, Number(windowMin.value||60));
-  try{
-    const r=await fetch(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${w}`);
-    if(!r.ok) throw new Error(await r.text());
-    const j=await r.json();
-    const deps = dedupeBy(j.departures||[], "trip_id"); // duplikált időpontok kiszűrése
-    stopList.innerHTML="";
-    deps.forEach(row=>{
-      const it=document.createElement("div"); it.className="item";
-      it.innerHTML = `
-        <div class="pill">${row.route||"–"}</div>
-        <div class="dest">${row.destination||"–"}</div>
-        <div class="mono ${row.is_due?'good blink':row.is_live?'good':''}">${row.is_due?text("due"):(row.time_display||hhmm(row.time))}${delayBadge(row.delay_min)}</div>`;
-      it.onclick=()=>openTrip(row.trip_id,row.route,row.destination);
-      stopList.appendChild(it);
-    });
-  }catch(e){ toast("Departures failed: "+(e.message||"error"), false); }
-}
-setInterval(renderDepartures, 20000);
-
-/* =========================================================
-   Trip modal (simple list of stops)
-========================================================= */
-function openTrip(tripId, route, headsign){
-  if(!tripId) return;
-  (async()=>{
+  /* ===== status clock ===== */
+  async function tick(){
     try{
-      const r=await fetch(`/api/trips/${encodeURIComponent(tripId)}`);
+      const r=await fetch("/api/status");
+      const j=await r.json();
+      ukTime.textContent = `${text("uk")}: ${j.uk_time||"--:--:--"}`;
+      buildSpan.textContent = j.build || "-";
+    }catch(e){ ukTime.textContent = `${text("uk")}: --:--:--`; }
+  }
+  setInterval(tick, 1000); tick();
+
+  /* ===== settings ===== */
+  openCfg.addEventListener('click', async ()=>{
+    cfgModal.style.display="grid";
+    try{ const r=await fetch("/api/live/config"); const j=await r.json(); feedUrl.value=j.feed_url||""; }catch{}
+  });
+  closeCfg.addEventListener('click', ()=> cfgModal.style.display="none");
+  saveFeed.addEventListener('click', async ()=>{
+    const url=feedUrl.value.trim();
+    if(!url){ toast("Paste the BODS URL incl. api_key", false); return; }
+    try{
+      const r=await fetch("/api/live/config",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({feed_url:url})});
+      if(!r.ok) throw new Error(await r.text());
+      toast("Live URL saved ✓");
+    }catch(e){ toast("Save failed: "+(e.message||"error"), false); }
+  });
+  uploadGtfsBtn.addEventListener('click', async ()=>{
+    const f=gtfsFile.files?.[0];
+    if(!f){ toast("Choose a GTFS .zip first", false); return; }
+    const fd=new FormData(); fd.append("file", f);
+    try{
+      const r=await fetch("/api/upload",{method:"POST", body:fd});
+      if(!r.ok) throw new Error(await r.text());
+      toast("GTFS uploaded ✓");
+    }catch(e){ toast("Upload failed: "+(e.message||"error"), false); }
+  });
+
+  /* ===== stop search ===== */
+  function setOptions(el, arr, valueKey, textKey){
+    el.innerHTML="";
+    (arr||[]).forEach(x=>{const o=document.createElement("option"); o.value=String(x[valueKey]); o.textContent=String(x[textKey]); el.appendChild(o);});
+  }
+  function dedupeBy(arr, key){const m=new Set(); return (arr||[]).filter(x=>{const k=x[key]; if(m.has(k)) return false; m.add(k); return true;});}
+  function hhmm(s){const d=new Date(s); return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",hour12:false});}
+  function delayBadge(d){
+    if(d==null) return "";
+    const n=Number(d); if(!Number.isFinite(n)) return "";
+    const sign=n>0?"+":""; const cls=n>0?"good":"muted";
+    return `<span class="mono ${cls}" style="margin-left:8px">${sign}${n} min</span>`;
+  }
+
+  stopSearchBtn.addEventListener('click', doStopSearch);
+  stopQuery.addEventListener("keydown", e=>{ if(e.key==="Enter") doStopSearch(); });
+
+  async function doStopSearch(){
+    const q=stopQuery.value.trim();
+    if(!q){ toast("Type a stop name", false); return; }
+    try{
+      const r=await fetch(`/api/stops/search?q=${encodeURIComponent(q)}`);
+      if(!r.ok) throw new Error(await r.text());
+      const items=await r.json();
+      const rows = Array.isArray(items)?items: (items.results||[]);
+      if(!rows.length){ toast(text("noRes"), false); stopSelect.innerHTML=""; selectedStopLbl.textContent=`${text("selStop")} –`; stopList.innerHTML=""; return; }
+      setOptions(stopSelect, rows, "id", "name");
+      stopSelect.value = rows[0].id;
+      selectedStopLbl.textContent = `${text("selStop")} ${rows[0].name}`;
+      await renderDepartures();
+    }catch(e){ toast("Search failed: "+(e.message||"error"), false); }
+  }
+
+  stopSelect.addEventListener('change', ()=>{ selectedStopLbl.textContent=`${text("selStop")} ${stopSelect.options[stopSelect.selectedIndex]?.text||"–"}`; renderDepartures(); });
+
+  async function renderDepartures(){
+    const id=stopSelect.value; if(!id) return;
+    const w=Math.max(1, Number(windowMin.value||60));
+    try{
+      const r=await fetch(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${w}`);
       if(!r.ok) throw new Error(await r.text());
       const j=await r.json();
-      const modal=document.createElement("div"); modal.className="modal"; modal.style.display='grid';
-      const box=document.createElement("div"); box.className="box";
-      box.innerHTML=`<div class="row" style="justify-content:space-between;align-items:center">
-        <div><strong>Trip</strong> · ${route||""} → ${headsign||""}</div>
-        <button class="btn" id="xTrip">×</button></div>`;
-      const list=document.createElement("div"); list.className="list";
-      (j.stops||[]).forEach(s=>{
-        const row=document.createElement("div"); row.className="item";
-        const left=document.createElement("div"); left.className="muted mono"; left.textContent=s.time_display||hhmm(s.time);
-        const name=document.createElement("div"); name.textContent=s.stop_name;
-        row.appendChild(document.createElement("div")); row.firstChild.className="pill"; row.firstChild.textContent="";
-        row.appendChild(name); row.appendChild(left);
-        list.appendChild(row);
+      const deps = dedupeBy(j.departures||[], "trip_id");
+      stopList.innerHTML="";
+      deps.forEach(row=>{
+        const it=document.createElement("div"); it.className="item";
+        it.innerHTML = `
+          <div class="pill">${row.route||"–"}</div>
+          <div class="dest">${row.destination||"–"}</div>
+          <div class="mono ${row.is_due?'good blink':row.is_live?'good':''}">${row.is_due?text("due"):(row.time_display||hhmm(row.time))}${delayBadge(row.delay_min)}</div>`;
+        it.addEventListener('click', ()=>openTrip(row.trip_id,row.route,row.destination));
+        stopList.appendChild(it);
       });
-      box.appendChild(list); modal.appendChild(box); document.body.appendChild(modal);
-      document.getElementById("xTrip").onclick=()=>document.body.removeChild(modal);
-    }catch(e){ toast("Trip load failed: "+(e.message||"error"), false); }
-  })();
-}
+    }catch(e){ toast("Departures failed: "+(e.message||"error"), false); }
+  }
+  setInterval(renderDepartures, 20000);
 
-/* =========================================================
-   Route search + live vehicles map
-========================================================= */
-let map, markers=[];
-function ensureMap(){ if(map) return; map = L.map('map',{zoomControl:true}).setView([50.9097,-1.4044],12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'Leaflet | © OpenStreetMap'}).addTo(map); }
+  function openTrip(tripId, route, headsign){
+    if(!tripId) return;
+    (async()=>{
+      try{
+        const r=await fetch(`/api/trips/${encodeURIComponent(tripId)}`);
+        if(!r.ok) throw new Error(await r.text());
+        const j=await r.json();
+        const modal=document.createElement("div"); modal.className="modal"; modal.style.display='grid';
+        const box=document.createElement("div"); box.className="box";
+        box.innerHTML=`<div class="row" style="justify-content:space-between;align-items:center">
+          <div><strong>Trip</strong> · ${route||""} → ${headsign||""}</div>
+          <button class="btn" type="button" id="xTrip">×</button></div>`;
+        const list=document.createElement("div"); list.className="list";
+        (j.stops||[]).forEach(s=>{
+          const row=document.createElement("div"); row.className="item";
+          const left=document.createElement("div"); left.className="muted mono"; left.textContent=s.time_display||hhmm(s.time);
+          const name=document.createElement("div"); name.textContent=s.stop_name;
+          const pill=document.createElement("div"); pill.className="pill"; pill.textContent="";
+          row.appendChild(pill); row.appendChild(name); row.appendChild(left);
+          list.appendChild(row);
+        });
+        box.appendChild(list); modal.appendChild(box); document.body.appendChild(modal);
+        document.getElementById("xTrip").onclick=()=>document.body.removeChild(modal);
+      }catch(e){ toast("Trip load failed: "+(e.message||"error"), false); }
+    })();
+  }
 
-routeSearchBtn.onclick=doRouteSearch;
-routeQuery.addEventListener("keydown", e=>{ if(e.key==="Enter") doRouteSearch(); });
+  /* ===== route + map ===== */
+  let map, markers=[];
+  function ensureMap(){ if(map) return; map = L.map('map',{zoomControl:true}).setView([50.9097,-1.4044],12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'Leaflet | © OpenStreetMap'}).addTo(map); }
+  routeSearchBtn.addEventListener('click', doRouteSearch);
+  routeQuery.addEventListener("keydown", e=>{ if(e.key==="Enter") doRouteSearch(); });
 
-async function doRouteSearch(){
-  const q=routeQuery.value.trim();
-  if(!q){ toast("Type a route number", false); return; }
-  try{
-    const r=await fetch(`/api/routes/search?q=${encodeURIComponent(q)}`);
-    if(!r.ok) throw new Error(await r.text());
-    const items=await r.json();
-    const rows=Array.isArray(items)?items:(items.results||[]);
-    if(!rows.length){ toast(text("noRes"), false); routeSelect.innerHTML=""; return; }
-    setOptions(routeSelect, rows, "route", "route");
-    routeSelect.value = rows[0].route;
-    await renderVehicles();
-  }catch(e){ toast("Route search failed: "+(e.message||"error"), false); }
-}
-routeSelect.onchange=renderVehicles;
+  async function doRouteSearch(){
+    const q=routeQuery.value.trim();
+    if(!q){ toast("Type a route number", false); return; }
+    try{
+      const r=await fetch(`/api/routes/search?q=${encodeURIComponent(q)}`);
+      if(!r.ok) throw new Error(await r.text());
+      const items=await r.json();
+      const rows=Array.isArray(items)?items:(items.results||[]);
+      if(!rows.length){ toast(text("noRes"), false); routeSelect.innerHTML=""; return; }
+      setOptions(routeSelect, rows, "route", "route");
+      routeSelect.value = rows[0].route;
+      await renderVehicles();
+    }catch(e){ toast("Route search failed: "+(e.message||"error"), false); }
+  }
+  routeSelect.addEventListener('change', renderVehicles);
 
-async function renderVehicles(){
-  ensureMap(); markers.forEach(m=>m.remove()); markers=[];
-  const route=routeSelect.value; if(!route) return;
-  try{
-    const r=await fetch(`/api/routes/${encodeURIComponent(route)}/vehicles`);
-    if(!r.ok) throw new Error(await r.text());
-    const j=await r.json();
-    const vs=j.vehicles||[];
-    vs.forEach(v=>{
-      if(typeof v.lat!=="number"||typeof v.lon!=="number") return;
-      const m=L.marker([v.lat,v.lon]).addTo(map).bindPopup(`${v.label||""}`);
-      markers.push(m);
-    });
-    if(markers.length){ const g=L.featureGroup(markers); map.fitBounds(g.getBounds().pad(0.2)); }
-  }catch(e){ toast("Vehicles failed: "+
+  async function renderVehicles(){
+    ensureMap(); (markers||[]).forEach(m=>m.remove()); markers=[];
+    const route=routeSelect.value; if(!route) return;
+    try{
+      const r=await fetch(`/api/routes/${encodeURIComponent(route)}/vehicles`);
+      if(!r.ok) throw new Error(await r.text());
+      const j=await r.json();
+      const vs=j.vehicles||[];
+      vs.forEach(v=>{
+        if(typeof v.lat!=="number"||typeof v.lon!=="number") return;
+        const m=L.marker([v.lat,v.lon]).addTo(map).bindPopup(`${v.label||""}`);
+        markers.push(m);
+      });
+      if(markers.length){ const g=L.featureGroup(markers); map.fitBounds(g.getBounds().pad(0.2)); }
+    }catch(e){ toast("Vehicles failed: "+(e.message||"error"), false); }
+  }
+});
+</script>
+</body>
+</html>
