@@ -10,7 +10,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root { --bg:#0d1220; --card:#131a2c; --text:#e6e8ef; --muted:#9aa3b2; --accent:#7c8cff; --good:#2bd576; --chip:#1a2442; --board:#0a0d10; --bad:#ff6b6b;}
-  body { background:var(--bg); color:var(--text); font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  body { background:var(--bg); color:var(--text); font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
   .container{ max-width:980px; margin:24px auto; padding:0 12px; }
   .row{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
   .card{ background:var(--card); border-radius:16px; padding:16px; box-shadow:0 4px 24px rgba(0,0,0,.25); }
@@ -37,19 +37,20 @@
   .modal{ position:fixed; inset:0; display:none; place-items:center; background:rgba(0,0,0,.5); z-index:9998; }
   .box{ background:#0f1424; border:1px solid #233055; border-radius:16px; padding:16px; width:min(720px,92vw); }
   .hr{ height:1px; background:#233055; margin:12px 0; }
+  .hint{ font-size:.9rem; }
 </style>
 </head>
 <body>
   <div class="container" id="wrap">
     <div class="row">
       <div class="title">🚌 <span id="app-title">Bluestar Bus — stop & route finder</span></div>
-      <div class="muted" id="ukTime" style="margin-left:12px">–:–</div>
+      <div class="muted" id="ukTime" style="margin-left:12px">UK: –:–</div>
       <button class="btn ghost" id="openCfg" title="Settings">⚙️ Settings</button>
       <select id="lang" class="input lang" style="width:100px"></select>
     </div>
 
     <div class="muted" style="margin:6px 0 18px">
-      <span>Refresh every 20 s</span> · Build: <span id="build">–</span>
+      <span id="refreshLbl">Refresh every 20 s</span> · Build: <span id="build">–</span>
     </div>
 
     <div class="tabs">
@@ -67,7 +68,7 @@
       </div>
       <select id="stopSelect" class="input" style="margin-top:10px"></select>
       <div class="row" style="margin-top:6px; justify-content:space-between">
-        <div class="muted"><span id="selectedStopLbl"></span></div>
+        <div class="muted"><span id="selectedStopLbl">Selected stop: –</span></div>
         <div class="muted"><span id="refreshEvery">Refresh every 20 s</span></div>
       </div>
       <div class="list" id="stopList"></div>
@@ -76,12 +77,12 @@
     <!-- ROUTE -->
     <div id="routeCard" class="card" style="display:none">
       <div class="row">
-        <input id="routeQuery" class="input" placeholder="Route number" />
+        <input id="routeQuery" class="input" placeholder="Route number (e.g. 17)" />
         <button id="routeSearchBtn" class="btn">Search</button>
       </div>
       <select id="routeSelect" class="input" style="margin-top:10px"></select>
       <div id="map" class="map" style="margin-top:12px"></div>
-      <div class="muted" id="mapHint" style="margin-top:8px">If there are no live vehicles on the route, the map will be empty.</div>
+      <div class="muted hint" id="mapHint" style="margin-top:8px">If there are no live vehicles on the route, the map will be empty.</div>
     </div>
 
     <!-- FAVS -->
@@ -112,10 +113,10 @@
 
       <h4>Live feed (BODS SIRI-VM)</h4>
       <div class="row" style="gap:10px">
-        <input id="feedUrl" class="input" placeholder="https://data.bus-data.dft.gov.uk/api/v1/datafeed/....?api_key=..." />
+        <input id="feedUrl" class="input" placeholder="https://data.bus-data.dft.gov.uk/api/v1/datafeed/...?...api_key=..." />
         <button id="saveFeed" class="btn">Save Live URL</button>
       </div>
-      <div class="muted" style="margin-top:6px">Paste the full BODS Vehicle Monitoring URL including <code>api_key</code>.</div>
+      <div class="muted hint" style="margin-top:6px">Paste the full BODS Vehicle Monitoring URL including <code>api_key</code>.</div>
 
       <div class="hr"></div>
 
@@ -124,72 +125,116 @@
         <input id="gtfsFile" class="input" type="file" accept=".zip" />
         <button id="uploadGtfsBtn" class="btn">Upload GTFS</button>
       </form>
-      <div class="muted" style="margin-top:6px">The file will be sent to <code>/api/upload</code> as <code>multipart/form-data</code> with field name <code>file</code>.</div>
+      <div class="muted hint" style="margin-top:6px">Sent to <code>/api/upload</code> as <code>multipart/form-data</code> with field <code>file</code>.</div>
     </div>
   </div>
 
   <div id="toast" class="toast" style="display:none"></div>
 
 <script>
-/* ---------- helpers ---------- */
-const $=sel=>document.querySelector(sel);
-function el(tag, cls, txt){const e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e;}
-function setSel(select, arr, valKey, textKey){ select.innerHTML=""; arr.forEach(x=>{const o=document.createElement("option"); o.value=x[valKey]; o.textContent=x[textKey]; select.appendChild(o);});}
-function hhmm(x){ const d=new Date(x); return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false}); }
-function toast(msg, good=true){ const t=$("#toast"); t.textContent=msg; t.style.display="block"; t.style.borderColor=good?"#273153":"#5b2a2a"; t.style.color=good?"":"#fff"; t.style.background=good?"#0f1424":"#5b2a2a"; setTimeout(()=>t.style.display="none", 3500); }
+/* =========================================================
+   i18n (EN, HU, DE, PL, RO) – rövidített szövegek
+========================================================= */
+const I18N = {
+ EN:{stop:"Stop",route:"Route",fav:"Favourites",search:"Search",stopName:"Stop name",routeNum:"Route number (e.g. 17)",selStop:"Selected stop:",refresh20:"Refresh every 20 s",settings:"Settings",upload:"Upload GTFS",save:"Save Live URL",uk:"UK",noRes:"No results",due:"Due"},
+ HU:{stop:"Megálló",route:"Vonal",fav:"Kedvencek",search:"Keresés",stopName:"Megálló név",routeNum:"Vonal száma (pl. 17)",selStop:"Választott megálló:",refresh20:"Frissítés 20 s",settings:"Beállítások",upload:"GTFS feltöltés",save:"Élő URL mentése",uk:"UK",noRes:"Nincs találat",due:"Due"},
+ DE:{stop:"Haltestelle",route:"Linie",fav:"Favoriten",search:"Suche",stopName:"Haltestellenname",routeNum:"Liniennummer (z. B. 17)",selStop:"Gewählte Haltestelle:",refresh20:"Aktualisierung 20 s",settings:"Einstellungen",upload:"GTFS hochladen",save:"Live-URL speichern",uk:"UK",noRes:"Keine Ergebnisse",due:"Fällig"},
+ PL:{stop:"Przystanek",route:"Linia",fav:"Ulubione",search:"Szukaj",stopName:"Nazwa przystanku",routeNum:"Numer linii (np. 17)",selStop:"Wybrany przystanek:",refresh20:"Odświeżanie 20 s",settings:"Ustawienia",upload:"Wyślij GTFS",save:"Zapisz Live URL",uk:"UK",noRes:"Brak wyników",due:"Za chwilę"},
+ RO:{stop:"Stație",route:"Linie",fav:"Preferate",search:"Căutare",stopName:"Numele stației",routeNum:"Număr linie (ex. 17)",selStop:"Stație selectată:",refresh20:"Reîmprospătare 20 s",settings:"Setări",upload:"Încărcare GTFS",save:"Salvează Live URL",uk:"UK",noRes:"Fără rezultate",due:"Imediat"}
+};
+const LANGS=["EN","HU","DE","PL","RO"];
+function guessLang(){const n=(navigator.language||"en").slice(0,2).toUpperCase();return LANGS.includes(n)?n:"EN";}
+let LANG=localStorage.getItem("lang")||guessLang();
+const $=s=>document.querySelector(s);
 
-/* ---------- UI refs ---------- */
-const appTitle=$("#app-title"), ukTimeLbl=$("#ukTime"), buildSpan=$("#build");
+/* =========================================================
+   Helpers
+========================================================= */
+function text(k){return (I18N[LANG]||I18N.EN)[k]||k;}
+function toast(msg, ok=true){const t=$("#toast"); t.textContent=msg; t.style.display="block"; t.style.borderColor=ok?"#273153":"#5b2a2a"; t.style.background=ok?"#0f1424":"#5b2a2a"; setTimeout(()=>t.style.display="none", 3200);}
+function setOptions(el, arr, valueKey, textKey){
+  el.innerHTML="";
+  (arr||[]).forEach(x=>{const o=document.createElement("option"); o.value=String(x[valueKey]); o.textContent=String(x[textKey]); el.appendChild(o);});
+}
+function dedupeBy(arr, key){const m=new Set(); return (arr||[]).filter(x=>{const k=x[key]; if(m.has(k)) return false; m.add(k); return true;});}
+function hhmm(s){const d=new Date(s); return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",hour12:false});}
+
+/* =========================================================
+   UI refs
+========================================================= */
+const ukTime=$("#ukTime"), buildSpan=$("#build"), refreshLbl=$("#refreshLbl");
 const tabStop=$("#tabStop"), tabRoute=$("#tabRoute"), tabFav=$("#tabFav");
 const stopCard=$("#stopCard"), routeCard=$("#routeCard"), favCard=$("#favCard");
 const stopQuery=$("#stopQuery"), windowMin=$("#windowMin"), stopSearchBtn=$("#stopSearchBtn"), stopSelect=$("#stopSelect"), selectedStopLbl=$("#selectedStopLbl"), stopList=$("#stopList");
 const routeQuery=$("#routeQuery"), routeSearchBtn=$("#routeSearchBtn"), routeSelect=$("#routeSelect");
-const mapHint=$("#mapHint");
-
-const cfgModal=$("#cfgModal"), openCfg=$("#openCfg"), closeCfg=$("#closeCfg"), feedUrl=$("#feedUrl"), saveFeed=$("#saveFeed");
-const gtfsFile=$("#gtfsFile"), uploadGtfsBtn=$("#uploadGtfsBtn");
 const langSel=$("#lang");
 
-/* ---------- lang ---------- */
-const LANGS=["EN","HU","DE","PL","RO"];
-function guessLang(){const n=(navigator.language||"en").slice(0,2).toUpperCase();return LANGS.includes(n)?n:"EN";}
-let LANG=localStorage.getItem("lang")||guessLang();
-function applyI18n(){ /* egyszerű – címek maradhatnak angolul most */ }
-(function fillLang(){ langSel.innerHTML=""; LANGS.forEach(c=>{const o=document.createElement("option"); o.value=c; o.textContent=c; if(c===LANG)o.selected=true; langSel.appendChild(o);});})();
-langSel.onchange=()=>{LANG=langSel.value; localStorage.setItem("lang",LANG); applyI18n();};
+const cfgModal=$("#cfgModal"), openCfg=$("#openCfg"), closeCfg=$("#closeCfg"),
+      feedUrl=$("#feedUrl"), saveFeed=$("#saveFeed"),
+      gtfsFile=$("#gtfsFile"), uploadGtfsBtn=$("#uploadGtfsBtn");
 
-/* ---------- tabs ---------- */
+/* =========================================================
+   Apply i18n
+========================================================= */
+function applyI18n(){
+  tabStop.textContent=text("stop");
+  tabRoute.textContent=text("route");
+  tabFav.textContent=text("fav");
+  stopQuery.placeholder=text("stopName");
+  routeQuery.placeholder=text("routeNum");
+  stopSearchBtn.textContent=text("search");
+  routeSearchBtn.textContent=text("search");
+  refreshLbl.textContent=text("refresh20");
+  $("#openCfg").textContent = "⚙️ " + text("settings");
+  $("#uploadGtfsBtn").textContent = text("upload");
+  $("#saveFeed").textContent = text("save");
+  selectedStopLbl.textContent = `${text("selStop")} –`;
+  $("#refreshEvery").textContent = text("refresh20");
+}
+function fillLang(){
+  langSel.innerHTML="";
+  LANGS.forEach(c=>{const o=document.createElement("option"); o.value=c; o.textContent=c; if(c===LANG)o.selected=true; langSel.appendChild(o);});
+}
+langSel.onchange=()=>{LANG=langSel.value; localStorage.setItem("lang",LANG); applyI18n();};
+fillLang(); applyI18n();
+
+/* =========================================================
+   Tabs
+========================================================= */
 function showStop(){ tabStop.classList.add("active"); tabRoute.classList.remove("active"); tabFav.classList.remove("active"); stopCard.style.display="block"; routeCard.style.display="none"; favCard.style.display="none"; }
 function showRoute(){ tabRoute.classList.add("active"); tabStop.classList.remove("active"); tabFav.classList.remove("active"); routeCard.style.display="block"; stopCard.style.display="none"; favCard.style.display="none"; }
-function showFav(){ tabFav.classList.add("active"); tabStop.classList.remove("active"); tabRoute.classList.remove("active"); favCard.style.display="block"; stopCard.style.display="none"; routeCard.style.display="none"; }
+function showFav(){ tabFav.classList.add("active"); tabStop.classList.remove("active"); tabRoute.classList.remove("active"); favCard.style.display="block"; stopCard.style.display="none"; routeCard.style.display="none"; renderFavs(); }
 tabStop.onclick=showStop; tabRoute.onclick=showRoute; tabFav.onclick=showFav;
 
-/* ---------- clock & status ---------- */
+/* =========================================================
+   Clock + status
+========================================================= */
 async function tick(){
-  try{ const r=await fetch("/api/status"); const j=await r.json();
-       ukTimeLbl.textContent=`UK: ${j.uk_time}`; buildSpan.textContent=j.build;
+  try{
+    const r=await fetch("/api/status");
+    const j=await r.json();
+    ukTime.textContent = `${text("uk")}: ${j.uk_time||"--:--:--"}`;
+    buildSpan.textContent = j.build || "-";
   }catch(e){}
 }
 setInterval(tick, 1000); tick();
 
-/* ---------- settings modal ---------- */
-openCfg.onclick=async()=>{
-  cfgModal.style.display="grid";
-  try{ const r=await fetch("/api/live/config"); const j=await r.json(); feedUrl.value=j.feed_url||""; }catch(e){}
-};
+/* =========================================================
+   Settings (live url + GTFS upload)
+========================================================= */
+openCfg.onclick=async()=>{ cfgModal.style.display="grid"; try{ const r=await fetch("/api/live/config"); const j=await r.json(); feedUrl.value=j.feed_url||""; }catch{} };
 closeCfg.onclick=()=> cfgModal.style.display="none";
 
 saveFeed.onclick=async()=>{
   const url=feedUrl.value.trim();
-  if(!url){ toast("Please paste the BODS live URL", false); return; }
+  if(!url){ toast("Paste the BODS URL incl. api_key", false); return; }
   try{
     const r=await fetch("/api/live/config",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({feed_url:url})});
     if(!r.ok) throw new Error(await r.text());
     toast("Live URL saved ✓");
-  }catch(e){ toast("Save failed: "+(e.message||'error'), false); }
+  }catch(e){ toast("Save failed: "+(e.message||"error"), false); }
 };
 
-/* ---------- GTFS upload ---------- */
 uploadGtfsBtn.onclick=async()=>{
   const f=gtfsFile.files?.[0];
   if(!f){ toast("Choose a GTFS .zip first", false); return; }
@@ -198,80 +243,129 @@ uploadGtfsBtn.onclick=async()=>{
     const r=await fetch("/api/upload",{method:"POST", body:fd});
     if(!r.ok) throw new Error(await r.text());
     toast("GTFS uploaded ✓");
-  }catch(e){ toast("Upload failed: "+(e.message||'error'), false); }
+  }catch(e){ toast("Upload failed: "+(e.message||"error"), false); }
 };
 
-/* ---------- stop search ---------- */
-stopSearchBtn.onclick=async()=>{
-  const q=stopQuery.value.trim(); if(!q) return;
-  const r=await fetch(`/api/stops/search?q=${encodeURIComponent(q)}`); const items=await r.json();
-  stopSelect.innerHTML="";
-  items.forEach(it=>{ const o=document.createElement("option"); o.value=it.id; o.textContent=it.name; stopSelect.appendChild(o); });
-  if(items[0]){ stopSelect.value=items[0].id; selectedStopLbl.textContent=`Selected stop: ${items[0].name}`; await renderDepartures(); }
-  else selectedStopLbl.textContent="No results";
-};
-stopSelect.onchange=()=>{ selectedStopLbl.textContent=`Selected stop: ${stopSelect.options[stopSelect.selectedIndex]?.text||"–"}`; renderDepartures(); };
+/* =========================================================
+   Stop search + departures
+========================================================= */
+stopSearchBtn.onclick=doStopSearch;
+stopQuery.addEventListener("keydown", e=>{ if(e.key==="Enter") doStopSearch(); });
 
-function delayBadge(d){ if(d==null) return ""; const n=Number(d); if(!Number.isFinite(n)) return ""; const sign=n>0?"+":""; return `<span class="mono ${n>0?'good':'muted'}" style="margin-left:8px">${sign}${n} min</span>`; }
+async function doStopSearch(){
+  const q=stopQuery.value.trim();
+  if(!q){ toast("Type a stop name", false); return; }
+  try{
+    const r=await fetch(`/api/stops/search?q=${encodeURIComponent(q)}`);
+    if(!r.ok) throw new Error(await r.text());
+    const items=await r.json();
+    const rows = Array.isArray(items)?items: (items.results||[]);
+    if(!rows.length){ toast(text("noRes"), false); stopSelect.innerHTML=""; selectedStopLbl.textContent=`${text("selStop")} –`; stopList.innerHTML=""; return; }
+    setOptions(stopSelect, rows, "id", "name");
+    stopSelect.value = rows[0].id;
+    selectedStopLbl.textContent = `${text("selStop")} ${rows[0].name}`;
+    await renderDepartures();
+  }catch(e){ toast("Search failed: "+(e.message||"error"), false); }
+}
+stopSelect.onchange=()=>{ selectedStopLbl.textContent=`${text("selStop")} ${stopSelect.options[stopSelect.selectedIndex]?.text||"–"}`; renderDepartures(); };
+
+function delayBadge(d){
+  if(d==null) return "";
+  const n=Number(d); if(!Number.isFinite(n)) return "";
+  const sign=n>0?"+":""; const cls=n>0?"good":"muted";
+  return `<span class="mono ${cls}" style="margin-left:8px">${sign}${n} min</span>`;
+}
+
 async function renderDepartures(){
   const id=stopSelect.value; if(!id) return;
   const w=Math.max(1, Number(windowMin.value||60));
-  const r=await fetch(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${w}`); const j=await r.json();
-  stopList.innerHTML="";
-  (j.departures||[]).forEach(row=>{
-    const it=el("div","item");
-    it.innerHTML = `
-      <div class="pill">${row.route||"–"}</div>
-      <div class="dest">${row.destination||"–"}</div>
-      <div class="mono ${row.is_due?'good blink':row.is_live?'good':''}">${row.is_due?'Due':row.time_display}${delayBadge(row.delay_min)}</div>`;
-    it.onclick=()=>openTrip(row.trip_id,row.route,row.destination);
-    stopList.appendChild(it);
-  });
+  try{
+    const r=await fetch(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${w}`);
+    if(!r.ok) throw new Error(await r.text());
+    const j=await r.json();
+    const deps = dedupeBy(j.departures||[], "trip_id"); // duplikált időpontok kiszűrése
+    stopList.innerHTML="";
+    deps.forEach(row=>{
+      const it=document.createElement("div"); it.className="item";
+      it.innerHTML = `
+        <div class="pill">${row.route||"–"}</div>
+        <div class="dest">${row.destination||"–"}</div>
+        <div class="mono ${row.is_due?'good blink':row.is_live?'good':''}">${row.is_due?text("due"):(row.time_display||hhmm(row.time))}${delayBadge(row.delay_min)}</div>`;
+      it.onclick=()=>openTrip(row.trip_id,row.route,row.destination);
+      stopList.appendChild(it);
+    });
+  }catch(e){ toast("Departures failed: "+(e.message||"error"), false); }
 }
 setInterval(renderDepartures, 20000);
 
-/* ---------- trip modal (simple) ---------- */
+/* =========================================================
+   Trip modal (simple list of stops)
+========================================================= */
 function openTrip(tripId, route, headsign){
   if(!tripId) return;
   (async()=>{
-    const r=await fetch(`/api/trips/${encodeURIComponent(tripId)}`); const j=await r.json();
-    const modal=document.createElement("div"); modal.className="modal"; modal.style.display='grid';
-    const box=document.createElement("div"); box.className="box";
-    box.innerHTML=`<div class="row" style="justify-content:space-between;align-items:center">
-      <div><strong>Trip</strong> · ${route||""} → ${headsign||""}</div>
-      <button class="btn" id="xTrip">×</button></div>`;
-    const list=document.createElement("div"); list.className="list";
-    (j.stops||[]).forEach(s=>{
-      const row=document.createElement("div"); row.className="item";
-      const left=el("div","muted mono",s.time_display); if(s.is_past) left.style.opacity=.6;
-      const name=el("div","",s.stop_name); if(s.is_past) name.style.opacity=.6;
-      row.appendChild(el("div","pill","")); row.appendChild(name); row.appendChild(left);
-      list.appendChild(row);
-    });
-    box.appendChild(list); modal.appendChild(box); document.body.appendChild(modal);
-    document.getElementById("xTrip").onclick=()=>document.body.removeChild(modal);
+    try{
+      const r=await fetch(`/api/trips/${encodeURIComponent(tripId)}`);
+      if(!r.ok) throw new Error(await r.text());
+      const j=await r.json();
+      const modal=document.createElement("div"); modal.className="modal"; modal.style.display='grid';
+      const box=document.createElement("div"); box.className="box";
+      box.innerHTML=`<div class="row" style="justify-content:space-between;align-items:center">
+        <div><strong>Trip</strong> · ${route||""} → ${headsign||""}</div>
+        <button class="btn" id="xTrip">×</button></div>`;
+      const list=document.createElement("div"); list.className="list";
+      (j.stops||[]).forEach(s=>{
+        const row=document.createElement("div"); row.className="item";
+        const left=document.createElement("div"); left.className="muted mono"; left.textContent=s.time_display||hhmm(s.time);
+        const name=document.createElement("div"); name.textContent=s.stop_name;
+        row.appendChild(document.createElement("div")); row.firstChild.className="pill"; row.firstChild.textContent="";
+        row.appendChild(name); row.appendChild(left);
+        list.appendChild(row);
+      });
+      box.appendChild(list); modal.appendChild(box); document.body.appendChild(modal);
+      document.getElementById("xTrip").onclick=()=>document.body.removeChild(modal);
+    }catch(e){ toast("Trip load failed: "+(e.message||"error"), false); }
   })();
 }
 
-/* ---------- route + map ---------- */
+/* =========================================================
+   Route search + live vehicles map
+========================================================= */
 let map, markers=[];
 function ensureMap(){ if(map) return; map = L.map('map',{zoomControl:true}).setView([50.9097,-1.4044],12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'Leaflet | © OpenStreetMap'}).addTo(map); }
-routeSearchBtn.onclick=async()=>{ const q=routeQuery.value.trim(); if(!q) return;
-  const r=await fetch(`/api/routes/search?q=${encodeURIComponent(q)}`); const items=await r.json(); setSel(routeSelect, items, "route","route"); if(items[0]){ routeSelect.value=items[0].route; renderVehicles(); } };
+
+routeSearchBtn.onclick=doRouteSearch;
+routeQuery.addEventListener("keydown", e=>{ if(e.key==="Enter") doRouteSearch(); });
+
+async function doRouteSearch(){
+  const q=routeQuery.value.trim();
+  if(!q){ toast("Type a route number", false); return; }
+  try{
+    const r=await fetch(`/api/routes/search?q=${encodeURIComponent(q)}`);
+    if(!r.ok) throw new Error(await r.text());
+    const items=await r.json();
+    const rows=Array.isArray(items)?items:(items.results||[]);
+    if(!rows.length){ toast(text("noRes"), false); routeSelect.innerHTML=""; return; }
+    setOptions(routeSelect, rows, "route", "route");
+    routeSelect.value = rows[0].route;
+    await renderVehicles();
+  }catch(e){ toast("Route search failed: "+(e.message||"error"), false); }
+}
 routeSelect.onchange=renderVehicles;
+
 async function renderVehicles(){
   ensureMap(); markers.forEach(m=>m.remove()); markers=[];
   const route=routeSelect.value; if(!route) return;
-  const r=await fetch(`/api/routes/${encodeURIComponent(route)}/vehicles`); const j=await r.json(); const vs=j.vehicles||[];
-  vs.forEach(v=>{ const m=L.marker([v.lat,v.lon]).addTo(map).bindPopup(`${v.label||""}`); markers.push(m); });
-  if(vs.length){ const g=L.featureGroup(markers); map.fitBounds(g.getBounds().pad(0.2)); }
-}
-
-/* ---------- init ---------- */
-(function boot(){
-  // lang preload done above
-})();
-</script>
-</body>
-</html>
+  try{
+    const r=await fetch(`/api/routes/${encodeURIComponent(route)}/vehicles`);
+    if(!r.ok) throw new Error(await r.text());
+    const j=await r.json();
+    const vs=j.vehicles||[];
+    vs.forEach(v=>{
+      if(typeof v.lat!=="number"||typeof v.lon!=="number") return;
+      const m=L.marker([v.lat,v.lon]).addTo(map).bindPopup(`${v.label||""}`);
+      markers.push(m);
+    });
+    if(markers.length){ const g=L.featureGroup(markers); map.fitBounds(g.getBounds().pad(0.2)); }
+  }catch(e){ toast("Vehicles failed: "+
