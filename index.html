@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
-  :root { --bg:#0d1220; --card:#131a2c; --text:#e6e8ef; --muted:#9aa3b2; --accent:#7c8cff; --good:#2bd576; --chip:#1a2442; --board:#0a0d10;}
+  :root { --bg:#0d1220; --card:#131a2c; --text:#e6e8ef; --muted:#9aa3b2; --accent:#7c8cff; --good:#2bd576; --chip:#1a2442; --board:#0a0d10; --bad:#ff6b6b;}
   body { background:var(--bg); color:var(--text); font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
   .container{ max-width:980px; margin:24px auto; padding:0 12px; }
   .row{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
@@ -22,6 +22,7 @@
   .pill{ min-width:48px; height:38px; border-radius:10px; background:var(--chip); display:grid; place-items:center; font-weight:800; padding:0 10px; }
   .muted{ color:var(--muted); }
   .good{ color:var(--good); }
+  .bad{ color:var(--bad); }
   .blink{ animation:blink 1s step-start infinite; } @keyframes blink { 50%{opacity:0} }
   .tabs{ display:flex; gap:8px; margin:16px 0; }
   .tab{ padding:10px 14px; border-radius:999px; background:#0f1424; cursor:pointer; }
@@ -32,83 +33,60 @@
   .gear { background:#213058; border:1px solid #2c3c6a; border-radius:10px; padding:8px 10px; cursor:pointer; }
   .star { cursor:pointer; user-select:none }
   .mono{ font-variant-numeric: tabular-nums; }
-
-  /* Board mode */
-  .board { max-width:none; margin:0; padding:14px; }
-  .board .card{ background:var(--board); }
-  .board .title{ font-size:38px }
-  .board .item{ grid-template-columns: 80px 1fr auto auto; padding:16px; }
-  .board .pill{ font-size:22px; height:44px; min-width:68px; }
-  .board .item .dest{ font-size:24px }
-  .board .item .time{ font-size:26px; font-weight:800 }
-  .board .item .op{ font-size:18px; padding:6px 10px; border:1px solid #2c3c6a; border-radius:8px; }
-  .fs { position:fixed; inset:12px; z-index:9999; overflow:auto; }
-
-  /* Simple modal styles */
-  .modal{position:fixed; inset:0; display:none; place-items:center; background:rgba(0,0,0,.5); z-index:9999;}
-  .modal .box{ background:#0f1424; color:var(--text); border-radius:12px; padding:16px; width:min(760px,92vw); box-shadow:0 10px 30px rgba(0,0,0,.5); }
+  .toast{ position:fixed; right:16px; bottom:16px; background:#0f1424; border:1px solid #273153; padding:10px 12px; border-radius:10px; z-index:9999; }
+  .modal{ position:fixed; inset:0; display:none; place-items:center; background:rgba(0,0,0,.5); z-index:9998; }
+  .box{ background:#0f1424; border:1px solid #233055; border-radius:16px; padding:16px; width:min(720px,92vw); }
+  .hr{ height:1px; background:#233055; margin:12px 0; }
 </style>
 </head>
 <body>
   <div class="container" id="wrap">
     <div class="row">
-      <div class="title">🚌 <span id="app-title"></span></div>
+      <div class="title">🚌 <span id="app-title">Bluestar Bus — stop & route finder</span></div>
       <div class="muted" id="ukTime" style="margin-left:12px">–:–</div>
-      <button class="btn ghost" id="toggleBoard" title="Display board mode">Board</button>
-      <button class="btn ghost" id="toggleFS" title="Fullscreen">⛶</button>
-      <div class="gear" id="openCfg" title="Feed config">⚙️</div>
+      <button class="btn ghost" id="openCfg" title="Settings">⚙️ Settings</button>
       <select id="lang" class="input lang" style="width:100px"></select>
     </div>
 
     <div class="muted" style="margin:6px 0 18px">
-      <span id="refreshLbl"></span> · Build: <span id="build"></span>
+      <span>Refresh every 20 s</span> · Build: <span id="build">–</span>
     </div>
 
     <div class="tabs">
-      <div id="tabStop" class="tab active"></div>
-      <div id="tabRoute" class="tab"></div>
-      <div id="tabFav" class="tab"></div>
+      <div id="tabStop" class="tab active">Stop</div>
+      <div id="tabRoute" class="tab">Route</div>
+      <div id="tabFav" class="tab">Favourites</div>
     </div>
 
     <!-- STOP -->
     <div id="stopCard" class="card">
       <div class="row">
-        <input id="stopQuery" class="input" />
+        <input id="stopQuery" class="input" placeholder="Stop name" />
         <input id="windowMin" class="input" type="number" value="60" style="max-width:140px" />
-        <button id="stopSearchBtn" class="btn"></button>
+        <button id="stopSearchBtn" class="btn">Search</button>
       </div>
       <select id="stopSelect" class="input" style="margin-top:10px"></select>
       <div class="row" style="margin-top:6px; justify-content:space-between">
         <div class="muted"><span id="selectedStopLbl"></span></div>
-        <div class="muted"><span id="refreshEvery"></span></div>
+        <div class="muted"><span id="refreshEvery">Refresh every 20 s</span></div>
       </div>
       <div class="list" id="stopList"></div>
-      <div class="muted" style="margin-top:8px">
-        <span class="star" id="favStopBtn">☆</span>
-        <span id="favStopLbl"></span>
-      </div>
     </div>
 
     <!-- ROUTE -->
     <div id="routeCard" class="card" style="display:none">
       <div class="row">
-        <input id="routeQuery" class="input" />
-        <button id="routeSearchBtn" class="btn"></button>
+        <input id="routeQuery" class="input" placeholder="Route number" />
+        <button id="routeSearchBtn" class="btn">Search</button>
       </div>
       <select id="routeSelect" class="input" style="margin-top:10px"></select>
       <div id="map" class="map" style="margin-top:12px"></div>
-      <div class="row" style="margin-top:8px; justify-content:space-between">
-        <div class="muted" id="mapHint"></div>
-        <div class="muted">
-          <span class="star" id="favRouteBtn">☆</span>
-          <span id="favRouteLbl"></span>
-        </div>
-      </div>
+      <div class="muted" id="mapHint" style="margin-top:8px">If there are no live vehicles on the route, the map will be empty.</div>
     </div>
 
     <!-- FAVS -->
     <div id="favCard" class="card" style="display:none">
-      <h3 style="margin-bottom:10px">★ Favorites</h3>
+      <h3 style="margin-bottom:10px">★ Favourites</h3>
       <div class="row" style="align-items:flex-start">
         <div style="flex:1">
           <strong>Stops</strong>
@@ -122,85 +100,178 @@
     </div>
   </div>
 
-  <!-- Config modal -->
-  <div id="cfgModal" class="modal" style="display:none">
+  <!-- Settings modal -->
+  <div id="cfgModal" class="modal">
     <div class="box">
       <div class="row" style="justify-content:space-between;align-items:center">
-        <strong>Live feed config</strong>
+        <strong>Settings</strong>
         <button id="closeCfg" class="btn">×</button>
       </div>
-      <div class="row" style="margin-top:12px; gap:10px">
-        <input id="feedUrl" class="input" placeholder="https://data.bus-data.dft.gov.uk/api/v1/datafeed/...." />
-        <button id="saveFeed" class="btn">Save</button>
+
+      <div class="hr"></div>
+
+      <h4>Live feed (BODS SIRI-VM)</h4>
+      <div class="row" style="gap:10px">
+        <input id="feedUrl" class="input" placeholder="https://data.bus-data.dft.gov.uk/api/v1/datafeed/....?api_key=..." />
+        <button id="saveFeed" class="btn">Save Live URL</button>
       </div>
-      <div class="muted" style="margin-top:8px">Paste the BODS SIRI-VM URL above and press Save.</div>
+      <div class="muted" style="margin-top:6px">Paste the full BODS Vehicle Monitoring URL including <code>api_key</code>.</div>
+
+      <div class="hr"></div>
+
+      <h4>Upload GTFS ZIP</h4>
+      <form id="gtfsForm" class="row" style="gap:10px" onsubmit="return false;">
+        <input id="gtfsFile" class="input" type="file" accept=".zip" />
+        <button id="uploadGtfsBtn" class="btn">Upload GTFS</button>
+      </form>
+      <div class="muted" style="margin-top:6px">The file will be sent to <code>/api/upload</code> as <code>multipart/form-data</code> with field name <code>file</code>.</div>
     </div>
   </div>
 
+  <div id="toast" class="toast" style="display:none"></div>
+
 <script>
-/* ====== SAME-ORIGIN API ====== */
-const API_BASE = ""; // relatív → Railway domainről
-
-/* ---------- i18n ---------- */
-const I18N = {
- EN:{app:"Bluestar Bus — stop & route finder",stopTab:"Stop",routeTab:"Route",favTab:"Favourites",search:"Search",stopName:"Stop name",window:"Window (min)",resultsChoose:"Results — choose a stop",chosenStop:"Selected stop:",refreshEvery:"Refresh every 20 s",ukTime:"UK time:",mapHint:"If there are no live vehicles on the route, the map will be empty.",destination:"Destination",departure:"Departure",due:"Due",late:"late",early:"early",addFav:"Add to favourites",rmFav:"Remove from favourites"},
- HU:{app:"Bluestar Bus — megálló & járat kereső",stopTab:"Megálló",routeTab:"Vonal",favTab:"Kedvencek",search:"Keresés",stopName:"Megálló név",window:"Időablak (perc)",resultsChoose:"Találatok — válassz megállót",chosenStop:"Választott megálló:",refreshEvery:"Frissítés 20 s",ukTime:"UK idő:",mapHint:"Ha nincs élő jármű a vonalon, a térkép üres marad.",destination:"Cél",departure:"Indulás",due:"Due",late:"késés",early:"előny",addFav:"Hozzáadás a kedvencekhez",rmFav:"Eltávolítás a kedvencekből"},
- DE:{app:"Bluestar Bus — Haltestellen & Linien",stopTab:"Haltestelle",routeTab:"Linie",favTab:"Favoriten",search:"Suche",stopName:"Haltestellenname",window:"Zeitfenster (Min.)",resultsChoose:"Treffer — wähle eine Haltestelle",chosenStop:"Gewählte Haltestelle:",refreshEvery:"Aktualisierung alle 20 s",ukTime:"UK-Zeit:",mapHint:"Wenn keine Live-Fahrzeuge vorhanden sind, bleibt die Karte leer.",destination:"Ziel",departure:"Abfahrt",due:"Due",late:"spät",early:"früh",addFav:"Zu Favoriten",rmFav:"Aus Favoriten entfernen"},
- PL:{app:"Bluestar Bus — wyszukiwarka przystanków i linii",stopTab:"Przystanek",routeTab:"Linia",favTab:"Ulubione",search:"Szukaj",stopName:"Nazwa przystanku",window:"Okno (min)",resultsChoose:"Wyniki — wybierz przystanek",chosenStop:"Wybrany przystanek:",refreshEvery:"Odświeżanie co 20 s",ukTime:"Czas UK:",mapHint:"Jeśli brak pojazdów na żywo, mapa będzie pusta.",destination:"Kierunek",departure:"Odjazd",due:"Due",late:"opóź.",early:"wcześ.",addFav:"Dodaj do ulubionych",rmFav:"Usuń z ulubionych"},
- RO:{app:"Bluestar Bus — căutare stații & linii",stopTab:"Stație",routeTab:"Linie",favTab:"Preferate",search:"Căutare",stopName:"Numele stației",window:"Fereastră (min)",resultsChoose:"Rezultate — alege o stație",chosenStop:"Stație selectată:",refreshEvery:"Reîmprospătare la 20 s",ukTime:"Ora UK:",mapHint:"Dacă nu există vehicule live, harta rămâne goală.",destination:"Destinație",departure:"Plecare",due:"Due",late:"întârziere",early:"mai devreme",addFav:"Adaugă la preferate",rmFav:"Șterge din preferate"}
-};
-const LANGS=["EN","HU","DE","PL","RO"];
-function guessLang(){const n=(navigator.language||"en").slice(0,2).toUpperCase();return LANGS.includes(n)?n:"EN";}
-let LANG=localStorage.getItem("lang")||guessLang();
-function t(k){return (I18N[LANG]||I18N.EN)[k]||k;}
-
 /* ---------- helpers ---------- */
 const $=sel=>document.querySelector(sel);
 function el(tag, cls, txt){const e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e;}
 function setSel(select, arr, valKey, textKey){ select.innerHTML=""; arr.forEach(x=>{const o=document.createElement("option"); o.value=x[valKey]; o.textContent=x[textKey]; select.appendChild(o);});}
 function hhmm(x){ const d=new Date(x); return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false}); }
-const UK = new Intl.DateTimeFormat([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false, timeZone:'Europe/London'});
+function toast(msg, good=true){ const t=$("#toast"); t.textContent=msg; t.style.display="block"; t.style.borderColor=good?"#273153":"#5b2a2a"; t.style.color=good?"":"#fff"; t.style.background=good?"#0f1424":"#5b2a2a"; setTimeout(()=>t.style.display="none", 3500); }
 
 /* ---------- UI refs ---------- */
-const wrap=$("#wrap"), appTitle=$("#app-title"), langSel=$("#lang");
+const appTitle=$("#app-title"), ukTimeLbl=$("#ukTime"), buildSpan=$("#build");
 const tabStop=$("#tabStop"), tabRoute=$("#tabRoute"), tabFav=$("#tabFav");
-const ukTimeLbl=$("#ukTime"), buildSpan=$("#build"), refreshLbl=$("#refreshLbl");
 const stopCard=$("#stopCard"), routeCard=$("#routeCard"), favCard=$("#favCard");
-const stopQuery=$("#stopQuery"), windowMin=$("#windowMin"), stopSearchBtn=$("#stopSearchBtn"), stopSelect=$("#stopSelect");
-const selectedStopLbl=$("#selectedStopLbl"), refreshEvery=$("#refreshEvery"), stopList=$("#stopList");
+const stopQuery=$("#stopQuery"), windowMin=$("#windowMin"), stopSearchBtn=$("#stopSearchBtn"), stopSelect=$("#stopSelect"), selectedStopLbl=$("#selectedStopLbl"), stopList=$("#stopList");
 const routeQuery=$("#routeQuery"), routeSearchBtn=$("#routeSearchBtn"), routeSelect=$("#routeSelect");
-const mapHint=$("#mapHint"), toggleBoard=$("#toggleBoard"), toggleFS=$("#toggleFS");
-const cfgModal=$("#cfgModal"), openCfg=$("#openCfg"), closeCfg=$("#closeCfg"), feedUrl=$("#feedUrl"), saveFeed=$("#saveFeed");
-const favStopBtn=$("#favStopBtn"), favStopLbl=$("#favStopLbl"), favRouteBtn=$("#favRouteBtn"), favRouteLbl=$("#favRouteLbl");
-const favStops=$("#favStops"), favRoutes=$("#favRoutes");
+const mapHint=$("#mapHint");
 
-/* ---------- i18n apply ---------- */
-function fillLang(){ langSel.innerHTML=""; LANGS.forEach(c=>{const o=document.createElement("option"); o.value=c; o.textContent=c; if(c===LANG)o.selected=true; langSel.appendChild(o);});}
-function applyI18n(){
-  appTitle.textContent=t("app");
-  tabStop.textContent=t("stopTab"); tabRoute.textContent=t("routeTab"); tabFav.textContent=t("favTab");
-  stopQuery.placeholder=t("stopName"); stopSearchBtn.textContent=t("search");
-  routeQuery.placeholder=t("routeTab"); routeSearchBtn.textContent=t("search");
-  refreshEvery.textContent=t("refreshEvery"); mapHint.textContent=t("mapHint");
-}
+const cfgModal=$("#cfgModal"), openCfg=$("#openCfg"), closeCfg=$("#closeCfg"), feedUrl=$("#feedUrl"), saveFeed=$("#saveFeed");
+const gtfsFile=$("#gtfsFile"), uploadGtfsBtn=$("#uploadGtfsBtn");
+const langSel=$("#lang");
+
+/* ---------- lang ---------- */
+const LANGS=["EN","HU","DE","PL","RO"];
+function guessLang(){const n=(navigator.language||"en").slice(0,2).toUpperCase();return LANGS.includes(n)?n:"EN";}
+let LANG=localStorage.getItem("lang")||guessLang();
+function applyI18n(){ /* egyszerű – címek maradhatnak angolul most */ }
+(function fillLang(){ langSel.innerHTML=""; LANGS.forEach(c=>{const o=document.createElement("option"); o.value=c; o.textContent=c; if(c===LANG)o.selected=true; langSel.appendChild(o);});})();
 langSel.onchange=()=>{LANG=langSel.value; localStorage.setItem("lang",LANG); applyI18n();};
-fillLang(); applyI18n();
 
 /* ---------- tabs ---------- */
 function showStop(){ tabStop.classList.add("active"); tabRoute.classList.remove("active"); tabFav.classList.remove("active"); stopCard.style.display="block"; routeCard.style.display="none"; favCard.style.display="none"; }
 function showRoute(){ tabRoute.classList.add("active"); tabStop.classList.remove("active"); tabFav.classList.remove("active"); routeCard.style.display="block"; stopCard.style.display="none"; favCard.style.display="none"; }
-function showFav(){ tabFav.classList.add("active"); tabStop.classList.remove("active"); tabRoute.classList.remove("active"); favCard.style.display="block"; stopCard.style.display="none"; routeCard.style.display="none"; renderFavs(); }
+function showFav(){ tabFav.classList.add("active"); tabStop.classList.remove("active"); tabRoute.classList.remove("active"); favCard.style.display="block"; stopCard.style.display="none"; routeCard.style.display="none"; }
 tabStop.onclick=showStop; tabRoute.onclick=showRoute; tabFav.onclick=showFav;
 
 /* ---------- clock & status ---------- */
 async function tick(){
-  try{ const r=await fetch(`${API_BASE}/api/status`); const j=await r.json();
-       ukTimeLbl.textContent=`${t("ukTime")} ${j.uk_time}`; buildSpan.textContent=j.build;
+  try{ const r=await fetch("/api/status"); const j=await r.json();
+       ukTimeLbl.textContent=`UK: ${j.uk_time}`; buildSpan.textContent=j.build;
   }catch(e){}
 }
-setInterval(tick, 1000); tick(); refreshLbl.textContent=`Refresh every 20 s`;
+setInterval(tick, 1000); tick();
 
-/* ---------- config modal ---------- */
-openCfg.onclick=async()=>{ cfgModal.style.display="grid"; try{ const r=await fetch(`${API_BASE}/api/live/config`); const j=await r.json(); feedUrl.value=j.feed_url||"";}catch(e){} };
+/* ---------- settings modal ---------- */
+openCfg.onclick=async()=>{
+  cfgModal.style.display="grid";
+  try{ const r=await fetch("/api/live/config"); const j=await r.json(); feedUrl.value=j.feed_url||""; }catch(e){}
+};
 closeCfg.onclick=()=> cfgModal.style.display="none";
-saveFeed.onclick=
+
+saveFeed.onclick=async()=>{
+  const url=feedUrl.value.trim();
+  if(!url){ toast("Please paste the BODS live URL", false); return; }
+  try{
+    const r=await fetch("/api/live/config",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({feed_url:url})});
+    if(!r.ok) throw new Error(await r.text());
+    toast("Live URL saved ✓");
+  }catch(e){ toast("Save failed: "+(e.message||'error'), false); }
+};
+
+/* ---------- GTFS upload ---------- */
+uploadGtfsBtn.onclick=async()=>{
+  const f=gtfsFile.files?.[0];
+  if(!f){ toast("Choose a GTFS .zip first", false); return; }
+  const fd=new FormData(); fd.append("file", f);
+  try{
+    const r=await fetch("/api/upload",{method:"POST", body:fd});
+    if(!r.ok) throw new Error(await r.text());
+    toast("GTFS uploaded ✓");
+  }catch(e){ toast("Upload failed: "+(e.message||'error'), false); }
+};
+
+/* ---------- stop search ---------- */
+stopSearchBtn.onclick=async()=>{
+  const q=stopQuery.value.trim(); if(!q) return;
+  const r=await fetch(`/api/stops/search?q=${encodeURIComponent(q)}`); const items=await r.json();
+  stopSelect.innerHTML="";
+  items.forEach(it=>{ const o=document.createElement("option"); o.value=it.id; o.textContent=it.name; stopSelect.appendChild(o); });
+  if(items[0]){ stopSelect.value=items[0].id; selectedStopLbl.textContent=`Selected stop: ${items[0].name}`; await renderDepartures(); }
+  else selectedStopLbl.textContent="No results";
+};
+stopSelect.onchange=()=>{ selectedStopLbl.textContent=`Selected stop: ${stopSelect.options[stopSelect.selectedIndex]?.text||"–"}`; renderDepartures(); };
+
+function delayBadge(d){ if(d==null) return ""; const n=Number(d); if(!Number.isFinite(n)) return ""; const sign=n>0?"+":""; return `<span class="mono ${n>0?'good':'muted'}" style="margin-left:8px">${sign}${n} min</span>`; }
+async function renderDepartures(){
+  const id=stopSelect.value; if(!id) return;
+  const w=Math.max(1, Number(windowMin.value||60));
+  const r=await fetch(`/api/stops/${encodeURIComponent(id)}/next_departures?window=${w}`); const j=await r.json();
+  stopList.innerHTML="";
+  (j.departures||[]).forEach(row=>{
+    const it=el("div","item");
+    it.innerHTML = `
+      <div class="pill">${row.route||"–"}</div>
+      <div class="dest">${row.destination||"–"}</div>
+      <div class="mono ${row.is_due?'good blink':row.is_live?'good':''}">${row.is_due?'Due':row.time_display}${delayBadge(row.delay_min)}</div>`;
+    it.onclick=()=>openTrip(row.trip_id,row.route,row.destination);
+    stopList.appendChild(it);
+  });
+}
+setInterval(renderDepartures, 20000);
+
+/* ---------- trip modal (simple) ---------- */
+function openTrip(tripId, route, headsign){
+  if(!tripId) return;
+  (async()=>{
+    const r=await fetch(`/api/trips/${encodeURIComponent(tripId)}`); const j=await r.json();
+    const modal=document.createElement("div"); modal.className="modal"; modal.style.display='grid';
+    const box=document.createElement("div"); box.className="box";
+    box.innerHTML=`<div class="row" style="justify-content:space-between;align-items:center">
+      <div><strong>Trip</strong> · ${route||""} → ${headsign||""}</div>
+      <button class="btn" id="xTrip">×</button></div>`;
+    const list=document.createElement("div"); list.className="list";
+    (j.stops||[]).forEach(s=>{
+      const row=document.createElement("div"); row.className="item";
+      const left=el("div","muted mono",s.time_display); if(s.is_past) left.style.opacity=.6;
+      const name=el("div","",s.stop_name); if(s.is_past) name.style.opacity=.6;
+      row.appendChild(el("div","pill","")); row.appendChild(name); row.appendChild(left);
+      list.appendChild(row);
+    });
+    box.appendChild(list); modal.appendChild(box); document.body.appendChild(modal);
+    document.getElementById("xTrip").onclick=()=>document.body.removeChild(modal);
+  })();
+}
+
+/* ---------- route + map ---------- */
+let map, markers=[];
+function ensureMap(){ if(map) return; map = L.map('map',{zoomControl:true}).setView([50.9097,-1.4044],12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'Leaflet | © OpenStreetMap'}).addTo(map); }
+routeSearchBtn.onclick=async()=>{ const q=routeQuery.value.trim(); if(!q) return;
+  const r=await fetch(`/api/routes/search?q=${encodeURIComponent(q)}`); const items=await r.json(); setSel(routeSelect, items, "route","route"); if(items[0]){ routeSelect.value=items[0].route; renderVehicles(); } };
+routeSelect.onchange=renderVehicles;
+async function renderVehicles(){
+  ensureMap(); markers.forEach(m=>m.remove()); markers=[];
+  const route=routeSelect.value; if(!route) return;
+  const r=await fetch(`/api/routes/${encodeURIComponent(route)}/vehicles`); const j=await r.json(); const vs=j.vehicles||[];
+  vs.forEach(v=>{ const m=L.marker([v.lat,v.lon]).addTo(map).bindPopup(`${v.label||""}`); markers.push(m); });
+  if(vs.length){ const g=L.featureGroup(markers); map.fitBounds(g.getBounds().pad(0.2)); }
+}
+
+/* ---------- init ---------- */
+(function boot(){
+  // lang preload done above
+})();
+</script>
+</body>
+</html>
