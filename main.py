@@ -1,45 +1,84 @@
-# main.py
-import os
+from __future__ import annotations
+
+import csv
 import json
-import time
-from datetime import datetime
+import os
+import zipfile
+from io import BytesIO, TextIOWrapper
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import List, Dict, Optional
+from datetime import datetime, timezone
 
 import httpx
-from fastapi import FastAPI, HTTPException, Body, Query
+import xml.etree.ElementTree as ET
+
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
-# --- külső segéd modulok (a repo-ban lévők) ---
-# A modulok meglétét ellenőrizzük, hogy ne dőljön el, ha hiányoznak.
-try:
-    import gtfs  # elvárt: load(), is_loaded(), search_stops(query)
-except Exception:  # pragma: no cover
-    gtfs = None
-
-try:
-    import siri_live  # elvárt: departures_for_stop(stop_id, feed_url, api_key, minutes)
-except Exception:  # pragma: no cover
-    siri_live = None
-
-
-# --------- Alapbeállítások ---------
+# ---------- App meta ----------
 APP_VERSION = "5.0.0"
-TZ = "Europe/London"
-BUILD = int(time.time())
+BUILD = os.getenv("BUILD", str(int(datetime.now().timestamp())))
+TZ_LABEL = "Europe/Budapest"  # tetszőlegesen átírható
 
-DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
-CACHE_DIR = Path(os.getenv("CACHE_DIR", "cache"))
-STATIC_DIR = Path(os.getenv("STATIC_DIR", "static"))
+# ---------- Paths ----------
+DATA_DIR = Path("data"); DATA_DIR.mkdir(exist_ok=True)
+GTFS_DIR = Path("gtfs"); GTFS_DIR.mkdir(exist_ok=True)
+STOPS_TXT = GTFS_DIR / "stops.txt"
+LIVE_CFG_FILE = DATA_DIR / "live_config.json"
 
-LIVE_CFG_FILE = CACHE_DIR / "live_config.json"
+# ---------- Helpers ----------
+def now_local_str() -> str:
+    try:
+        import pytz
+        tz = pytz.timezone(TZ_LABEL)
+        return datetime.now(tz).strftime("%H:%M:%S")
+    except Exception:
+        return datetime.now(timezone.utc).strftime("%H:%M:%S")
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
-STATIC_DIR.mkdir(parents=True, exist_ok=True)
+def mask_url_key(url: str) -> str:
+    from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+    try:
+        pr = urlparse(url)
+        qs = dict(parse_qsl(pr.query, keep_blank_values=True))
+        if "api_key" in qs:
+            v = qs["api_key"]
+            qs["api_key"] = (v[:3] + "…" + v[-3:]) if len(v) > 6 else "•••"
+        return urlunparse((pr.scheme, pr.netloc, pr.path, pr.params, urlencode(qs), pr.fragment))
+    except Exception:
+        return url
 
-# --------- FastAPI példány ---------
+def parse_iso_dt(text: str) -> Optional[datetime]:
+    try:
+        if text.endswith("Z"): text = text.replace("Z", "+00:00")
+        return datetime.fromisoformat(text)
+    except Exception:
+        return None
+
+def minutes_until(dt: datetime) -> Optional[int]:
+    try:
+        now = datetime.now(timezone.utc)
+        if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+        return max(int((dt - now).total_seconds() // 60), 0)
+    except Exception:
+        return None
+
+# ---------- Models ----------
+class LiveConfig(BaseModel):
+    feed_url: str = Field(..., description="SIRI-SM feed URL (api_key-del együtt)")
+
+class StopOut(BaseModel):
+    id: str
+    name: str
+
+class DepartureOut(BaseModel):
+    line: str
+    destination: str
+    expected: str
+    due_in_min: Optional[int] = None
+
+# ---------- App ----------
 app = FastAPI(
     title="Bluestar Bus — API",
     version=APP_VERSION,
@@ -47,223 +86,173 @@ app = FastAPI(
     redoc_url=None,
     openapi_url="/api/openapi.json",
 )
-
-# CORS – ha szeretnéd, itt szigorítható
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
 
-
-# --------- Hasznos segédek ---------
-def uk_time_str() -> str:
-    # A Railway konténerben nincs zónaadat, ezért stringet adunk vissza.
-    # A frontendnek csak kijelzésre kell.
-    return datetime.utcnow().strftime("%H:%M:%S")
-
-
-def read_live_cfg() -> Dict[str, Any]:
+# ---------- Live config store ----------
+def read_live_config() -> Optional[LiveConfig]:
     if LIVE_CFG_FILE.exists():
-        try:
-            return json.loads(LIVE_CFG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {"feed_url": None, "api_key": None}
+        try: return LiveConfig(**json.loads(LIVE_CFG_FILE.read_text("utf-8")))
+        except Exception: return None
+    return None
 
+def write_live_config(cfg: LiveConfig) -> None:
+    LIVE_CFG_FILE.write_text(cfg.model_dump_json(indent=2), "utf-8")
 
-def write_live_cfg(cfg: Dict[str, Any]) -> None:
-    LIVE_CFG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+# ---------- GTFS stops loader ----------
+_stops: List[Dict[str, str]] = []
+def load_stops_from_filelike(f) -> int:
+    global _stops
+    reader = csv.DictReader(f)
+    out = []
+    for row in reader:
+        sid = row.get("stop_id") or row.get("stopId") or ""
+        snm = row.get("stop_name") or row.get("stopName") or ""
+        if sid and snm: out.append({"id": sid, "name": snm})
+    _stops = out
+    return len(_stops)
 
+def load_stops_from_disk() -> int:
+    if STOPS_TXT.exists():
+        with STOPS_TXT.open("r", encoding="utf-8-sig", newline="") as f:
+            return load_stops_from_filelike(f)
+    return 0
 
-def mask_key(key: Optional[str]) -> Optional[str]:
-    if not key:
-        return key
-    if len(key) <= 6:
-        return "*" * len(key)
-    return key[:3] + "…" + key[-3:]
+# initial load
+load_stops_from_disk()
 
-
-def gtfs_loaded() -> bool:
-    try:
-        if gtfs and hasattr(gtfs, "is_loaded"):
-            return bool(gtfs.is_loaded())
-        # ha nincs is_loaded(), de van belőle bármilyen jelzés
-        return getattr(gtfs, "_loaded", False)
-    except Exception:
-        return False
-
-
-# --------- Életciklus: GTFS betöltés ---------
-@app.on_event("startup")
-async def _startup():
-    # GTFS betöltés, ha van modul és adat
-    if gtfs and hasattr(gtfs, "load"):
-        try:
-            gtfs.load(base_dir=str(Path("gtfs")), cache_dir=str(CACHE_DIR))
-        except TypeError:
-            # régebbi/eltérő szignatúra
-            try:
-                gtfs.load()
-            except Exception:
-                pass
-    # élő feed config fájlból beolvasva (ha nincs, létrejön később POST-tal)
-    read_live_cfg()
-
-
-# ---------------- API VÉGPONTOK ----------------
-
+# ---------- API: status ----------
 @app.get("/api/status")
-def api_status():
-    cfg = read_live_cfg()
+async def api_status():
+    cfg = read_live_config()
     return {
         "ok": True,
         "version": APP_VERSION,
-        "build": str(BUILD),
-        "uk_time": uk_time_str(),
-        "tz": TZ,
-        "live_feed_configured": bool(cfg.get("feed_url")),
-        "gtfs_loaded": gtfs_loaded(),
+        "build": BUILD,
+        "time": now_local_str(),
+        "tz": TZ_LABEL,
+        "live_feed_configured": bool(cfg and cfg.feed_url),
+        "gtfs_stops": len(_stops),
     }
 
-
+# ---------- API: live config ----------
 @app.get("/api/live/config")
-def get_live_config():
-    cfg = read_live_cfg()
-    # api_key-et maszkoljuk a válaszban
-    return {
-        "feed_url": cfg.get("feed_url"),
-        "api_key": mask_key(cfg.get("api_key")),
-    }
-
+async def get_live_config():
+    cfg = read_live_config()
+    return {"feed_url": mask_url_key(cfg.feed_url)} if cfg else {"feed_url": None}
 
 @app.post("/api/live/config")
-def set_live_config(payload: Dict[str, Optional[str]] = Body(..., example={
-    "feed_url": "https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/",
-    "api_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-})):
-    feed_url = payload.get("feed_url")
-    api_key = payload.get("api_key")
-    if not feed_url:
-        raise HTTPException(status_code=400, detail="feed_url is required")
-    cfg = {"feed_url": feed_url, "api_key": api_key}
-    write_live_cfg(cfg)
+async def set_live_config(cfg: LiveConfig):
+    if not (cfg.feed_url.startswith("http://") or cfg.feed_url.startswith("https://")):
+        raise HTTPException(400, "feed_url must start with http(s)://")
+    write_live_config(cfg)
     return {"ok": True}
 
-
-@app.get("/api/live/stop-search")
-def stop_search(q: str = Query(..., alias="query", min_length=1, max_length=64)):
+# ---------- API: GTFS upload ----------
+@app.post("/api/upload-gtfs")
+async def upload_gtfs(file: UploadFile = File(...)):
     """
-    Megállók keresése névrészlet alapján.
-    Visszaad: [{id, name}]
+    Fogad: 
+      - .zip (benne stops.txt)
+      - sima stops.txt
+    Mentés: gtfs/stops.txt
     """
-    if not gtfs:
-        raise HTTPException(status_code=503, detail="GTFS module not available")
+    content = await file.read()
+    name = (file.filename or "").lower()
 
     try:
-        # elvárt: gtfs.search_stops(query: str) -> List[Dict[id, name]]
-        results = gtfs.search_stops(q)
-    except AttributeError:
-        # kompatibilitási fallback (ha más a név)
-        if hasattr(gtfs, "find_stops"):
-            results = gtfs.find_stops(q)
+        if name.endswith(".zip"):
+            with zipfile.ZipFile(BytesIO(content)) as z:
+                # keressük a stops.txt-t
+                pick = None
+                for info in z.infolist():
+                    if info.filename.lower().endswith("stops.txt"):
+                        pick = info; break
+                if not pick:
+                    raise HTTPException(400, "No stops.txt found in zip")
+                with z.open(pick, "r") as fz:
+                    text = TextIOWrapper(fz, encoding="utf-8-sig", newline="")
+                    count = load_stops_from_filelike(text)
+                    # mentsük is le:
+                    z.extract(pick, GTFS_DIR)
+                    (GTFS_DIR / pick.filename).rename(STOPS_TXT)
         else:
-            raise HTTPException(status_code=500, detail="search_stops() not implemented in gtfs.py")
+            # feltételezzük, hogy stops.txt
+            with open(STOPS_TXT, "wb") as w:
+                w.write(content)
+            with open(STOPS_TXT, "r", encoding="utf-8-sig", newline="") as f:
+                count = load_stops_from_filelike(f)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"GTFS upload parse error: {e}")
 
-    # kis takarítás a formátumra
-    cleaned: List[Dict[str, str]] = []
-    for r in results or []:
-        sid = r.get("id") or r.get("stop_id") or r.get("code")
-        name = r.get("name") or r.get("stop_name")
-        if sid and name:
-            cleaned.append({"id": str(sid), "name": str(name)})
+    return {"ok": True, "stops_loaded": count}
 
-    return cleaned
+# ---------- API: stop search (FRONTEND NEVEZET = /api/live/stop-search) ----------
+@app.get("/api/live/stop-search", response_model=List[StopOut])
+async def stop_search(q: str = Query(..., min_length=1)):
+    term = q.strip().lower()
+    if not _stops: load_stops_from_disk()
+    hits = []
+    for s in _stops:
+        if term in s["name"].lower():
+            hits.append(StopOut(id=s["id"], name=s["name"]))
+            if len(hits) >= 50: break
+    return hits
 
+# ---------- API: live departures (FRONTEND NEVEZET = /api/live/departures) ----------
+async def fetch_siri_departures(feed_url: str, stop_id: str, window_min: int) -> List[DepartureOut]:
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get(feed_url); r.raise_for_status()
+        xml = r.text
 
-@app.get("/api/live/departures")
-async def live_departures(
-    stop_id: str = Query(..., min_length=1),
-    minutes: int = Query(60, ge=1, le=240),
-    limit: Optional[int] = Query(None, ge=1, le=200),
-):
-    """
-    Élő indulások egy megállóból.
-    Visszaad: [{line, headsign, time_str, due_seconds, destination, platform}]
-    """
-    cfg = read_live_cfg()
-    feed_url = cfg.get("feed_url")
-    api_key = cfg.get("api_key")
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return []
 
-    if not feed_url:
-        raise HTTPException(status_code=400, detail="Live feed not configured. POST /api/live/config first.")
-
-    # ha van saját siri_live modul
-    if siri_live and hasattr(siri_live, "departures_for_stop"):
-        try:
-            rows = await siri_live.departures_for_stop(
-                stop_id=stop_id, feed_url=feed_url, api_key=api_key, minutes=minutes
-            )
-        except TypeError:
-            # sync implementáció
-            rows = siri_live.departures_for_stop(stop_id, feed_url, api_key, minutes)
-    else:
-        # egyszerű (generikus) SIRI-VM lehívás, ha nincs siri_live modul
-        # Feltételezzük, hogy a feed_url végére ?api_key=… kell; ha nem, a siri_live modul a biztos megoldás.
-        params = {}
-        if api_key:
-            params["api_key"] = api_key
-
-        try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                r = await client.get(feed_url, params=params)
-                r.raise_for_status()
-                data = r.json()
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Live feed error: {e}")
-
-        # Itt a konkrét SIRI/producer formátum eltérhet; próbálunk kezelhető, egységes listát csinálni.
-        rows = []
-        # Példa normalizálás – ha más a szerkezet, a siri_live modullal dolgozz!
-        visits = (
-            data.get("Siri", {})
-            .get("ServiceDelivery", {})
-            .get("StopMonitoringDelivery", [{}])[0]
-            .get("MonitoredStopVisit", [])
+    ns = {"s": "http://www.siri.org.uk/siri"}
+    out: List[DepartureOut] = []
+    for msv in root.findall(".//s:MonitoredStopVisit", ns):
+        sp = msv.findtext(".//s:StopPointRef", default="", namespaces=ns) or msv.findtext(".//StopPointRef", default="")
+        if str(sp).strip() != str(stop_id).strip():
+            continue
+        line = msv.findtext(".//s:LineRef", default="", namespaces=ns) or msv.findtext(".//LineRef", default="")
+        dest = msv.findtext(".//s:DestinationName", default="", namespaces=ns) or msv.findtext(".//DestinationName", default="")
+        t = (
+            msv.findtext(".//s:ExpectedDepartureTime", default="", namespaces=ns)
+            or msv.findtext(".//ExpectedDepartureTime", default="")
+            or msv.findtext(".//s:ExpectedArrivalTime", default="", namespaces=ns)
+            or msv.findtext(".//ExpectedArrivalTime", default="")
+            or msv.findtext(".//s:AimedDepartureTime", default="", namespaces=ns)
+            or msv.findtext(".//AimedDepartureTime", default="")
         )
-        for v in visits:
-            mv = v.get("MonitoredVehicleJourney", {})
-            line = mv.get("LineRef") or mv.get("PublishedLineName")
-            dest = (mv.get("DestinationName") or mv.get("DirectionName") or "").strip()
-            call = mv.get("MonitoredCall", {})
-            aimed = call.get("AimedDepartureTime") or call.get("AimedArrivalTime")
-            expected = call.get("ExpectedDepartureTime") or call.get("ExpectedArrivalTime") or aimed
-            time_str = expected or aimed
-            rows.append(
-                {
-                    "line": str(line) if line is not None else "",
-                    "headsign": dest,
-                    "time_str": time_str,
-                    "destination": dest,
-                    "platform": call.get("DeparturePlatformName"),
-                }
-            )
+        dt = parse_iso_dt(t) if t else None
+        hhmm = dt.astimezone(timezone.utc).strftime("%H:%M") if dt else "--:--"
+        due = minutes_until(dt) if dt else None
+        out.append(DepartureOut(line=line, destination=dest, expected=hhmm, due_in_min=due))
 
-    # limitálás, egyszerű rendezés (ha van due_seconds mező, arra; különben time_str)
-    def sort_key(it: Dict[str, Any]):
-        return (
-            it.get("due_seconds", 999999),
-            it.get("time_str", ""),
-        )
+    if window_min is not None:
+        out = [d for d in out if d.due_in_min is None or d.due_in_min <= window_min]
+    out.sort(key=lambda d: d.due_in_min if d.due_in_min is not None else 10_000)
+    return out
 
-    rows = sorted(rows, key=sort_key)
-    if limit:
-        rows = rows[:limit]
-    return rows
+@app.get("/api/live/departures", response_model=List[DepartureOut])
+async def live_departures(stopId: str = Query(...), window: int = Query(60, ge=1, le=240)):
+    cfg = read_live_config()
+    if not cfg: raise HTTPException(503, "Live feed is not configured")
+    try:
+        return await fetch_siri_departures(cfg.feed_url, stopId, window)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"SIRI fetch failed: {e}")
 
+# ---------- Static frontend on / ----------
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
-# ---------------- FRONTEND ----------------
-# A / alatt a static/index.html töltődik be (PWA/kliens).
-app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+# ---------- Local run ----------
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=True)
