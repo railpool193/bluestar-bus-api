@@ -43,6 +43,10 @@
   .board .item .time{ font-size:26px; font-weight:800 }
   .board .item .op{ font-size:18px; padding:6px 10px; border:1px solid #2c3c6a; border-radius:8px; }
   .fs { position:fixed; inset:12px; z-index:9999; overflow:auto; }
+
+  /* Simple modal styles */
+  .modal{position:fixed; inset:0; display:none; place-items:center; background:rgba(0,0,0,.5); z-index:9999;}
+  .modal .box{ background:#0f1424; color:var(--text); border-radius:12px; padding:16px; width:min(760px,92vw); box-shadow:0 10px 30px rgba(0,0,0,.5); }
 </style>
 </head>
 <body>
@@ -134,7 +138,8 @@
   </div>
 
 <script>
-const API_BASE = "https://bluestar-bus-api-production-5886.up.railway.app";
+/* ====== SAME-ORIGIN API ====== */
+const API_BASE = ""; // relatív → Railway domainről
 
 /* ---------- i18n ---------- */
 const I18N = {
@@ -198,8 +203,4 @@ setInterval(tick, 1000); tick(); refreshLbl.textContent=`Refresh every 20 s`;
 /* ---------- config modal ---------- */
 openCfg.onclick=async()=>{ cfgModal.style.display="grid"; try{ const r=await fetch(`${API_BASE}/api/live/config`); const j=await r.json(); feedUrl.value=j.feed_url||"";}catch(e){} };
 closeCfg.onclick=()=> cfgModal.style.display="none";
-saveFeed.onclick=async()=>{ try{ await fetch(`${API_BASE}/api/live/config`,{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({feed_url:feedUrl.value.trim()})}); cfgModal.style.display="none"; }catch(e){ alert("Save failed"); } };
-
-/* ---------- stop search ---------- */
-stopSearchBtn.onclick=async()=>{
-  const q=stopQuery.value
+saveFeed.onclick=
