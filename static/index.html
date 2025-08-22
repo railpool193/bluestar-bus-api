@@ -6,89 +6,69 @@
   <meta name="theme-color" content="#0b0f1a" />
   <title>Bluestar menetrend és megálló kereső</title>
   <style>
-    :root{
-      --bg:#0b0f1a; --panel:#121829; --panel-2:#0f1524; --muted:#8fa3b8;
-      --text:#e8ecf1; --brand:#9aa6ff; --accent:#3b82f6; --ok:#25d366; --warn:#f59e0b; --err:#ef4444;
-      --chip:#1b2238; --chip-b:#273255; --chip-t:#bcd0ff; --shadow:0 6px 24px rgba(0,0,0,.35);
-      --radius:16px;
-    }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0; font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;
-      color:var(--text); background:radial-gradient(1200px 800px at 70% -20%,#1b2441 0%,#0b0f1a 55%) fixed,var(--bg);
-    }
+    :root{--bg:#0b0f1a;--panel:#121829;--panel-2:#0f1524;--muted:#8fa3b8;--text:#e8ecf1;--brand:#9aa6ff;--ok:#25d366;--err:#ef4444;--radius:16px}
+    *{box-sizing:border-box} html,body{height:100%}
+    body{margin:0;font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;color:var(--text);
+      background:radial-gradient(1200px 800px at 70% -20%,#1b2441 0%,#0b0f1a 55%) fixed,var(--bg)}
     .container{max-width:980px;margin:0 auto;padding:16px 16px 48px}
     header{display:flex;align-items:center;gap:12px;padding:18px 0 6px}
     header h1{margin:0;font-size:22px;font-weight:650;letter-spacing:.3px}
     .uk-time{opacity:.9;font-size:14px;margin-left:auto}
-    .toolbar{display:flex;align-items:center;gap:12px;margin:8px 0 16px}
-    .btn{appearance:none;border:none;background:var(--brand);color:#101321;padding:10px 14px;border-radius:12px;font-weight:650;cursor:pointer;box-shadow:var(--shadow)}
-    .btn.ghost{background:transparent;color:var(--text);outline:1px solid #364063}
-    .btn.small{padding:6px 10px;border-radius:10px}
     .tabs{display:flex;gap:10px;margin:10px 0 2px}
-    .tab{padding:10px 14px;border-radius:14px;background:var(--panel-2);color:var(--muted);cursor:pointer;border:1px solid #1f2a44}
+    .tab{padding:10px 14px;border-radius:14px;background:#0f1524;color:#8fa3b8;cursor:pointer;border:1px solid #1f2a44}
     .tab.active{background:#202a46;color:var(--text);border-color:#2b3a62}
-    .card{background:var(--panel);border:1px solid #1f2a44;border-radius:var(--radius);box-shadow:var(--shadow);padding:14px}
+    .card{background:#121829;border:1px solid #1f2a44;border-radius:var(--radius);padding:14px}
     .row{display:flex;gap:12px;align-items:center;margin:10px 0}
-    .input{flex:1;display:flex;align-items:center;background:var(--panel-2);border:1px solid #1f2a44;border-radius:12px;padding:6px 10px}
+    .input{flex:1;display:flex;align-items:center;background:#0f1524;border:1px solid #1f2a44;border-radius:12px;padding:6px 10px}
     .input input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:16px;padding:6px}
+    .btn{appearance:none;border:none;background:var(--brand);color:#101321;padding:10px 14px;border-radius:12px;font-weight:650;cursor:pointer}
+    .btn.small{padding:6px 10px;border-radius:10px}
     .section-title{font-weight:700;margin:12px 4px 8px}
     .chips{display:flex;flex-wrap:wrap;gap:8px}
-    .chip{background:var(--chip);border:1px solid #243055;color:var(--chip-t);padding:6px 10px;border-radius:10px;font-weight:650}
+    .chip{background:#1b2238;border:1px solid #243055;color:#bcd0ff;padding:6px 10px;border-radius:10px;font-weight:650}
     .results{margin-top:10px;display:flex;flex-direction:column;gap:10px}
-    .item{display:flex;align-items:center;gap:12px;background:var(--panel-2);border:1px solid #1f2a44;border-radius:14px;padding:12px}
-    .pill{min-width:44px;height:44px;display:grid;place-items:center;border-radius:10px;background:var(--chip-b);color:#d8e0ff;font-weight:800}
+    .item{display:flex;align-items:center;gap:12px;background:#0f1524;border:1px solid #1f2a44;border-radius:14px;padding:12px}
+    .pill{min-width:44px;height:44px;display:grid;place-items:center;border-radius:10px;background:#273255;color:#d8e0ff;font-weight:800}
     .dest{font-weight:650}
     .due{margin-left:auto;color:#8fe29f}
     .footer{opacity:.75;font-size:13px;margin-top:14px}
-    .error{position:fixed;left:16px;right:16px;bottom:16px;background:#2a0e12;border:1px solid #4e1c23;color:#ffd6d6;padding:12px;border-radius:12px;box-shadow:var(--shadow);display:none}
-    .drawer-btn,.settings-btn{width:42px;height:42px;border-radius:12px;border:1px solid #263150;background:var(--panel-2);display:grid;place-items:center;color:var(--text);cursor:pointer}
+    .error{position:fixed;left:16px;right:16px;bottom:16px;background:#2a0e12;border:1px solid #4e1c23;color:#ffd6d6;padding:12px;border-radius:12px;display:none}
+    .settings-btn,.drawer-btn{width:42px;height:42px;border-radius:12px;border:1px solid #263150;background:#0f1524;display:grid;place-items:center;color:var(--text);cursor:pointer}
     .topbar{display:flex;gap:10px;align-items:center}
-    dialog{border:none;border-radius:16px;background:#0f1526;color:var(--text);padding:0;box-shadow:0 24px 80px rgba(0,0,0,.6);max-width:520px}
+    dialog{border:none;border-radius:16px;background:#0f1526;color:var(--text);padding:0;max-width:520px}
     dialog::backdrop{background:rgba(7,10,20,.65)}
     .dlg-header{padding:14px 16px;border-bottom:1px solid #223055;font-weight:700}
     .dlg-body{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
     .grid-2{display:grid;grid-template-columns:1fr 120px;gap:10px}
-    .muted{color:var(--muted)}
-    .fav{margin-left:8px}
+    .muted{color:#8fa3b8}
     a{color:#b6c4ff;text-decoration:none}
-    @media (max-width:640px){ .grid-2{grid-template-columns:1fr} }
+    @media (max-width:640px){.grid-2{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
   <div class="container">
     <div class="topbar">
       <button class="drawer-btn" id="btnDrawer" title="Menü">☰</button>
-      <header>
-        <h1>🚍 Bluestar menetrend és megálló kereső</h1>
-      </header>
+      <header><h1>🚍 Bluestar menetrend és megálló kereső</h1></header>
       <button class="settings-btn" id="btnSettings" title="Beállítások">⚙️</button>
     </div>
     <div class="uk-time" id="ukTime">UK: --:--:--</div>
 
-    <div class="toolbar">
-      <div class="tabs">
-        <div class="tab active" data-tab="stop">Megálló</div>
-        <div class="tab" data-tab="route">Viszonylat</div>
-        <div class="tab" data-tab="fav">Kedvencek</div>
-      </div>
+    <div class="tabs">
+      <div class="tab active" data-tab="stop">Megálló</div>
+      <div class="tab" data-tab="route">Viszonylat</div>
+      <div class="tab" data-tab="fav">Kedvencek</div>
     </div>
 
-    <!-- STOP TAB -->
+    <!-- STOP -->
     <section id="tab-stop" class="card">
       <div class="row">
-        <div class="input">
-          <input id="queryStop" type="text" placeholder="Település, utca, megálló neve…" autocomplete="off" />
-        </div>
+        <div class="input"><input id="queryStop" placeholder="Település, utca, megálló…" autocomplete="off"></div>
         <button class="btn" id="btnStopSearch">Keresés</button>
       </div>
 
       <div class="section-title">Kiemelt forgalmi változások</div>
-      <div class="chips" id="chips">
-        <span class="chip">18</span><span class="chip">19</span><span class="chip">1</span>
-        <span class="chip">7</span><span class="chip">U1</span><span class="chip">X4</span>
-      </div>
+      <div class="chips" id="chips"><span class="chip">18</span><span class="chip">19</span><span class="chip">1</span><span class="chip">7</span><span class="chip">U1</span><span class="chip">X4</span></div>
 
       <div class="section-title">Találatok</div>
       <div class="results" id="stopResults"></div>
@@ -96,23 +76,21 @@
       <div class="footer" id="statusLine">Frissítés: 20 s • Build: –</div>
     </section>
 
-    <!-- ROUTE TAB (helyfoglaló UI, későbbre) -->
+    <!-- ROUTE placeholder -->
     <section id="tab-route" class="card" style="display:none">
-      <p class="muted">A viszonylat kereső felület itt fog bővülni (útvonal térkép, járműlista stb.).</p>
-      <p class="muted">A backendhez igazított API-végpontok miatt most a Megálló fül a fő funkció.</p>
+      <p class="muted">A viszonylat kereső felület itt fog bővülni (útvonal, járművek).</p>
     </section>
 
-    <!-- FAV TAB -->
+    <!-- FAV -->
     <section id="tab-fav" class="card" style="display:none">
       <div id="favList" class="results"></div>
-      <p class="muted" id="favEmpty" style="display:none">Még nincs elmentett megálló. A találatoknál a ★ gombra kattintva tudsz hozzáadni.</p>
+      <p class="muted" id="favEmpty" style="display:none">Még nincs kedvenc. A találatoknál a ★ gombbal adhatsz hozzá.</p>
     </section>
 
-    <!-- ERROR TOAST -->
-    <div id="toast" class="error">Hálózati hiba vagy API válasz hiba.</div>
+    <div id="toast" class="error"></div>
   </div>
 
-  <!-- SETTINGS DIALOG -->
+  <!-- SETTINGS -->
   <dialog id="dlg">
     <div class="dlg-header">Beállítások</div>
     <form method="dialog" class="dlg-body">
@@ -127,264 +105,196 @@
         <input id="windowMin" class="input" type="number" min="10" max="240" value="60" style="padding:0">
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
-        <button class="btn ghost" value="cancel">Mégse</button>
+        <button class="btn" value="cancel" style="background:transparent;border:1px solid #364063;color:#e8ecf1">Mégse</button>
         <button class="btn" value="ok">Mentés</button>
       </div>
     </form>
   </dialog>
 
   <script>
-    // ------- Config & state -------
+    // ---------- állapot ----------
     const state = {
       API_BASE: localStorage.getItem('apiBase') || '',
       REFRESH_SEC: +(localStorage.getItem('refreshSec') || 20),
       WINDOW_MIN: +(localStorage.getItem('windowMin') || 60),
-      timer: null,
-      build: '-',
-      stops: [],   // {id,name}
-      currentStop: null,
+      timer:null, build:'-', currentStop:null
     };
+    const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 
-    // ------- Helpers -------
-    const $ = sel => document.querySelector(sel);
-    const $$ = sel => document.querySelectorAll(sel);
-
+    // ---------- segédek ----------
     function showToast(msg){
-      const t = $('#toast');
-      t.textContent = msg || 'Hálózati hiba vagy API válasz hiba.';
-      t.style.display = 'block';
-      setTimeout(()=> t.style.display = 'none', 3500);
+      const t=$('#toast'); t.textContent=msg||'Hálózati hiba vagy API válasz hiba.'; t.style.display='block';
+      clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',4000);
     }
-
     async function api(path){
-      const url = (state.API_BASE || '') + path;
-      const res = await fetch(url, { headers: { 'accept':'application/json' }});
-      if(!res.ok) throw new Error('API ' + res.status);
-      return res.json();
-    }
-
-    function saveFav(stop){
-      const arr = JSON.parse(localStorage.getItem('favs')||'[]');
-      if(!arr.find(x=>x.id===stop.id)){
-        arr.push(stop);
-        localStorage.setItem('favs', JSON.stringify(arr));
+      const url=(state.API_BASE||'')+path;
+      const r=await fetch(url,{headers:{accept:'application/json'}});
+      if(!r.ok) {
+        const txt=await r.text().catch(()=> '');
+        throw new Error(`HTTP ${r.status} – ${txt.slice(0,160)}`);
       }
-      renderFavs();
-    }
-    function delFav(id){
-      const arr = JSON.parse(localStorage.getItem('favs')||'[]').filter(x=>x.id!==id);
-      localStorage.setItem('favs', JSON.stringify(arr));
-      renderFavs();
+      return r.json();
     }
 
-    // ------- UK time (Europe/London) -------
+    // ---------- UK óra ----------
     function tickClock(){
       try{
-        const now = new Date();
-        // London offset accounting for DST via Intl
-        const uk = new Intl.DateTimeFormat('hu-HU', {
-          timeZone: 'Europe/London', hour:'2-digit', minute:'2-digit', second:'2-digit'
-        }).format(now);
-        $('#ukTime').textContent = 'UK: ' + uk;
-      }catch(e){
-        // fallback UTC
-        const d = new Date().toISOString().substring(11,19);
-        $('#ukTime').textContent = 'UK: ' + d + 'Z';
-      }
+        const uk=new Intl.DateTimeFormat('hu-HU',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date());
+        $('#ukTime').textContent='UK: '+uk;
+      }catch{ $('#ukTime').textContent='UK: '+new Date().toISOString().substring(11,19)+'Z'; }
     }
     setInterval(tickClock,1000); tickClock();
 
-    // ------- Tabs -------
-    $$('.tab').forEach(el=>{
-      el.addEventListener('click',()=>{
-        $$('.tab').forEach(t=>t.classList.remove('active'));
-        el.classList.add('active');
-        const name = el.dataset.tab;
-        $('#tab-stop').style.display = (name==='stop')?'block':'none';
-        $('#tab-route').style.display = (name==='route')?'block':'none';
-        $('#tab-fav').style.display   = (name==='fav')?'block':'none';
-      });
+    // ---------- Tabs ----------
+    $$('.tab').forEach(t=>t.onclick=()=>{
+      $$('.tab').forEach(x=>x.classList.remove('active')); t.classList.add('active');
+      const k=t.dataset.tab;
+      $('#tab-stop').style.display=(k==='stop')?'block':'none';
+      $('#tab-route').style.display=(k==='route')?'block':'none';
+      $('#tab-fav').style.display=(k==='fav')?'block':'none';
     });
 
-    // ------- Settings dialog -------
-    const dlg = $('#dlg');
-    $('#btnSettings').onclick = ()=>{
-      $('#apiBase').value = state.API_BASE;
-      $('#refreshSec').value = state.REFRESH_SEC;
-      $('#windowMin').value = state.WINDOW_MIN;
+    // ---------- Settings ----------
+    const dlg=$('#dlg');
+    $('#btnSettings').onclick=()=>{
+      $('#apiBase').value=state.API_BASE;
+      $('#refreshSec').value=state.REFRESH_SEC;
+      $('#windowMin').value=state.WINDOW_MIN;
       dlg.showModal();
     };
-    dlg.addEventListener('close', ()=>{
+    dlg.addEventListener('close',()=>{
       if(dlg.returnValue==='ok'){
-        state.API_BASE   = $('#apiBase').value.trim();
-        state.REFRESH_SEC= Math.max(5, Math.min(180, +$('#refreshSec').value||20));
-        state.WINDOW_MIN = Math.max(10, Math.min(240, +$('#windowMin').value||60));
-        localStorage.setItem('apiBase', state.API_BASE);
-        localStorage.setItem('refreshSec', state.REFRESH_SEC);
-        localStorage.setItem('windowMin', state.WINDOW_MIN);
-        restartAutoRefresh();
-        updateStatusLine();
+        state.API_BASE=$('#apiBase').value.trim();
+        state.REFRESH_SEC=Math.max(5,Math.min(180,+$('#refreshSec').value||20));
+        state.WINDOW_MIN=Math.max(10,Math.min(240,+$('#windowMin').value||60));
+        localStorage.setItem('apiBase',state.API_BASE);
+        localStorage.setItem('refreshSec',state.REFRESH_SEC);
+        localStorage.setItem('windowMin',state.WINDOW_MIN);
+        restartAutoRefresh(); updateStatusLine();
       }
     });
 
-    // ------- Drawer (csak vizuális placeholder) -------
-    $('#btnDrawer').onclick = ()=> showToast('Menü: közlemények, kedvencek frissítése, névjegy – hamarosan.');
-
-    // ------- Status & build -------
+    // ---------- Állapot sor ----------
     async function initStatus(){
       try{
-        const st = await api('/api/status');
-        state.build = st.build || '-';
+        const st=await api('/api/status'); state.build=st.build||'-';
         updateStatusLine();
-      }catch(e){
-        updateStatusLine();
-      }
+        // tippelés: ha van gtfs_stops, a kereső működhet
+        if(st.gtfs_stops===0||st.gtfs_stops===undefined){
+          console.warn('Figyelem: GTFS nincs betöltve vagy 0 megálló.');
+        }
+      }catch(e){ updateStatusLine(); console.warn(e); }
     }
-    function updateStatusLine(){
-      $('#statusLine').textContent = `Frissítés: ${state.REFRESH_SEC} s • Build: ${state.build}`;
+    function updateStatusLine(){ $('#statusLine').textContent=`Frissítés: ${state.REFRESH_SEC} s • Build: ${state.build}`; }
+
+    // ---------- Kedvencek ----------
+    function favs(){ return JSON.parse(localStorage.getItem('favs')||'[]'); }
+    function saveFav(s){ const a=favs(); if(!a.find(x=>x.id===s.id)){a.push(s); localStorage.setItem('favs',JSON.stringify(a));} renderFavs(); }
+    function delFav(id){ localStorage.setItem('favs',JSON.stringify(favs().filter(x=>x.id!==id))); renderFavs(); }
+    function renderFavs(){
+      const a=favs(), host=$('#favList'); host.innerHTML=''; $('#favEmpty').style.display=a.length?'none':'block';
+      a.forEach(s=>{
+        const row=document.createElement('div'); row.className='item';
+        row.innerHTML=`<div class="pill">★</div><div><div class="dest">${s.name}</div><div class="muted">ID: ${s.id}</div></div>
+          <button class="btn small">Megnyit</button><button class="btn small" style="background:transparent;border:1px solid #364063;color:#e8ecf1">Törlés</button>`;
+        row.children[2].onclick=()=>openDepartures(s); row.children[3].onclick=()=>delFav(s.id);
+        host.appendChild(row);
+      });
     }
 
-    // ------- Stop search -------
+    // ---------- Stop-keresés: több paraméternév támogatás ----------
     async function searchStops(){
-      const q = $('#queryStop').value.trim();
-      $('#stopResults').innerHTML = '';
-      if(!q){ return; }
+      const q=$('#queryStop').value.trim(); $('#stopResults').innerHTML='';
+      if(!q) return;
       try{
-        const items = await api(`/api/live/stop-search?q=${encodeURIComponent(q)}`);
-        state.stops = items;
-        if(!items.length){
-          $('#stopResults').innerHTML = `<div class="muted">Nincs találat erre: <b>${q}</b></div>`;
-          return;
+        const variants=[
+          `/api/live/stop-search?q=${encodeURIComponent(q)}`,
+          `/api/live/stop-search?query=${encodeURIComponent(q)}`,
+          `/api/live/stop-search?term=${encodeURIComponent(q)}`
+        ];
+        let items=null, lastErr=null;
+        for(const p of variants){
+          try{ items=await api(p); if(Array.isArray(items)) break; }catch(e){ lastErr=e; }
         }
+        if(!Array.isArray(items)) throw lastErr||new Error('Ismeretlen API válasz (stop-search).');
+
+        if(!items.length){ $('#stopResults').innerHTML=`<div class="muted">Nincs találat: <b>${q}</b></div>`; return; }
         renderStopList(items);
       }catch(e){
-        showToast('Nem sikerült a megállókeresés.');
+        console.error(e); showToast('Megállókeresés hiba: '+e.message);
       }
     }
     function renderStopList(items){
-      const host = $('#stopResults');
-      host.innerHTML = '';
+      const host=$('#stopResults'); host.innerHTML='';
       items.forEach(s=>{
-        const row = document.createElement('div'); row.className = 'item';
-        row.innerHTML = `
-          <div class="pill">BUS</div>
-          <div>
-            <div class="dest">${s.name}</div>
-            <div class="muted">ID: ${s.id}</div>
-          </div>
-          <button class="btn small fav" title="Hozzáadás a kedvencekhez">★</button>
-          <button class="btn small" title="Indulások megnyitása">Megnyit</button>
-        `;
-        const [ , , , btnFav, btnOpen ] = row.children;
-        btnFav.onclick = (ev)=>{ ev.stopPropagation(); saveFav(s); };
-        btnOpen.onclick = ()=> openDepartures(s);
-        row.addEventListener('click', ()=> openDepartures(s));
+        const row=document.createElement('div'); row.className='item';
+        row.innerHTML=`<div class="pill">BUS</div><div><div class="dest">${s.name||s.stop_name||'Ismeretlen'}</div><div class="muted">ID: ${s.id||s.stop_id}</div></div>
+          <button class="btn small" title="Kedvenc">★</button><button class="btn small">Megnyit</button>`;
+        const stopObj={ id:s.id||s.stop_id, name:s.name||s.stop_name||String(s.id||s.stop_id) };
+        row.children[2].onclick=ev=>{ev.stopPropagation(); saveFav(stopObj);};
+        row.children[3].onclick=()=>openDepartures(stopObj);
+        row.onclick=()=>openDepartures(stopObj);
         host.appendChild(row);
       });
     }
 
-    // ------- Departures -------
+    // ---------- Indulások: több paraméternév támogatás ----------
     async function openDepartures(stop){
-      state.currentStop = stop;
-      // azonnali lekérés + auto frissítés
-      await loadDepartures();
-      restartAutoRefresh();
-      // váltson a „Megálló” fülön maradva, a lista alá írjuk az eredményt
+      state.currentStop=stop; await loadDepartures(); restartAutoRefresh();
     }
-
     async function loadDepartures(){
       if(!state.currentStop) return;
-      const host = $('#stopResults');
-      const id = state.currentStop.id;
-      // betöltő csík
-      const loader = document.createElement('div');
-      loader.className='muted'; loader.textContent='Betöltés…';
-      host.prepend(loader);
+      const host=$('#stopResults');
+      const loader=document.createElement('div'); loader.className='muted'; loader.textContent='Betöltés…'; host.prepend(loader);
       try{
-        const list = await api(`/api/live/departures?stopId=${encodeURIComponent(id)}&window=${state.WINDOW_MIN}`);
-        // Táblázat render
-        const wrap = document.createElement('div');
-        wrap.className = 'results';
-        wrap.innerHTML = `
-          <div class="section-title">Kiválasztott megálló: ${state.currentStop.name} — frissül ${state.REFRESH_SEC} mp-enként</div>
-        `;
+        const id=encodeURIComponent(state.currentStop.id);
+        const mins=encodeURIComponent(state.WINDOW_MIN);
+        const variants=[
+          `/api/live/departures?stopId=${id}&window=${mins}`,
+          `/api/live/departures?stop_id=${id}&window=${mins}`,
+          `/api/live/departures?stop_id=${id}&window_mins=${mins}`,
+          `/api/live/departures?stop=${id}&minutes=${mins}`,
+          `/api/live/departures?id=${id}&horizon=${mins}`
+        ];
+        let list=null,lastErr=null;
+        for(const p of variants){
+          try{ list=await api(p); if(Array.isArray(list)) break; }catch(e){ lastErr=e; }
+        }
+        if(!Array.isArray(list)) throw lastErr||new Error('Ismeretlen API válasz (departures).');
+
+        const wrap=document.createElement('div'); wrap.className='results';
+        wrap.innerHTML=`<div class="section-title">Kiválasztott megálló: ${state.currentStop.name} — frissül ${state.REFRESH_SEC} mp-enként</div>`;
         list.forEach(d=>{
-          const row = document.createElement('div'); row.className = 'item';
-          const eta = (d.due_in_min==null)?'': (d.due_in_min===0?'Due':d.due_in_min+"'");
-          row.innerHTML = `
-            <div class="pill">${(d.line||'').toString().substring(0,4)}</div>
-            <div style="min-width:0">
-              <div class="dest" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.destination||''}</div>
-              <div class="muted">Várható: ${d.expected||'--:--'}</div>
-            </div>
-            <div class="due">${eta}</div>
-          `;
+          const row=document.createElement('div'); row.className='item';
+          const line=d.line||d.route||d.service||'';
+          const dest=d.destination||d.headsign||'';
+          const exp=d.expected||d.expected_time||d.time||'--:--';
+          const due=(d.due_in_min!=null)?(d.due_in_min===0?'Due':d.due_in_min+"'"): (d.due||'');
+          row.innerHTML=`<div class="pill">${String(line).slice(0,4)}</div>
+            <div style="min-width:0"><div class="dest" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${dest}</div>
+            <div class="muted">Várható: ${exp}</div></div><div class="due">${due}</div>`;
           wrap.appendChild(row);
         });
-        // cseréljük a teljes host tartalmat: fent a kiválasztott megálló blokk + lista
-        host.innerHTML = '';
-        const head = document.createElement('div');
-        head.className='item';
-        head.innerHTML = `
-          <div class="pill">BUS</div>
-          <div class="dest">${state.currentStop.name}</div>
-          <button class="btn small fav" title="Kedvencekhez">★</button>
-        `;
-        head.querySelector('.fav').onclick = ()=> saveFav(state.currentStop);
-        host.appendChild(head);
-        host.appendChild(wrap);
-      }catch(e){
-        showToast('Nem sikerült betölteni az indulásokat.');
-      }finally{
-        loader.remove();
-      }
+
+        host.innerHTML='';
+        const head=document.createElement('div'); head.className='item';
+        head.innerHTML=`<div class="pill">BUS</div><div class="dest">${state.currentStop.name}</div>
+          <button class="btn small" title="Kedvenc">★</button>`;
+        head.querySelector('button').onclick=()=>saveFav(state.currentStop);
+        host.appendChild(head); host.appendChild(wrap);
+      }catch(e){ console.error(e); showToast('Indulások hiba: '+e.message); }
+      finally{ loader.remove(); }
     }
+    function restartAutoRefresh(){ if(state.timer) clearInterval(state.timer); if(state.currentStop){ state.timer=setInterval(loadDepartures,state.REFRESH_SEC*1000); } }
 
-    function restartAutoRefresh(){
-      if(state.timer) clearInterval(state.timer);
-      if(state.currentStop){
-        state.timer = setInterval(loadDepartures, state.REFRESH_SEC*1000);
-      }
-    }
+    // ---------- Események ----------
+    $('#btnStopSearch').onclick=searchStops;
+    $('#queryStop').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); searchStops(); }});
+    $('#chips').onclick=e=>{ if(e.target.classList.contains('chip')){ $('#queryStop').value=e.target.textContent.trim(); searchStops(); } };
+    $('#btnDrawer').onclick=()=>showToast('Menü: közlemények, kedvencek frissítése, névjegy – hamarosan.');
 
-    // ------- Favourites -------
-    function renderFavs(){
-      const arr = JSON.parse(localStorage.getItem('favs')||'[]');
-      const host = $('#favList'); host.innerHTML='';
-      $('#favEmpty').style.display = arr.length ? 'none' : 'block';
-      arr.forEach(s=>{
-        const row = document.createElement('div'); row.className='item';
-        row.innerHTML = `
-          <div class="pill">★</div>
-          <div>
-            <div class="dest">${s.name}</div>
-            <div class="muted">ID: ${s.id}</div>
-          </div>
-          <button class="btn small">Megnyit</button>
-          <button class="btn small ghost">Törlés</button>
-        `;
-        row.children[2].onclick = ()=> openDepartures(s);
-        row.children[3].onclick = ()=> delFav(s.id);
-        host.appendChild(row);
-      });
-    }
-
-    // ------- Events -------
-    $('#btnStopSearch').onclick = searchStops;
-    $('#queryStop').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); searchStops(); }});
-    $('#chips').addEventListener('click', e=>{
-      if(e.target.classList.contains('chip')){
-        $('#queryStop').value = e.target.textContent.trim();
-        searchStops();
-      }
-    });
-
-    // ------- Boot -------
-    (async function boot(){
-      updateStatusLine();
-      renderFavs();
-      await initStatus();
-    })();
+    // ---------- Boot ----------
+    (async function boot(){ renderFavs(); updateStatusLine(); await initStatus(); })();
   </script>
 </body>
 </html>
