@@ -124,7 +124,7 @@
     // ---------- segédek ----------
     function showToast(msg){
       const t=$('#toast'); t.textContent=msg||'Hálózati hiba vagy API válasz hiba.'; t.style.display='block';
-      clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',4000);
+      clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',4200);
     }
     async function api(path){
       const url=(state.API_BASE||'')+path;
@@ -178,12 +178,8 @@
     async function initStatus(){
       try{
         const st=await api('/api/status'); state.build=st.build||'-';
-        updateStatusLine();
-        // tippelés: ha van gtfs_stops, a kereső működhet
-        if(st.gtfs_stops===0||st.gtfs_stops===undefined){
-          console.warn('Figyelem: GTFS nincs betöltve vagy 0 megálló.');
-        }
-      }catch(e){ updateStatusLine(); console.warn(e); }
+      }catch(e){ console.warn(e); }
+      updateStatusLine();
     }
     function updateStatusLine(){ $('#statusLine').textContent=`Frissítés: ${state.REFRESH_SEC} s • Build: ${state.build}`; }
 
@@ -202,7 +198,7 @@
       });
     }
 
-    // ---------- Stop-keresés: több paraméternév támogatás ----------
+    // ---------- Stop-keresés ----------
     async function searchStops(){
       const q=$('#queryStop').value.trim(); $('#stopResults').innerHTML='';
       if(!q) return;
@@ -238,7 +234,7 @@
       });
     }
 
-    // ---------- Indulások: több paraméternév támogatás ----------
+    // ---------- Indulások: "mindent elküldünk" megoldás ----------
     async function openDepartures(stop){
       state.currentStop=stop; await loadDepartures(); restartAutoRefresh();
     }
@@ -249,18 +245,10 @@
       try{
         const id=encodeURIComponent(state.currentStop.id);
         const mins=encodeURIComponent(state.WINDOW_MIN);
-        const variants=[
-          `/api/live/departures?stopId=${id}&window=${mins}`,
-          `/api/live/departures?stop_id=${id}&window=${mins}`,
-          `/api/live/departures?stop_id=${id}&window_mins=${mins}`,
-          `/api/live/departures?stop=${id}&minutes=${mins}`,
-          `/api/live/departures?id=${id}&horizon=${mins}`
-        ];
-        let list=null,lastErr=null;
-        for(const p of variants){
-          try{ list=await api(p); if(Array.isArray(list)) break; }catch(e){ lastErr=e; }
-        }
-        if(!Array.isArray(list)) throw lastErr||new Error('Ismeretlen API válasz (departures).');
+        // Egyetlen kérés: elküldjük az összes ismert névváltozatot is
+        const url = `/api/live/departures?stopId=${id}&stop_id=${id}&stop=${id}&id=${id}&window=${mins}&window_mins=${mins}&minutes=${mins}&horizon=${mins}`;
+        const list = await api(url);
+        if(!Array.isArray(list)) throw new Error('Ismeretlen API válasz (departures).');
 
         const wrap=document.createElement('div'); wrap.className='results';
         wrap.innerHTML=`<div class="section-title">Kiválasztott megálló: ${state.currentStop.name} — frissül ${state.REFRESH_SEC} mp-enként</div>`;
