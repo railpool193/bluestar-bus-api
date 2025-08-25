@@ -1,405 +1,574 @@
 <!doctype html>
 <html lang="hu">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bluestar menetrend és megálló kereső</title>
-  <link rel="preconnect" href="https://unpkg.com" />
-  <link rel="stylesheet" href="https://unpkg.com/modern-css-reset/dist/reset.min.css">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <style>
-    :root{
-      --bg:#0f1420; --panel:#151b2b; --muted:#9aa4c7; --text:#e8eafd; --primary:#bfc6ff;
-      --chip:#2a3350; --chip2:#202743; --green:#28d17c; --white:#ffffff; --danger:#ff595e;
-      --accent:#9aa8ff;
-    }
-    body{ background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
-    .wrap{ max-width: 960px; margin: 20px auto; padding: 0 12px; }
-    h1{ font-size: clamp(22px, 4vw, 40px); font-weight: 800; margin: 8px 0 4px; }
-    .time{ color: var(--muted); margin-bottom: 12px; }
-    .row{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-    .btn{ background: var(--accent); color:#101221; border:0; padding:10px 16px; border-radius:14px; font-weight:700; }
-    .btn.secondary{ background: var(--chip); color: var(--text); }
-    .card{ background: var(--panel); border-radius:18px; padding:14px; box-shadow: 0 8px 30px #0000003a; }
-    .tabs{ gap:10px; margin:12px 0; }
-    .tab{ background:var(--chip2); padding:10px 16px; border-radius:14px; }
-    .tab.active{ outline:2px solid var(--accent); }
-    .input{ width:100%; outline:none; background:#0c1222; color:var(--text); border:1px solid #233056; padding:12px 14px; border-radius:14px; }
-    .pill{ background:var(--chip); padding:8px 12px; border-radius:12px; color:var(--primary); display:inline-block; margin:4px 6px 0 0; }
-    .result{ display:flex; align-items:center; justify-content:space-between; padding:12px; background:#0e1528; border-radius:12px; margin-top:10px; }
-    .result .l{ display:flex; gap:12px; align-items:center;}
-    .badge{ background:#1c2442; padding:10px 12px; border-radius:12px; font-weight:800; min-width:44px; text-align:center;}
-    .fav{ background:#293155; border:0; color:#9eb0ff; padding:10px 12px; border-radius:12px; }
-    .muted{ color: var(--muted); }
-    .dep{ display:flex; gap:10px; align-items:center; justify-content:space-between; padding:12px; background:#0d1425; border-radius:12px; margin-top:8px; }
-    .dep .time{ font-size:20px; color:var(--white); }
-    .dep.live .time{ color: var(--green); }
-    .due-blink{ color: var(--green); font-weight:900; animation: blink 1s step-start infinite; }
-    @keyframes blink { 50%{opacity: .15;} }
-    #map{ height: 360px; border-radius:18px; margin-top:10px; }
-    .lang{ background:#1c2442; border:0; width:42px; height:32px; display:grid; place-items:center; border-radius:8px; }
-    .lang img{ width:24px; height:18px; display:block; }
-    .grid{ display:grid; grid-template-columns: 1fr; gap:10px; }
-    @media (min-width:700px){ .grid{ grid-template-columns: 1fr 1fr; } }
-    .small{ font-size:12px; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Bluestar menetrend és megálló kereső</title>
+
+<!-- Leaflet (térkép) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<style>
+:root{
+  --bg:#0b1020;
+  --card:#121936;
+  --muted:#9aa4c7;
+  --text:#e8ecff;
+  --accent:#b9b8ff;
+  --primary:#a9b2ff;
+  --chip:#2a346b;
+  --ok:#33d17a;
+  --warn:#ffd829;
+  --late:#ff6b6b;
+  --line:#243066;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--text);font:16px/1.45 Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;
+}
+.container{max-width:980px;margin:24px auto;padding:0 16px}
+.header{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.header h1{font-size:clamp(22px,4vw,36px);margin:0 0 2px;font-weight:800}
+.sub{color:var(--muted);font-size:14px}
+
+.langs{display:flex;gap:10px;align-items:center;margin:10px 0 18px}
+.flag-btn{border:0;background:transparent;font-size:22px;filter:saturate(0.9);cursor:pointer;opacity:.85}
+.flag-btn.active{transform:translateY(-1px);opacity:1}
+.settings-btn{margin-left:auto;background:var(--primary);color:#0b0f26;border:0;border-radius:14px;padding:10px 16px;font-weight:700;cursor:pointer}
+
+.tabs{display:flex;gap:10px;margin:8px 0 16px}
+.tab{padding:10px 16px;border-radius:12px;background:#141b3c;color:#c7cffb;cursor:pointer}
+.tab.active{background:#202a59;color:#fff}
+
+.card{background:var(--card);border-radius:16px;padding:14px 14px 10px;box-shadow:0 10px 30px rgba(0,0,0,.22);margin-bottom:14px}
+.row{display:flex;gap:10px;align-items:center}
+input[type="text"],input[type="number"]{
+  width:100%;background:#0f1531;border:1px solid #1f2a5c;border-radius:12px;color:var(--text);
+  padding:14px 14px;font-size:16px;outline:none
+}
+.btn{background:var(--primary);color:#0b0f26;border:0;border-radius:12px;padding:12px 16px;font-weight:700;cursor:pointer}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+.list{margin:10px 0 4px;display:flex;flex-direction:column;gap:10px}
+
+.item{display:flex;gap:14px;align-items:center;justify-content:space-between;background:#0f1633;border:1px solid #1b2452;border-radius:14px;padding:12px 14px}
+.badge{background:var(--chip);color:#d6dbff;border-radius:10px;padding:6px 10px;font-weight:800;min-width:38px;text-align:center}
+.title{font-weight:800}
+.subtle{color:var(--muted);font-size:13px}
+
+.kpi{display:flex;gap:8px;align-items:center}
+.kpi .live{color:var(--ok);font-weight:900}
+.kpi .sch{color:#fff;font-weight:900}
+.chip{background:var(--chip);border-radius:999px;padding:4px 8px;font-size:12px}
+.chip.ok{background:rgba(51,209,122,.15);color:var(--ok);border:1px solid rgba(51,209,122,.35)}
+.chip.warn{background:rgba(255,216,41,.15);color:var(--warn);border:1px solid rgba(255,216,41,.35)}
+.chip.late{background:rgba(255,107,107,.15);color:var(--late);border:1px solid rgba(255,107,107,.35)}
+
+.star{background:#2a2f55;border:1px solid #3c4482;color:#cfd6ff;border-radius:10px;padding:6px 9px;cursor:pointer}
+.star.active{background:#ffd829;color:#302400;border-color:#ffd829}
+
+.blink{animation:blink 1s steps(1,end) infinite}
+@keyframes blink{50%{opacity:.25}}
+
+.toast{
+  position:fixed;left:16px;right:16px;bottom:16px;background:#2a0f12;color:#ffd7d7;
+  border:1px solid #7a222a;border-radius:12px;padding:12px 14px;display:none;z-index:10
+}
+.modal{
+  position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:center;justify-content:center;z-index:20
+}
+.modal .sheet{background:var(--card);border:1px solid #26306e;border-radius:18px;padding:16px;max-width:520px;width:92%}
+.sheet h3{margin:4px 0 10px}
+.sheet .row{margin:8px 0}
+.sheet .foot{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}
+
+#map{height:380px;border-radius:16px;border:1px solid #1b2452;margin-top:10px}
+.small{font-size:12px;color:var(--muted)}
+hr.sep{border:none;border-top:1px solid #1b2452;margin:8px 0}
+</style>
 </head>
 <body>
-<div class="wrap">
-  <div class="row" style="justify-content: space-between;">
-    <div class="row"><span style="font-size:28px;">🚌</span></div>
-    <div class="row" id="langRow">
-      <!-- zászlók -->
-      <button class="lang" data-lang="en" title="English"><img alt="en" src="https://flagcdn.com/24x18/gb.png"></button>
-      <button class="lang" data-lang="hu" title="Magyar"><img alt="hu" src="https://flagcdn.com/24x18/hu.png"></button>
-      <button class="lang" data-lang="de" title="Deutsch"><img alt="de" src="https://flagcdn.com/24x18/de.png"></button>
-      <button class="lang" data-lang="fr" title="Français"><img alt="fr" src="https://flagcdn.com/24x18/fr.png"></button>
-      <button class="lang" data-lang="pl" title="Polski"><img alt="pl" src="https://flagcdn.com/24x18/pl.png"></button>
-      <button class="lang" data-lang="ro" title="Română"><img alt="ro" src="https://flagcdn.com/24x18/ro.png"></button>
-      <button class="btn secondary" id="btnSettings">⚙️ <span data-i="settings">Beállítások</span></button>
+<div class="container">
+  <div class="header">
+    <div style="font-size:28px">🚌</div>
+    <div>
+      <h1 id="title">Bluestar menetrend és megálló kereső</h1>
+      <div class="sub" id="ukTime">UK: --:--</div>
     </div>
   </div>
 
-  <h1>Bluestar menetrend és megálló kereső</h1>
-  <div class="time">UK: <span id="clock">--:--:--</span></div>
+  <div class="langs">
+    <button class="flag-btn" data-lang="en" title="English">🇬🇧</button>
+    <button class="flag-btn" data-lang="hu" title="Magyar">🇭🇺</button>
+    <button class="flag-btn" data-lang="de" title="Deutsch">🇩🇪</button>
+    <button class="flag-btn" data-lang="fr" title="Français">🇫🇷</button>
+    <button class="flag-btn" data-lang="pl" title="Polski">🇵🇱</button>
+    <button class="flag-btn" data-lang="ro" title="Română">🇷🇴</button>
+    <button class="settings-btn" id="btnSettings">⚙️ <span data-i18n="settings">Beállítások</span></button>
+  </div>
 
-  <div class="row tabs">
-    <div class="tab active" data-tab="stop" id="tabStop" data-i="tab_stop">Megálló</div>
-    <div class="tab" data-tab="route" id="tabRoute" data-i="tab_route">Viszonylat</div>
-    <div class="tab" data-tab="fav" id="tabFav" data-i="tab_fav">Kedvencek</div>
+  <div class="tabs">
+    <div class="tab active" data-tab="stop"><span data-i18n="tab_stop">Megálló</span></div>
+    <div class="tab" data-tab="route"><span data-i18n="tab_route">Viszonylat</span></div>
+    <div class="tab" data-tab="fav"><span data-i18n="tab_fav">Kedvencek</span></div>
   </div>
 
   <!-- STOP SEARCH -->
-  <div class="card" id="panelStop">
-    <input class="input" id="stopQuery" placeholder="Shirley, Vincent, ..." />
-    <div class="row" style="margin-top:8px;"><button class="btn" id="btnStopSearch" data-i="search">Keresés</button></div>
-    <div style="margin-top:10px;">
-      <div class="muted" data-i="featured_disr">Kiemelt forgalmi változások</div>
-      <div id="chips" style="margin-top:6px;">
-        <span class="pill">18</span><span class="pill">19</span><span class="pill">1</span><span class="pill">7</span><span class="pill">U1</span><span class="pill">X4</span>
+  <div class="card" id="panel-stop">
+    <div class="row">
+      <input id="stopQuery" type="text" placeholder="Shirley / stop code…" />
+      <button class="btn" id="btnStopSearch" data-i18n="search">Keresés</button>
+    </div>
+    <div class="list" id="stopResults"></div>
+    <div id="selectedStopWrap" style="display:none">
+      <hr class="sep"/>
+      <div class="row">
+        <div>
+          <div class="title" id="selStopName"></div>
+          <div class="subtle small" id="selStopMeta"></div>
+          <div class="small" id="selStopRefresh"></div>
+        </div>
+        <button id="btnFavStop" class="star">★</button>
       </div>
-      <h3 style="margin:12px 0 6px;" data-i="results">Találatok</h3>
-      <div id="stopResults"></div>
+      <div class="list" id="departures"></div>
+      <div id="tripWrap" style="display:none">
+        <hr class="sep"/>
+        <div class="title" data-i18n="trip_title">Járat részletek</div>
+        <div id="tripMeta" class="subtle small"></div>
+        <div id="tripStops" class="list"></div>
+        <div id="map"></div>
+      </div>
     </div>
   </div>
 
   <!-- ROUTE SEARCH -->
-  <div class="card" id="panelRoute" style="display:none;">
-    <input class="input" id="routeQuery" placeholder="pl. 17" />
-    <div class="row" style="margin-top:8px;"><button class="btn" id="btnRouteSearch" data-i="search">Keresés</button></div>
-    <div id="routeResults" style="margin-top:10px;"></div>
+  <div class="card" id="panel-route" style="display:none">
+    <div class="row">
+      <input id="routeQuery" type="text" placeholder="17 / U1 / Langley…" />
+      <button class="btn" id="btnRouteSearch" data-i18n="search">Keresés</button>
+    </div>
+    <div class="list" id="routeResults"></div>
   </div>
 
   <!-- FAVOURITES -->
-  <div class="card" id="panelFav" style="display:none;">
-    <div id="favList"></div>
+  <div class="card" id="panel-fav" style="display:none">
+    <div class="list" id="favList"></div>
+    <div class="small subtle" data-i18n="fav_hint">A kedvencekhez csillagozd be a megállót.</div>
   </div>
 
-  <!-- DETAILS -->
-  <div class="card" id="panelDetails" style="display:none;">
-    <div class="row" style="justify-content:space-between; align-items: baseline;">
-      <div>
-        <div id="detailsTitle" style="font-weight:800;"></div>
-        <div class="small muted" id="detailsSub"></div>
-      </div>
-      <button class="fav" id="btnFavToggle">★</button>
+  <div class="toast" id="toast"></div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="modal" id="modal">
+  <div class="sheet">
+    <h3 data-i18n="settings">Beállítások</h3>
+    <div class="row">
+      <label class="small" style="min-width:180px" for="apiBase" data-i18n="api_base">API elérési út (üres = ugyanarról a domainről)</label>
+      <input id="apiBase" type="text" placeholder="/api" />
     </div>
-    <div id="deps"></div>
-    <div id="map"></div>
-  </div>
-
-  <!-- SETTINGS -->
-  <div class="card" id="panelSettings" style="display:none;">
-    <div class="muted" style="margin-bottom:6px;" data-i="api_base">API elérési út (üres = ugyanarról a domainről)</div>
-    <input class="input" id="apiBase">
-    <div class="muted" style="margin:10px 0 6px;" data-i="refresh">Frissítési idő (mp)</div>
-    <input class="input" id="refreshSec" type="number" min="5" value="10">
-    <div class="muted" style="margin:10px 0 6px;" data-i="lookahead">Előretekintési ablak (perc)</div>
-    <input class="input" id="lookaheadMin" type="number" min="10" value="60">
-    <div class="row" style="margin-top:10px;">
-      <button class="btn" id="btnSaveSettings" data-i="save">Mentés</button>
+    <div class="row">
+      <label class="small" style="min-width:180px" for="refreshSec" data-i18n="refresh">Frissítési idő (mp)</label>
+      <input id="refreshSec" type="number" min="5" max="120" step="1" />
     </div>
+    <div class="row">
+      <label class="small" style="min-width:180px" for="lookahead" data-i18n="lookahead">Előretekintési ablak (perc)</label>
+      <input id="lookahead" type="number" min="15" max="240" step="5" />
+    </div>
+    <div class="foot">
+      <button class="btn" id="btnCancel" data-i18n="cancel">Mégse</button>
+      <button class="btn" id="btnSave" data-i18n="save">Mentés</button>
+    </div>
+    <div class="small subtle">v<span id="ver">-</span></div>
   </div>
-
-  <div id="toast" class="card" style="position:fixed; left:12px; right:12px; bottom:12px; display:none; background:#3c1c22;">...</div>
 </div>
 
 <script>
-const i18n = {
-  en:{ settings:"Settings", tab_stop:"Stop", tab_route:"Route", tab_fav:"Favourites",
-       search:"Search", results:"Results", featured_disr:"Featured service changes",
-       api_base:"API base path (empty = same origin)", refresh:"Refresh (sec)",
-       lookahead:"Lookahead window (min)", save:"Save", open:"Open", remove:"Remove",
-       selected_stop:"Selected stop", live:"LIVE", due:"DUE" },
-  hu:{ settings:"Beállítások", tab_stop:"Megálló", tab_route:"Viszonylat", tab_fav:"Kedvencek",
-       search:"Keresés", results:"Találatok", featured_disr:"Kiemelt forgalmi változások",
-       api_base:"API elérési út (üres = ugyanarról a domainről)", refresh:"Frissítési idő (mp)",
-       lookahead:"Előretekintési ablak (perc)", save:"Mentés", open:"Megnyit", remove:"Törlés",
-       selected_stop:"Kiválasztott megálló", live:"ÉLŐ", due:"DUE" },
-  de:{ settings:"Einstellungen", tab_stop:"Haltestelle", tab_route:"Linie", tab_fav:"Favoriten",
-       search:"Suchen", results:"Ergebnisse", featured_disr:"Wichtige Änderungen",
+/* ========= i18n ========= */
+const I18N = {
+  en:{ title:"Bluestar timetable & stop finder", settings:"Settings",
+       tab_stop:"Stop", tab_route:"Route", tab_fav:"Favourites",
+       search:"Search", fav_hint:"Star a stop to save it.",
+       api_base:"API base (empty = same origin)", refresh:"Refresh (s)",
+       lookahead:"Lookahead window (min)", cancel:"Cancel", save:"Save",
+       results:"Results", trip_title:"Trip details", open:"Open",
+       no_results:"No results", selected_stop:"Selected stop",
+       due:"DUE", ontime:"on time", late:"late", early:"early",
+       live_refresh:"Refresh: {s}s • Build: {b}"
+  },
+  hu:{ title:"Bluestar menetrend és megálló kereső", settings:"Beállítások",
+       tab_stop:"Megálló", tab_route:"Viszonylat", tab_fav:"Kedvencek",
+       search:"Keresés", fav_hint:"A kedvencekhez csillagozd be a megállót.",
+       api_base:"API elérési út (üres = ugyanarról a domainről)",
+       refresh:"Frissítési idő (mp)", lookahead:"Előretekintési ablak (perc)",
+       cancel:"Mégse", save:"Mentés", results:"Találatok",
+       trip_title:"Járat részletek", open:"Megnyit", no_results:"Nincs találat",
+       selected_stop:"Kiválasztott megálló",
+       due:"DUE", ontime:"időben", late:"késés", early:"korábban",
+       live_refresh:"Frissítés: {s} s • Build: {b}"
+  },
+  de:{ title:"Bluestar Fahrpläne & Haltestellensuche", settings:"Einstellungen",
+       tab_stop:"Haltestelle", tab_route:"Linie", tab_fav:"Favoriten",
+       search:"Suchen", fav_hint:"Markiere eine Haltestelle mit ★.",
        api_base:"API-Basis (leer = gleiche Domain)", refresh:"Aktualisierung (s)",
-       lookahead:"Vorschau (Min)", save:"Speichern", open:"Öffnen", remove:"Entfernen",
-       selected_stop:"Ausgewählte Haltestelle", live:"LIVE", due:"DUE" },
-  fr:{ settings:"Paramètres", tab_stop:"Arrêt", tab_route:"Ligne", tab_fav:"Favoris",
-       search:"Rechercher", results:"Résultats", featured_disr:"Perturbations",
-       api_base:"Base API (vide = même domaine)", refresh:"Rafraîchir (s)",
-       lookahead:"Fenêtre (min)", save:"Enregistrer", open:"Ouvrir", remove:"Supprimer",
-       selected_stop:"Arrêt sélectionné", live:"EN DIRECT", due:"DUE" },
-  pl:{ settings:"Ustawienia", tab_stop:"Przystanek", tab_route:"Linia", tab_fav:"Ulubione",
-       search:"Szukaj", results:"Wyniki", featured_disr:"Zmiany w ruchu",
-       api_base:"Adres API (puste = ta sama domena)", refresh:"Odświeżanie (s)",
-       lookahead:"Okno (min)", save:"Zapisz", open:"Otwórz", remove:"Usuń",
-       selected_stop:"Wybrany przystanek", live:"LIVE", due:"DUE" },
-  ro:{ settings:"Setări", tab_stop:"Stație", tab_route:"Linie", tab_fav:"Favorite",
-       search:"Caută", results:"Rezultate", featured_disr:"Modificări servicii",
+       lookahead:"Vorschau (Min)", cancel:"Abbrechen", save:"Speichern",
+       results:"Treffer", trip_title:"Fahrt-Details", open:"Öffnen",
+       no_results:"Keine Treffer", selected_stop:"Gewählte Haltestelle",
+       due:"DUE", ontime:"pünktlich", late:"spät", early:"früher",
+       live_refresh:"Aktualisierung: {s}s • Build: {b}"
+  },
+  fr:{ title:"Bluestar horaires & recherche d'arrêt", settings:"Réglages",
+       tab_stop:"Arrêt", tab_route:"Ligne", tab_fav:"Favoris",
+       search:"Rechercher", fav_hint:"Ajoutez ★ pour enregistrer l'arrêt.",
+       api_base:"Base API (vide = même domaine)", refresh:"Rafraîchissement (s)",
+       lookahead:"Fenêtre (min)", cancel:"Annuler", save:"Enregistrer",
+       results:"Résultats", trip_title:"Détails du trajet", open:"Ouvrir",
+       no_results:"Aucun résultat", selected_stop:"Arrêt sélectionné",
+       due:"DUE", ontime:"à l'heure", late:"en retard", early:"en avance",
+       live_refresh:"Rafraîch.: {s}s • Build: {b}"
+  },
+  pl:{ title:"Bluestar rozkład i wyszukiwarka przystanków", settings:"Ustawienia",
+       tab_stop:"Przystanek", tab_route:"Linia", tab_fav:"Ulubione",
+       search:"Szukaj", fav_hint:"Zapisz przystanek klikając ★.",
+       api_base:"Adres API (puste = ten sam host)", refresh:"Odświeżanie (s)",
+       lookahead:"Horyzont (min)", cancel:"Anuluj", save:"Zapisz",
+       results:"Wyniki", trip_title:"Szczegóły kursu", open:"Otwórz",
+       no_results:"Brak wyników", selected_stop:"Wybrany przystanek",
+       due:"DUE", ontime:"punktualnie", late:"opóźnienie", early:"wcześniej",
+       live_refresh:"Odświeżanie: {s}s • Build: {b}"
+  },
+  ro:{ title:"Bluestar orar & căutare stații", settings:"Setări",
+       tab_stop:"Stație", tab_route:"Linie", tab_fav:"Favorite",
+       search:"Caută", fav_hint:"Salvează stația cu ★.",
        api_base:"Baza API (gol = același domeniu)", refresh:"Reîmprospătare (s)",
-       lookahead:"Fereastră (min)", save:"Salvează", open:"Deschide", remove:"Șterge",
-       selected_stop:"Stație selectată", live:"LIVE", due:"DUE" },
+       lookahead:"Fereastră (min)", cancel:"Anulează", save:"Salvează",
+       results:"Rezultate", trip_title:"Detalii cursă", open:"Deschide",
+       no_results:"Fără rezultate", selected_stop:"Stație selectată",
+       due:"DUE", ontime:"la timp", late:"întârziere", early:"mai devreme",
+       live_refresh:"Refresh: {s}s • Build: {b}"
+  }
 };
 let lang = localStorage.getItem("lang") || "hu";
+function t(key){ return (I18N[lang] && I18N[lang][key]) || I18N["en"][key] || key; }
 function applyI18n(){
-  const t=i18n[lang]||i18n.hu;
-  document.querySelectorAll("[data-i]").forEach(el=>{
-    const k=el.getAttribute("data-i");
-    if(t[k]) el.textContent=t[k];
-  });
+  document.getElementById("title").textContent = t("title");
+  document.querySelectorAll("[data-i18n]").forEach(el => el.textContent = t(el.dataset.i18n));
+  document.querySelectorAll(".flag-btn").forEach(b=>b.classList.toggle("active", b.dataset.lang===lang));
 }
-document.querySelectorAll(".lang").forEach(b=>{
-  b.addEventListener("click", ()=>{ lang=b.dataset.lang; localStorage.setItem("lang",lang); applyI18n(); });
-});
 applyI18n();
 
-function showToast(msg){ const t=document.getElementById("toast"); t.style.display="block"; t.textContent=msg; setTimeout(()=>t.style.display="none", 4000); }
-
-const S = {
-  apiBase: localStorage.getItem("apiBase") || "/api",
+/* ========= állapot ========= */
+const state = {
+  api: localStorage.getItem("apiBase") || "/api",
   refreshSec: +(localStorage.getItem("refreshSec") || 10),
   lookahead: +(localStorage.getItem("lookahead") || 60),
-};
-document.getElementById("apiBase").value = S.apiBase;
-document.getElementById("refreshSec").value = S.refreshSec;
-document.getElementById("lookaheadMin").value = S.lookahead;
-
-document.getElementById("btnSaveSettings").onclick = ()=>{
-  S.apiBase = document.getElementById("apiBase").value || "/api";
-  S.refreshSec = +document.getElementById("refreshSec").value || 10;
-  S.lookahead = +document.getElementById("lookaheadMin").value || 60;
-  localStorage.setItem("apiBase", S.apiBase);
-  localStorage.setItem("refreshSec", S.refreshSec);
-  localStorage.setItem("lookahead", S.lookahead);
-  showToast("✔️ OK");
-};
-document.getElementById("btnSettings").onclick = ()=>{
-  togglePanel("panelSettings");
+  build:"-",
+  drift:0, // server-now - client-now
+  selectedStop:null,
+  selectedStopMeta:null,
+  tickHandle:null,
+  map:null, mapLayer:null, shapeLayer:null, vehiclesLayer:null,
+  lastVehiclesRoute:null,
 };
 
-// óra
-setInterval(()=>{
-  const d=new Date();
-  const hh=String(d.getUTCHours()).padStart(2,"0"); // London idő nyáron +1, itt elég kijelzésre UTC + “UK”
-  const mm=String(d.getUTCMinutes()).padStart(2,"0");
-  const ss=String(d.getUTCSeconds()).padStart(2,"0");
-  document.getElementById("clock").textContent=`${hh}:${mm}:${ss}`;
-},1000);
+/* ========= util ========= */
+const $ = sel => document.querySelector(sel);
+function toast(msg){ const el=$("#toast"); el.textContent=msg; el.style.display="block"; setTimeout(()=>el.style.display="none", 3500); }
+function fmtHM(ts){ const d=new Date(ts*1000); return d.toTimeString().slice(0,5); }
+function mins(x){ return Math.round(x/60); }
+function pad2(n){ return n<10?"0"+n:""+n; }
+function sinceServerNow(){ return Math.floor(Date.now()/1000 + state.drift); }
 
-// Tabs/panelek
-function togglePanel(id){
-  ["panelStop","panelRoute","panelFav","panelDetails","panelSettings"].forEach(x=>{
-    document.getElementById(x).style.display = (x===id) ? "block" : "none";
-  });
-}
-document.getElementById("tabStop").onclick=()=>{ togglePanel("panelStop"); setActive("tabStop"); };
-document.getElementById("tabRoute").onclick=()=>{ togglePanel("panelRoute"); setActive("tabRoute"); };
-document.getElementById("tabFav").onclick=()=>{ renderFav(); togglePanel("panelFav"); setActive("tabFav"); };
-function setActive(id){
-  document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
-  document.getElementById(id).classList.add("active");
-}
-
-// API segéd
-async function api(path){
-  const url = (S.apiBase.endsWith("/")? S.apiBase.slice(0,-1):S.apiBase) + path;
-  const r = await fetch(url);
-  if(!r.ok) throw new Error(`${r.status}`);
-  return await r.json();
-}
-
-// STOP keresés
-document.getElementById("btnStopSearch").onclick = async ()=>{
-  const q = document.getElementById("stopQuery").value.trim();
-  if(!q) return;
+/* ========= status poll ========= */
+async function loadStatus(){
   try{
-    const d = await api(`/stops/search?q=${encodeURIComponent(q)}`);
-    renderStopResults(d.results||[]);
-  }catch(e){ showToast("Stop search failed."); }
+    const r = await fetch(state.api+"/status");
+    const j = await r.json();
+    state.build = j.build || "-";
+    const serverNow = Math.floor(Date.now()/1000);
+    // j.time is string HH:MM:SS in server TZ – only show
+    $("#ukTime").textContent = "UK: " + (j.time || "--:--");
+    applyI18n();
+  }catch(e){}
+}
+loadStatus(); setInterval(loadStatus, 30000);
+
+/* ========= beállítások ========= */
+$("#btnSettings").onclick=()=>{
+  $("#apiBase").value = state.api;
+  $("#refreshSec").value = state.refreshSec;
+  $("#lookahead").value = state.lookahead;
+  $("#ver").textContent = state.build;
+  $("#modal").style.display="flex";
 };
-function renderStopResults(list){
-  const box = document.getElementById("stopResults");
-  box.innerHTML = "";
-  list.forEach(s=>{
-    const div = document.createElement("div");
-    div.className="result";
-    div.innerHTML = `
-      <div class="l">
-        <div class="badge">BUS</div>
-        <div><div style="font-weight:800;">${s.name}</div><div class="muted small">ID: ${s.stop_id}${s.code? " • "+s.code:""}</div></div>
-      </div>
+$("#btnCancel").onclick=()=>$("#modal").style.display="none";
+$("#btnSave").onclick=()=>{
+  state.api = ($("#apiBase").value||"/api").trim();
+  state.refreshSec = Math.max(5, Math.min(120, +$("#refreshSec").value||10));
+  state.lookahead = Math.max(15, Math.min(240, +$("#lookahead").value||60));
+  localStorage.setItem("apiBase", state.api);
+  localStorage.setItem("refreshSec", state.refreshSec);
+  localStorage.setItem("lookahead", state.lookahead);
+  $("#modal").style.display="none";
+  if(state.selectedStop) refreshDepartures(true);
+};
+
+/* ========= nyelv ========= */
+document.querySelectorAll(".flag-btn").forEach(btn=>{
+  btn.onclick=()=>{ lang=btn.dataset.lang; localStorage.setItem("lang", lang); applyI18n(); };
+});
+
+/* ========= tabok ========= */
+document.querySelectorAll(".tab").forEach(tab=>{
+  tab.onclick=()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+    tab.classList.add("active");
+    const name=tab.dataset.tab;
+    $("#panel-stop").style.display = (name==="stop")?"block":"none";
+    $("#panel-route").style.display = (name==="route")?"block":"none";
+    $("#panel-fav").style.display = (name==="fav")?"block":"none";
+  };
+});
+
+/* ========= kedvencek ========= */
+function loadFavs(){
+  try{ return JSON.parse(localStorage.getItem("favs")||"[]"); }catch{return []}
+}
+function saveFavs(v){ localStorage.setItem("favs", JSON.stringify(v)); renderFavs(); }
+function renderFavs(){
+  const box=$("#favList"); box.innerHTML="";
+  const favs=loadFavs();
+  if(!favs.length){ box.innerHTML=`<div class="subtle">${t("no_results")}</div>`; return; }
+  favs.forEach(f=>{
+    const row=document.createElement("div"); row.className="item";
+    row.innerHTML=`<div><div class="title">${f.name}</div><div class="subtle small">${f.stop_id}${f.code?(" • "+f.code):""}</div></div>
       <div class="row">
-        <button class="fav" title="★" data-stop='${JSON.stringify(s)}'>★</button>
-        <button class="btn open" data-id="${s.stop_id}">${i18n[lang].open}</button>
+        <button class="btn open">${t("open")}</button>
+        <button class="star del">🗑</button>
       </div>`;
-    div.querySelector(".open").onclick=()=>openStop(s);
-    div.querySelector(".fav").onclick=()=>addFav(s);
-    box.appendChild(div);
-  });
-}
-
-// ROUTE keresés (majd bővíthető útvonal/shape megjelenítéssel)
-document.getElementById("btnRouteSearch").onclick = async ()=>{
-  const q = document.getElementById("routeQuery").value.trim();
-  if(!q) return;
-  try{
-    const d = await api(`/routes/search?q=${encodeURIComponent(q)}`);
-    const box = document.getElementById("routeResults");
-    box.innerHTML="";
-    d.results.forEach(r=>{
-      const div=document.createElement("div");
-      div.className="result";
-      div.innerHTML = `<div class="l"><div class="badge">${r.short_name||"—"}</div><div>${r.long_name||""}</div></div>`;
-      box.appendChild(div);
-    });
-  }catch(e){ showToast("Route search failed."); }
-};
-
-// Kedvencek
-function getFav(){ try{ return JSON.parse(localStorage.getItem("favs")||"[]"); }catch{return[]}}
-function setFav(arr){ localStorage.setItem("favs", JSON.stringify(arr)); }
-function addFav(s){
-  const f=getFav();
-  if(!f.find(x=>x.stop_id===s.stop_id)){ f.push(s); setFav(f); showToast("★ added"); }
-}
-function removeFav(id){ setFav(getFav().filter(x=>x.stop_id!==id)); renderFav(); }
-function renderFav(){
-  const box=document.getElementById("favList");
-  box.innerHTML="";
-  getFav().forEach(s=>{
-    const div=document.createElement("div");
-    div.className="result";
-    div.innerHTML=`<div class="l"><div class="badge">BUS</div><div>${s.name}<div class="small muted">ID: ${s.stop_id}</div></div></div>
-                   <div class="row"><button class="btn open" data-id="${s.stop_id}">${i18n[lang].open}</button>
-                   <button class="fav" data-id="${s.stop_id}">${i18n[lang].remove}</button></div>`;
-    div.querySelector(".open").onclick=()=>openStop(s);
-    div.querySelector(".fav").onclick=()=>removeFav(s.stop_id);
-    box.appendChild(div);
-  });
-}
-
-// Megálló megnyitása + indulások + térkép
-let map, mapInited=false, vehTimer=null, depTimer=null, currentStop=null;
-async function openStop(s){
-  currentStop = s;
-  togglePanel("panelDetails");
-  document.getElementById("detailsTitle").textContent = `${s.name}`;
-  document.getElementById("detailsSub").textContent = `${i18n[lang].selected_stop}: ${s.stop_id}${s.code? " • "+s.code:""}`;
-  // térkép
-  setTimeout(()=>initMap(s.lat, s.lon), 50);
-  // indulások
-  await refreshDepartures();
-  if(depTimer) clearInterval(depTimer);
-  depTimer = setInterval(refreshDepartures, Math.max(5,S.refreshSec)*1000);
-}
-async function refreshDepartures(){
-  if(!currentStop) return;
-  try{
-    const d = await api(`/departures?stopId=${encodeURIComponent(currentStop.stop_id)}&lookahead_mins=${S.lookahead}`);
-    renderDepartures(d.items||[], d.now_epoch||Math.floor(Date.now()/1000));
-  }catch(e){ showToast("Departures failed."); }
-}
-function renderDepartures(list, nowEpoch){
-  const box=document.getElementById("deps");
-  box.innerHTML="";
-  list.slice(0,40).forEach(it=>{
-    const etaSec = (it.predicted_epoch || it.scheduled_epoch) - nowEpoch;
-    const mins = Math.max(0, Math.floor(etaSec/60));
-    const due = etaSec<=60;
-    const live = !!it.live;
-
-    const row=document.createElement("div");
-    row.className = "dep"+(live?" live":"");
-    const tLabel = due? `<span class="due-blink">${i18n[lang].due}</span>` :
-                  (mins<=90? `<span class="time">${mins} min</span>` : `<span class="time">${new Date((it.predicted_epoch||it.scheduled_epoch)*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>`);
-    const delay = (it.delay_sec!=null && Math.abs(it.delay_sec)>=30) ? 
-                  `<span class="small ${it.delay_sec>0?'muted':''}">(${it.delay_sec>0?'+':''}${Math.round(it.delay_sec/60)}′)</span>` : "";
-    row.innerHTML = `
-      <div class="l">
-        <div class="badge">${it.route||"—"}</div>
-        <div>
-          <div style="font-weight:800;">${it.headsign||""}</div>
-          <div class="small muted">${it.scheduled_time} ${live? '· <span style="color:#28d17c">'+i18n[lang].live+'</span>':''} ${delay}</div>
-        </div>
-      </div>
-      <div>${tLabel}</div>
-    `;
-    row.onclick = ()=>openTrip(it.trip_id, it.route);
+    row.querySelector(".open").onclick=()=>openStop(f.stop_id, f.name, f.code, f.lat, f.lon);
+    row.querySelector(".del").onclick=()=>saveFavs(favs.filter(x=>x.stop_id!==f.stop_id));
     box.appendChild(row);
   });
 }
+renderFavs();
 
-// Trip részletek + shape + járműkövetés (10 mp)
-async function openTrip(tripId, routeShort){
+/* ========= megálló kereső ========= */
+$("#btnStopSearch").onclick = async ()=>{
+  const q = $("#stopQuery").value.trim();
+  if(!q){ toast(t("no_results")); return; }
   try{
-    const d = await api(`/trip?tripId=${encodeURIComponent(tripId)}`);
-    // rajz a térképen
-    if(d.shape && d.shape.length){
-      const pts = d.shape.map(p=>[p.lat, p.lon]);
-      if(window._shape){ window._shape.remove(); }
-      window._shape = L.polyline(pts).addTo(map);
-      map.fitBounds(window._shape.getBounds(), {padding:[20,20]});
+    const r = await fetch(state.api+"/stops/search?q="+encodeURIComponent(q));
+    const j = await r.json();
+    const list = $("#stopResults"); list.innerHTML="";
+    const items = (j && j.results) || [];
+    if(!items.length){ list.innerHTML=`<div class="subtle">${t("no_results")}</div>`; return; }
+    items.forEach(s=>{
+      const row=document.createElement("div"); row.className="item";
+      row.innerHTML = `
+        <div class="row" style="gap:12px">
+          <div class="badge">BUS</div>
+          <div>
+            <div class="title">${s.name}</div>
+            <div class="subtle small">ID: ${s.stop_id}${s.code?(" • "+s.code):""}</div>
+          </div>
+        </div>
+        <div class="row">
+          <button class="star fav">★</button>
+          <button class="btn open">${t("open")}</button>
+        </div>`;
+      row.querySelector(".open").onclick=()=>openStop(s.stop_id, s.name, s.code, s.lat, s.lon);
+      row.querySelector(".fav").onclick=()=>{
+        const favs=loadFavs();
+        if(!favs.find(x=>x.stop_id===s.stop_id)){
+          favs.push(s); saveFavs(favs);
+        }
+      };
+      list.appendChild(row);
+    });
+  }catch(e){ toast("Stop search failed."); }
+};
+
+/* ========= megálló megnyitása & indulások ========= */
+async function openStop(stop_id, name, code, lat, lon){
+  state.selectedStop = stop_id;
+  state.selectedStopMeta = {name, code, lat, lon};
+  $("#stopResults").innerHTML="";
+  $("#selectedStopWrap").style.display="block";
+  $("#selStopName").textContent = name;
+  $("#selStopMeta").textContent = `${t("selected_stop")}: ${stop_id}${code?(" • "+code):""}`;
+  const favs=loadFavs();
+  $("#btnFavStop").classList.toggle("active", !!favs.find(x=>x.stop_id===stop_id));
+  $("#btnFavStop").onclick=()=>{
+    const f=loadFavs();
+    const idx=f.findIndex(x=>x.stop_id===stop_id);
+    if(idx===-1){ f.push({stop_id,name,code,lat,lon}); } else { f.splice(idx,1); }
+    saveFavs(f);
+    $("#btnFavStop").classList.toggle("active", idx===-1);
+  };
+  refreshDepartures(true);
+}
+
+function etaText(item, now){
+  const base = item.predicted_epoch || item.scheduled_epoch;
+  let diff = base - now;
+  if(diff <= 60) return `<span class="live blink">${t("due")}</span>`;
+  const m = Math.floor(diff/60);
+  return `<span class="${item.live?'live':'sch'}">${m} min</span>`;
+}
+function delayChip(item){
+  if(item.delay_sec==null) return `<span class="chip ok">${t("ontime")}</span>`;
+  const m = Math.round(item.delay_sec/60);
+  if(Math.abs(m)<=0) return `<span class="chip ok">${t("ontime")}</span>`;
+  if(m>0) return `<span class="chip late">+${m} ${t("late")}</span>`;
+  return `<span class="chip warn">${m} ${t("early")}</span>`;
+}
+
+async function refreshDepartures(first=false){
+  if(!state.selectedStop) return;
+  if(first && state.tickHandle){ clearInterval(state.tickHandle); state.tickHandle=null; }
+
+  try{
+    const r = await fetch(`${state.api}/departures?stopId=${encodeURIComponent(state.selectedStop)}&lookahead_mins=${state.lookahead}`);
+    const j = await r.json();
+    // drift
+    const clientNow = Math.floor(Date.now()/1000);
+    state.drift = (j.now_epoch||clientNow) - clientNow;
+
+    // header info
+    $("#selStopRefresh").textContent = t("live_refresh").replace("{s}", state.refreshSec).replace("{b}", state.build);
+
+    const box = $("#departures"); box.innerHTML="";
+    (j.items||[]).forEach(d=>{
+      const row=document.createElement("div"); row.className="item";
+      row.innerHTML=`
+        <div class="row" style="gap:12px">
+          <div class="badge">${d.route||"—"}</div>
+          <div>
+            <div class="title">${d.headsign||""}</div>
+            <div class="subtle small">${t("selected_stop")} • ${fmtHM(d.scheduled_epoch)}</div>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="when">${etaText(d, sinceServerNow())}</div>
+          <div class="chipline">${delayChip(d)}</div>
+          <button class="star openTrip" title="Trip">⤳</button>
+        </div>`;
+      row.querySelector(".openTrip").onclick=()=>openTrip(d.trip_id, d.route);
+      box.appendChild(row);
+    });
+
+    if(first){
+      // per-second countdown repaint
+      state.tickHandle = setInterval(()=>{
+        document.querySelectorAll("#departures .item").forEach((el, idx)=>{
+          const item = (j.items||[])[idx]; if(!item) return;
+          el.querySelector(".when").innerHTML = etaText(item, sinceServerNow());
+        });
+      }, 1000);
+      // periodic reload
+      setInterval(()=>refreshDepartures(false), state.refreshSec*1000);
     }
-    // stop lista popup helyett: kirakjuk a details alá
-    const box=document.getElementById("deps");
-    const title=document.createElement("div");
-    title.className="muted"; title.style.margin="10px 0 6px"; title.textContent = d.route.short_name+" → "+(d.headsign||"");
-    box.prepend(title);
-
-    if(vehTimer) clearInterval(vehTimer);
-    const refreshVehicles = async ()=>{
-      try{
-        const v = await api(`/vehicles?route=${encodeURIComponent(routeShort||'')}`);
-        renderVehicles(v.vehicles||[]);
-      }catch(e){}
-    };
-    await refreshVehicles();
-    vehTimer = setInterval(refreshVehicles, 10000);
-  }catch(e){ showToast("Trip open failed."); }
-}
-
-function initMap(lat, lon){
-  if(!mapInited){
-    map = L.map('map', { zoomControl:true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-      maxZoom:19, attribution:'© OpenStreetMap'
-    }).addTo(map);
-    mapInited=true;
+  }catch(e){
+    toast("Departures failed.");
   }
-  map.setView([lat||50.9, lon||-1.4], 14);
-  if(window._stop) window._stop.remove();
-  window._stop = L.marker([lat,lon]).addTo(map).bindPopup("Stop");
-  if(window._shape){ window._shape.remove(); window._shape=null; }
-  if(window._vehLayer){ window._vehLayer.clearLayers(); }
 }
 
-function renderVehicles(list){
-  if(!mapInited) return;
-  if(!window._vehLayer){ window._vehLayer = L.layerGroup().addTo(map); }
-  window._vehLayer.clearLayers();
-  list.forEach(v=>{
-    if(!v.lat || !v.lon) return;
-    L.circleMarker([v.lat, v.lon], {radius:6}).addTo(window._vehLayer).bindPopup(`${v.line||''} → ${v.dest||''}`);
-  });
+/* ========= trip + térkép ========= */
+async function openTrip(tripId, routeShort){
+  $("#tripWrap").style.display="block";
+  $("#tripStops").innerHTML="...";
+  try{
+    const r = await fetch(`${state.api}/trip?tripId=${encodeURIComponent(tripId)}`);
+    if(!r.ok){ $("#tripStops").innerHTML="<div class='subtle'>Trip not found</div>"; return; }
+    const j = await r.json();
+    $("#tripMeta").textContent = `${j.route.short_name||""} • ${j.headsign||""}`;
+
+    // stops list
+    const list=$("#tripStops"); list.innerHTML="";
+    (j.stops||[]).forEach(s=>{
+      const line=document.createElement("div"); line.className="item";
+      line.innerHTML = `
+        <div>
+          <div class="title">${s.name}</div>
+          <div class="subtle small">${s.code? (s.code+" • "):""}${s.stop_id}</div>
+        </div>
+        <div class="kpi">
+          <div class="chip">${(s.dep||s.arr||"").slice(0,5)}</div>
+        </div>`;
+      list.appendChild(line);
+    });
+
+    // map
+    ensureMap();
+    drawShape(j.shape||[]);
+    await drawVehicles(routeShort||j.route.short_name||"");
+    // refresh vehicles every 10s
+    state.lastVehiclesRoute = routeShort||j.route.short_name||"";
+    if(state.vTimer) clearInterval(state.vTimer);
+    state.vTimer = setInterval(()=>drawVehicles(state.lastVehiclesRoute), 10000);
+  }catch(e){
+    $("#tripStops").innerHTML="<div class='subtle'>Trip error</div>";
+  }
 }
+
+function ensureMap(){
+  if(state.map) return;
+  state.map = L.map('map');
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(state.map);
+  state.map.setView([50.9,-1.4], 12);
+  state.shapeLayer = L.polyline([], {color:"#8ad"}).addTo(state.map);
+  state.vehiclesLayer = L.layerGroup().addTo(state.map);
+}
+function drawShape(points){
+  const latlngs = points.map(p=>[p.lat,p.lon]);
+  state.shapeLayer.setLatLngs(latlngs);
+  if(latlngs.length) state.map.fitBounds(L.latLngBounds(latlngs), {padding:[20,20]});
+}
+async function drawVehicles(routeShort){
+  if(!state.map) return;
+  try{
+    state.vehiclesLayer.clearLayers();
+    const r = await fetch(`${state.api}/vehicles?route=${encodeURIComponent(routeShort)}`);
+    const j = await r.json();
+    if(!j.ok) return;
+    (j.vehicles||[]).forEach(v=>{
+      const m = L.circleMarker([v.lat, v.lon], {radius:7, color:"#5cf", fill:true, fillOpacity:.9});
+      m.bindPopup(`${v.line} → ${v.dest||""}<br><span class="small">${v.vehicle_ref||""}</span>`);
+      m.addTo(state.vehiclesLayer);
+    });
+  }catch(e){}
+}
+
+/* ========= viszonylat kereső ========= */
+$("#btnRouteSearch").onclick=async ()=>{
+  const q=$("#routeQuery").value.trim(); if(!q) return;
+  try{
+    const r=await fetch(state.api+"/routes/search?q="+encodeURIComponent(q));
+    const j=await r.json();
+    const list=$("#routeResults"); list.innerHTML="";
+    const items = (j && j.results) || [];
+    if(!items.length){ list.innerHTML=`<div class="subtle">${t("no_results")}</div>`; return; }
+    items.forEach(rte=>{
+      const row=document.createElement("div"); row.className="item";
+      row.innerHTML = `
+        <div class="row" style="gap:12px">
+          <div class="badge">${rte.short_name||"—"}</div>
+          <div>
+            <div class="title">${rte.long_name||""}</div>
+            <div class="subtle small">ID: ${rte.route_id}</div>
+          </div>
+        </div>`;
+      list.appendChild(row);
+    });
+  }catch(e){ toast("Route search failed."); }
+};
+
+/* ========= inicializálás ========= */
+document.addEventListener("DOMContentLoaded", ()=>{
+  // default language flag
+  document.querySelector(`.flag-btn[data-lang="${lang}"]`)?.classList.add("active");
+});
 </script>
 </body>
 </html>
