@@ -1,491 +1,282 @@
 <!doctype html>
-<html lang="hu">
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Bluestar menetrend és megálló kereső</title>
-
-  <!-- Leaflet a térképhez -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-
-  <style>
-    :root{
-      --bg:#0b1220;
-      --panel:#121b2d;
-      --panel-2:#0f1828;
-      --text:#dfe6ff;
-      --muted:#95a3c3;
-      --brand:#b9b8ff;
-      --btn:#a6b1ff;
-      --ok:#26d07c;
-      --danger:#ff6b6b;
-    }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0;background:var(--bg);color:var(--text);
-      font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Ubuntu,"Helvetica Neue",Arial;
-    }
-    .wrap{max-width:980px;margin:24px auto;padding:0 16px}
-    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-    h1{font-size:clamp(22px,4.6vw,36px);line-height:1.15;margin:12px 0 4px}
-    small.muted{color:var(--muted)}
-    .card{background:var(--panel);border-radius:14px;padding:14px 16px;box-shadow:0 0 0 1px #ffffff0f inset}
-    .tabs{display:flex;gap:12px;margin:14px 0}
-    .tab{padding:10px 16px;border-radius:12px;background:var(--panel-2);cursor:pointer;color:var(--muted)}
-    .tab.active{background:#1a2540;color:var(--text);box-shadow:0 0 0 1px #ffffff12 inset}
-    input[type="text"]{
-      width:100%;padding:14px 16px;border-radius:12px;border:1px solid #ffffff1a;
-      background:#0b1326;color:var(--text);outline:none
-    }
-    .btn{background:var(--btn);color:#0b0d18;border:none;border-radius:12px;padding:12px 16px;cursor:pointer;font-weight:600}
-    .chip{background:#1a2540;padding:10px 12px;border-radius:12px;color:#c9d4ff;display:inline-block}
-    .list{margin-top:10px;display:grid;gap:10px}
-    .item{display:flex;justify-content:space-between;align-items:center;
-      padding:12px;border-radius:12px;background:#0f182c;border:1px solid #ffffff12}
-    .item .left{display:flex;gap:12px;align-items:center}
-    .pill{background:#2a3357;color:#e5e9ff;border-radius:999px;padding:6px 10px;font-weight:700}
-    .fav{border:none;background:#293356;color:#cfd6ff;border-radius:10px;padding:8px 10px;cursor:pointer}
-    .warn{background:#2b1e26;color:#ffb0b0;border:1px solid #f56}
-    #toast{position:fixed;left:16px;right:16px;bottom:18px;display:none;z-index:50}
-    #toast .msg{background:#3b1c1c;color:#ffd3d3;border-radius:12px;padding:12px 14px}
-    .flagbar button{background:#1a2540;border:none;border-radius:12px;padding:8px 10px;cursor:pointer}
-    .flag{font-size:20px}
-    .grid2{display:grid;grid-template-columns:1fr auto;gap:10px}
-    .muted{color:var(--muted)}
-    .live{color:var(--ok);font-weight:700}
-    .due{color:var(--ok);font-weight:800;animation:blink 1s steps(2,end) infinite}
-    @keyframes blink{50%{opacity:0.2}}
-    .sched{color:#fff}
-    #map{height:360px;border-radius:14px;overflow:hidden;border:1px solid #ffffff12;margin-top:12px}
-    .badge{padding:4px 8px;border-radius:999px;background:#27325a;color:#cfe3ff;font-weight:600;font-size:12px}
-    .row-space{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
-    .tiny{font-size:12px}
-    .hidden{display:none}
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Bluestar timetable & stop finder</title>
+<link rel="preconnect" href="https://unpkg.com">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --bg:#0b1222; --card:#121a2d; --muted:#9aa4c0; --txt:#e8edff;
+    --pill:#2b3557; --live:#17b26a; --due:#17b26a; --sched:#e8edff;
+    --accent:#b5befd; --shadow:0 8px 24px rgba(0,0,0,.25);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:900px;margin:0 auto;padding:20px}
+  h1{font-size:28px;margin:8px 0 2px;display:flex;gap:12px;align-items:center}
+  .muted{color:var(--muted)}
+  .row{display:flex;gap:12px;align-items:center}
+  .tabs{display:flex;gap:12px;margin:16px 0}
+  .tab{padding:12px 18px;border-radius:14px;background:#0d1426;color:#cbd5ff;cursor:pointer}
+  .tab.active{background:#1b2443;color:#fff}
+  .card{background:var(--card);border-radius:18px;padding:18px;box-shadow:var(--shadow);margin:14px 0}
+  .input{width:100%;background:#0d1426;border:1px solid #1e2747;border-radius:14px;color:#fff;padding:12px 14px}
+  .btn{background:#909cff;color:#0b1222;border:none;border-radius:14px;padding:12px 16px;font-weight:700;cursor:pointer}
+  .list{display:flex;flex-direction:column;gap:12px}
+  .item{display:flex;justify-content:space-between;align-items:center;background:#0f1930;border:1px solid #1e2747;border-radius:16px;padding:14px;gap:12px}
+  .item .left{display:flex;gap:12px;align-items:center}
+  .pill{background:#202a4f;color:#cfe1ff;border-radius:14px;padding:8px 12px;font-weight:800}
+  .live{color:var(--live);font-weight:800}
+  .sched{color:var(--sched);font-weight:800}
+  .due{color:var(--due);font-weight:800;animation:blink 1s steps(2,end) infinite}
+  @keyframes blink{50%{opacity:.35}}
+  .tiny{font-size:12px}
+  .hidden{display:none}
+  #map{height:360px;border-radius:16px;overflow:hidden}
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="row row-space">
-      <h1>🚌 Bluestar menetrend és megálló kereső</h1>
-      <button class="btn" id="btnSettings">Beállítások</button>
-    </div>
-    <small class="muted">UK: <span id="ukclock">--:--:--</span></small>
+<div class="wrap">
+  <h1>🚌 Bluestar timetable & stop finder</h1>
+  <div class="muted" id="clock">UK: --:--:--</div>
 
-    <div class="row flagbar" style="gap:8px;margin:12px 0 4px">
-      <button data-lang="en" title="English"><span class="flag">🇬🇧</span></button>
-      <button data-lang="hu" title="Magyar"><span class="flag">🇭🇺</span></button>
-      <button data-lang="de" title="Deutsch"><span class="flag">🇩🇪</span></button>
-      <button data-lang="fr" title="Français"><span class="flag">🇫🇷</span></button>
-      <button data-lang="pl" title="Polski"><span class="flag">🇵🇱</span></button>
-      <button data-lang="ro" title="Română"><span class="flag">🇷🇴</span></button>
-      <span class="badge" id="buildBadge">build –</span>
-    </div>
-
-    <div class="tabs">
-      <div class="tab active" id="tabStops"></div>
-      <div class="tab" id="tabRoutes"></div>
-      <div class="tab" id="tabFavs"></div>
-    </div>
-
-    <!-- Search panel -->
-    <div class="card" id="panelStops">
-      <div class="grid2">
-        <input id="qStop" type="text" placeholder="Shirley, Vincents Walk, …" />
-        <button class="btn" id="btnFindStop"></button>
-      </div>
-
-      <div style="margin-top:14px">
-        <div class="muted tiny" id="hotTitle"></div>
-        <div class="row" id="hotbar" style="gap:10px;margin-top:6px"></div>
-      </div>
-
-      <div class="list" id="stopResults"></div>
-    </div>
-
-    <div class="card hidden" id="panelRoutes">
-      <div class="grid2">
-        <input id="qRoute" type="text" placeholder="pl. 17, U1, X4" />
-        <button class="btn" id="btnFindRoute"></button>
-      </div>
-      <div class="list" id="routeResults"></div>
-    </div>
-
-    <div class="card hidden" id="panelFavs">
-      <div class="list" id="favList"></div>
-    </div>
-
-    <!-- Trip / Map -->
-    <div class="card hidden" id="tripCard">
-      <div class="row-space">
-        <div>
-          <div style="font-weight:700" id="tripTitle">–</div>
-          <div class="muted tiny" id="tripMeta"></div>
-        </div>
-        <button class="fav" id="btnTripClose">✕</button>
-      </div>
-      <div id="map"></div>
-      <div class="list" id="tripLegs" style="margin-top:12px"></div>
-    </div>
-
-    <!-- Settings -->
-    <dialog id="dlgSettings" style="border:none;border-radius:14px;padding:0;max-width:520px;width:92%">
-      <form method="dialog" class="card" style="margin:0">
-        <h3 style="margin:0 0 10px">Beállítások</h3>
-        <label class="tiny muted">API elérési út (üres = ugyanarról a domainről)</label>
-        <input id="apiBase" type="text" placeholder="/api" style="margin:6px 0 8px">
-        <div class="row" style="gap:10px">
-          <div style="flex:1">
-            <label class="tiny muted">Frissítési idő (mp)</label>
-            <input id="refreshSec" type="text" value="10">
-          </div>
-          <div style="flex:1">
-            <label class="tiny muted">Előretekintési ablak (perc)</label>
-            <input id="lookahead" type="text" value="60">
-          </div>
-        </div>
-        <div class="row" style="justify-content:flex-end;margin-top:12px">
-          <button class="btn">Mentés</button>
-        </div>
-      </form>
-    </dialog>
-
-    <div id="toast"><div class="msg" id="toastMsg">Hiba</div></div>
+  <div class="tabs">
+    <div class="tab active" id="tabStop">Stop</div>
+    <div class="tab" id="tabRoute">Route</div>
+    <div class="tab" id="tabFav">Favourites</div>
+    <button class="btn" id="btnSettings">Settings</button>
   </div>
 
-  <script>
-    // ---------------- I18N ----------------
-    const I18N = {
-      en:{ stops:'Stop', routes:'Route', favs:'Favourites', search:'Search',
-           hot:'Highlighted disruptions', results:'Results', due:'DUE',
-           live:'live', scheduled:'scheduled', stopSearchFailed:'Stop search failed.',
-           routeSearchFailed:'Route search failed.', departures:'Departures',
-           nextFrom:'Selected stop:', open:'Open', save:'Save', remove:'Remove',
-           late:'late', ontime:'on time', early:'early', mapVehicles:'vehicles',
-           settings:'Settings' },
-      hu:{ stops:'Megálló', routes:'Viszonylat', favs:'Kedvencek', search:'Keresés',
-           hot:'Kiemelt forgalmi változások', results:'Találatok', due:'DUE',
-           live:'élő', scheduled:'menetrendi', stopSearchFailed:'Stop search failed.',
-           routeSearchFailed:'Route search failed.', departures:'Indulások',
-           nextFrom:'Kiválasztott megálló:', open:'Megnyit', save:'Mentés', remove:'Törlés',
-           late:'késik', ontime:'időben', early:'korán', mapVehicles:'jármű',
-           settings:'Beállítások' },
-      de:{ stops:'Haltestelle', routes:'Linie', favs:'Favoriten', search:'Suchen',
-           hot:'Verkehrshinweise', results:'Treffer', due:'DUE',
-           live:'live', scheduled:'plan', stopSearchFailed:'Stoppsuche fehlgeschlagen.',
-           routeSearchFailed:'Liniensuche fehlgeschlagen.', departures:'Abfahrten',
-           nextFrom:'Gewählte Haltestelle:', open:'Öffnen', save:'Speichern', remove:'Löschen',
-           late:'verspätet', ontime:'pünktlich', early:'früh', mapVehicles:'Fahrzeuge',
-           settings:'Einstellungen' },
-      fr:{ stops:'Arrêt', routes:'Ligne', favs:'Favoris', search:'Rechercher',
-           hot:'Perturbations', results:'Résultats', due:'DUE', live:'temps réel',
-           scheduled:'théorique', stopSearchFailed:'Échec recherche arrêt.',
-           routeSearchFailed:'Échec recherche ligne.', departures:'Départs',
-           nextFrom:'Arrêt choisi :', open:'Ouvrir', save:'Enreg.', remove:'Suppr.',
-           late:'retard', ontime:'à l’heure', early:'en avance', mapVehicles:'véhicules',
-           settings:'Réglages' },
-      pl:{ stops:'Przystanek', routes:'Linia', favs:'Ulubione', search:'Szukaj',
-           hot:'Utrudnienia', results:'Wyniki', due:'DUE', live:'na żywo',
-           scheduled:'rozkł.', stopSearchFailed:'Błąd wyszukiwania przystanku.',
-           routeSearchFailed:'Błąd wyszukiwania linii.', departures:'Odjazdy',
-           nextFrom:'Wybrany przystanek:', open:'Otwórz', save:'Zapisz', remove:'Usuń',
-           late:'opóźniony', ontime:'punktualny', early:'za wcześnie', mapVehicles:'pojazdy',
-           settings:'Ustawienia' },
-      ro:{ stops:'Stație', routes:'Linie', favs:'Favorite', search:'Căutare',
-           hot:'Avertizări trafic', results:'Rezultate', due:'DUE', live:'live',
-           scheduled:'programat', stopSearchFailed:'Căutarea stației a eșuat.',
-           routeSearchFailed:'Căutarea liniei a eșuat.', departures:'Plecare',
-           nextFrom:'Stația selectată:', open:'Deschide', save:'Salvează', remove:'Șterge',
-           late:'întârzie', ontime:'la timp', early:'devreme', mapVehicles:'vehicule',
-           settings:'Setări' },
-    };
-    const LS = {
-      get k(){ return {
-        api:'api_base', refresh:'refresh_sec', win:'look_ahead', favs:'favs',
-        lang:'lang'
-      }},
-      get api(){ return localStorage.getItem(this.k.api) || '/api'; },
-      set api(v){ localStorage.setItem(this.k.api, v); },
-      get refresh(){ return +(localStorage.getItem(this.k.refresh) || 10); },
-      set refresh(v){ localStorage.setItem(this.k.refresh, v); },
-      get look(){ return +(localStorage.getItem(this.k.win) || 60); },
-      set look(v){ localStorage.setItem(this.k.win, v); },
-      get favs(){ return JSON.parse(localStorage.getItem(this.k.favs) || '[]'); },
-      set favs(arr){ localStorage.setItem(this.k.favs, JSON.stringify(arr)); },
-      get lang(){ return localStorage.getItem(this.k.lang) || 'hu'; },
-      set lang(v){ localStorage.setItem(this.k.lang, v); },
-    };
-    function T(key){ return (I18N[LS.lang]||I18N.hu)[key]||key; }
-    function setTexts(){
-      el('#tabStops').textContent = T('stops');
-      el('#tabRoutes').textContent = T('routes');
-      el('#tabFavs').textContent = T('favs');
-      el('#btnFindStop').textContent = T('search');
-      el('#btnFindRoute').textContent = T('search');
-      el('#hotTitle').textContent = T('hot');
-      el('#btnSettings').textContent = T('settings');
-    }
+  <!-- STOP PANEL -->
+  <div class="card" id="panelStops">
+    <div class="row">
+      <input id="qStop" class="input" placeholder="Search stop…"/>
+      <button class="btn" id="btnStopSearch">Search</button>
+    </div>
+    <div id="selStop" class="muted tiny" style="margin:6px 2px 10px"></div>
+    <div class="list" id="depList"></div>
+  </div>
 
-    // --------------- helpers ----------------
-    const el = sel=>document.querySelector(sel);
-    const fmtTime = d=>d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:undefined});
-    function toast(msg){
-      el('#toastMsg').textContent = msg;
-      const t = el('#toast'); t.style.display='block';
-      clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',3000);
-    }
-    function qs(obj){ return new URLSearchParams(obj).toString(); }
-    function minutesDiff(a,b){ return Math.round((a-b)/60000); } // ms -> min
+  <!-- ROUTE PANEL -->
+  <div class="card hidden" id="panelRoutes">
+    <div class="row">
+      <input id="qRoute" class="input" placeholder="Search route (e.g. 17)…"/>
+      <button class="btn" id="btnRouteSearch">Search</button>
+    </div>
+    <div class="list" id="routeList"></div>
+  </div>
 
-    // --------------- status clock -----------
-    async function tickStatus(){
-      try{
-        const r = await fetch(`${LS.api}/status`);
-        const js = await r.json();
-        el('#ukclock').textContent = js.time || '--:--:--';
-        el('#buildBadge').textContent = `build ${js.build||'-'}`;
-      }catch{}
-    }
-    setInterval(tickStatus, 1000*10); tickStatus();
+  <!-- FAV PANEL -->
+  <div class="card hidden" id="panelFav">
+    <div class="list" id="favList"></div>
+    <div class="tiny muted">Star a stop in the results to save here.</div>
+  </div>
 
-    // --------------- tabs -------------------
-    function showPanel(id){
-      ['#panelStops','#panelRoutes','#panelFavs','#tripCard']
-        .forEach(s=>el(s).classList.add('hidden'));
-      el(id).classList.remove('hidden');
-      ['#tabStops','#tabRoutes','#tabFavs'].forEach(s=>el(s).classList.remove('active'));
-      if(id==='#panelStops') el('#tabStops').classList.add('active');
-      if(id==='#panelRoutes') el('#tabRoutes').classList.add('active');
-      if(id==='#panelFavs') el('#tabFavs').classList.add('active');
-    }
-    el('#tabStops').onclick = ()=>showPanel('#panelStops');
-    el('#tabRoutes').onclick = ()=>showPanel('#panelRoutes');
-    el('#tabFavs').onclick   = ()=>{ renderFavs(); showPanel('#panelFavs'); };
+  <!-- TRIP PANEL -->
+  <div class="card hidden" id="tripCard">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div>
+        <div id="tripTitle" style="font-weight:800;font-size:18px"></div>
+        <div id="tripMeta" class="tiny muted"></div>
+        <div class="tiny muted" style="margin-top:6px">
+          <label><input type="checkbox" id="chkVeh" checked> Live vehicles • 10s</label>
+        </div>
+      </div>
+      <button class="btn" id="btnTripClose">Close</button>
+    </div>
+    <div id="tripLegs" class="list" style="margin:10px 0 12px"></div>
+    <div id="map"></div>
+  </div>
 
-    // --------------- search: stops ----------
-    el('#btnFindStop').onclick = async ()=>{
-      const q = el('#qStop').value.trim(); if(!q) return;
-      try{
-        const r = await fetch(`${LS.api}/stops/search?${qs({q})}`);
-        const js = await r.json();
-        const host = el('#stopResults'); host.innerHTML='';
-        (js.results||[]).forEach(st=>{
-          const it = document.createElement('div'); it.className='item';
-          it.innerHTML = `
-            <div class="left">
-              <div class="pill">BUS</div>
-              <div>
-                <div style="font-weight:700">${st.name}</div>
-                <div class="tiny muted">ID: ${st.id}</div>
-              </div>
-            </div>
-            <div class="row" style="gap:8px">
-              <button class="fav" title="Fav">★</button>
-              <button class="btn">${T('open')}</button>
-            </div>`;
-          it.querySelector('.fav').onclick = ()=>{
-            const list = LS.favs; if(!list.find(x=>x.id===st.id)){
-              list.push({id:st.id, name:st.name});
-              LS.favs = list; toast('Hozzáadva'); }
-          };
-          it.querySelector('.btn').onclick = ()=>openDepartures(st.id, st.name);
-          host.appendChild(it);
-        });
-      }catch(e){ toast(T('stopSearchFailed')); }
-    };
+  <!-- SETTINGS -->
+  <div class="card hidden" id="settingsCard">
+    <div class="row"><input id="apiBase" class="input" placeholder="API base (default: /api)" value="/api"/><button class="btn" id="btnSaveCfg">Save</button></div>
+    <div class="tiny muted">Build: <span id="build"></span></div>
+  </div>
+</div>
 
-    // --------------- search: routes ---------
-    el('#btnFindRoute').onclick = async ()=>{
-      const q = el('#qRoute').value.trim(); if(!q) return;
-      try{
-        const r = await fetch(`${LS.api}/routes/search?${qs({q})}`);
-        const js = await r.json();
-        const host = el('#routeResults'); host.innerHTML='';
-        (js.results||[]).forEach(rt=>{
-          const it = document.createElement('div'); it.className='item';
-          it.innerHTML = `
-            <div class="left">
-              <div class="pill">${rt.short_name || rt.code || 'R'}</div>
-              <div>
-                <div style="font-weight:700">${rt.long_name||rt.name}</div>
-                <div class="tiny muted">${rt.id}</div>
-              </div>
-            </div>
-            <button class="btn">${T('open')}</button>`;
-          it.querySelector('.btn').onclick = ()=>{
-            // route szinten csak listázzuk a tripjeit / trip részleteknél mutatjuk a térképet
-            listRouteTrips(rt.id, rt.long_name||rt.name);
-          };
-          host.appendChild(it);
-        });
-      }catch(e){ toast(T('routeSearchFailed')); }
-    };
+<script>
+const LS = {
+  api: localStorage.getItem("api") || "/api",
+  favs: JSON.parse(localStorage.getItem("favs")||"[]")
+};
+function el(s){return document.querySelector(s)}
+function showPanel(id){
+  ['#panelStops','#panelRoutes','#panelFav','#tripCard','#settingsCard'].forEach(p=>el(p).classList.add('hidden'));
+  el(id).classList.remove('hidden');
+}
+function qs(o){return Object.entries(o).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&')}
+function minutesDiff(a,b){return Math.round((a-b)/60000)}
+function T(x){return {"live":"live","scheduled":"scheduled","due":"DUE","late":"min late","early":"min early","ontime":"on time"}[x]||x}
 
-    // --------------- favourites -------------
-    function renderFavs(){
-      const host = el('#favList'); host.innerHTML='';
-      const list = LS.favs;
-      if(!list.length){ host.innerHTML = `<div class="item warn"><div>${T('favs')}: (üres)</div></div>`; return; }
-      list.forEach(st=>{
-        const it = document.createElement('div'); it.className='item';
-        it.innerHTML = `
-          <div class="left"><div class="pill">BUS</div>
-            <div><div style="font-weight:700">${st.name}</div><div class="tiny muted">${st.id}</div></div>
+async function heartbeat(){
+  const r = await fetch(`${LS.api}/status`).then(r=>r.json()).catch(()=>({}));
+  el('#clock').textContent = `UK: ${r.time||'--:--:--'}`;
+  el('#build').textContent = r.build||'';
+}
+setInterval(heartbeat,1000); heartbeat();
+
+// Tabs
+el('#tabStop').onclick=()=>{showPanel('#panelStops'); setActive('#tabStop')}
+el('#tabRoute').onclick=()=>{showPanel('#panelRoutes'); setActive('#tabRoute')}
+el('#tabFav').onclick=()=>{showPanel('#panelFav'); setActive('#tabFav'); renderFavs()}
+function setActive(id){['#tabStop','#tabRoute','#tabFav'].forEach(t=>el(t).classList.remove('active')); el(id).classList.add('active')}
+
+// Settings
+el('#btnSettings').onclick=()=>showPanel('#settingsCard')
+el('#btnSaveCfg').onclick=()=>{ LS.api = el('#apiBase').value||"/api"; localStorage.setItem("api",LS.api); alert('Saved'); showPanel('#panelStops') }
+
+// STOP search + departures
+let currentStop=null, depTimer=null, map=null, routePolyline=null, vehTimer=null;
+
+el('#btnStopSearch').onclick = async ()=>{
+  const q = el('#qStop').value.trim();
+  if(!q) return;
+  const js = await (await fetch(`${LS.api}/stops/search?${qs({q})}`)).json();
+  if(!js.results?.length){ el('#depList').innerHTML = '<div class="muted">No results.</div>'; return }
+  // pick the first and load departures
+  currentStop = js.results[0];
+  el('#selStop').textContent = `${currentStop.name} • Selected stop: ${currentStop.stop_id}`;
+  await loadDepartures();
+  clearInterval(depTimer); depTimer=setInterval(loadDepartures, 10000);
+};
+
+async function loadDepartures(){
+  const host = el('#depList'); host.innerHTML='';
+  const js = await (await fetch(`${LS.api}/departures?${qs({stop_id: currentStop.stop_id, lookahead_min: 60})}`)).json();
+
+  const now = new Date();
+  (js.departures||[])
+    .filter(d=>{
+      const w = new Date(d.expected||d.scheduled);
+      if (w.getTime() < now.getTime() - 5*60*1000) return false; // stale szűrő
+      return true;
+    })
+    .forEach(d=>{
+      const it = document.createElement('div'); it.className='item dep'; it.style.cursor='pointer';
+
+      const when = new Date(d.expected||d.scheduled);
+      const isLive = !!d.expected;
+      const minTo = minutesDiff(when, new Date());
+      const dueNow = minTo<=1;
+      const delta = (d.delay_min!=null)? d.delay_min :
+                    (d.expected? minutesDiff(new Date(d.expected), new Date(d.scheduled)) : 0);
+      const statusTxt = (delta>1? `${delta} ${T('late')}` : (delta<-1? `${-delta} ${T('early')}` : T('ontime')));
+
+      it.innerHTML = `
+        <div class="left">
+          <div class="pill">${d.route_short || d.route || '–'}</div>
+          <div>
+            <div style="font-weight:700">${d.headsign || d.destination || ''}</div>
+            <div class="tiny muted">${d.operator || ''} • ${d.trip_id||''}</div>
           </div>
-          <div class="row" style="gap:8px">
-            <button class="fav">${T('remove')}</button>
-            <button class="btn">${T('open')}</button>
-          </div>`;
-        it.querySelector('.fav').onclick = ()=>{
-          LS.favs = LS.favs.filter(x=>x.id!==st.id); renderFavs();
-        };
-        it.querySelector('.btn').onclick = ()=>openDepartures(st.id, st.name);
-        host.appendChild(it);
-      });
-    }
-
-    // --------------- departures -------------
-    let depTimer = null, map, vehTimer=null, routePolyline=null;
-    async function openDepartures(stop_id, stop_name){
-      showPanel('#panelStops'); // maradunk, a lista alá írjuk ki
-      await loadDepartures(stop_id, stop_name);
-      clearInterval(depTimer);
-      depTimer = setInterval(()=>loadDepartures(stop_id, stop_name), LS.refresh*1000);
-    }
-    async function loadDepartures(stop_id, stop_name){
-      const host = el('#stopResults');
-      const hdr = document.createElement('div');
-      hdr.className='item'; hdr.style.background='#15203a';
-      hdr.innerHTML = `<div><div style="font-weight:700">${T('nextFrom')} ${stop_name}</div>
-        <div class="tiny muted">frissül ${LS.refresh}s • ablak ${LS.look}p</div></div>`;
-      host.prepend(hdr);
-
-      const url = `${LS.api}/departures?${qs({stop_id, minutes_ahead:LS.look})}`;
-      const r = await fetch(url); const js = await r.json();
-      // töröljük a korábbi (a fejléc utáni) elemeket
-      [...host.querySelectorAll('.item.dep')].forEach(n=>n.remove());
-
-      (js.departures||[]).forEach(d=>{
-        const it = document.createElement('div'); it.className='item dep';
-        const when = new Date(d.expected||d.scheduled);
-        const isLive = !!d.expected;
-        const minTo = minutesDiff(when, new Date());
-        const dueNow = minTo<=1;
-        const delta = (d.delay_min!=null)? d.delay_min:
-                      (d.expected? minutesDiff(new Date(d.expected), new Date(d.scheduled)) : 0);
-        const statusTxt = (delta>1? `${delta} ${T('late')}` : (delta<-1? `${-delta} ${T('early')}` : T('ontime')));
-
-        it.innerHTML = `
-          <div class="left">
-            <div class="pill">${d.route_short || d.route || '–'}</div>
-            <div>
-              <div style="font-weight:700">${d.headsign || d.destination || ''}</div>
-              <div class="tiny muted">${d.operator || ''} • ${d.trip_id||''}</div>
-            </div>
+        </div>
+        <div style="text-align:right">
+          <div class="${isLive ? (dueNow?'due':'live') : 'sched'}">
+            ${dueNow? T('due') : when.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}
           </div>
-          <div style="text-align:right">
-            <div class="${isLive ? (dueNow?'due':'live') : 'sched'}">
-              ${dueNow? T('due') : when.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}
-            </div>
-            <div class="tiny muted">${isLive? T('live'):T('scheduled')} • ${statusTxt}</div>
-            <div class="row" style="gap:6px;justify-content:flex-end;margin-top:6px">
-              <button class="fav" title="Trip">ℹ️</button>
-            </div>
-          </div>`;
-        it.querySelector('.fav').onclick = ()=>openTrip(d.trip_id, d);
-        host.appendChild(it);
-      });
-    }
+          <div class="tiny muted">${isLive? T('live'):T('scheduled')} • ${statusTxt}</div>
+        </div>`;
 
-    // --------------- trip + map -------------
-    async function openTrip(trip_id, depRow){
-      showPanel('#tripCard');
-      el('#tripTitle').textContent = depRow.route_short+' – '+(depRow.headsign||'');
-      el('#tripMeta').textContent = `${depRow.trip_id} • ${depRow.operator||''}`;
-      // térkép init
-      if(!map){
-        map = L.map('map'); 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-          attribution:'© OpenStreetMap'
-        }).addTo(map);
-      }
-
-      // trip részletek (megállók + polyline)
-      const t = await (await fetch(`${LS.api}/trip?${qs({trip_id})}`)).json();
-      const legsHost = el('#tripLegs'); legsHost.innerHTML='';
-      if(t.shape && t.shape.length){
-        const latlngs = t.shape.map(p=>[p.lat,p.lon]);
-        if(routePolyline){ routePolyline.remove(); }
-        routePolyline = L.polyline(latlngs).addTo(map);
-        map.fitBounds(routePolyline.getBounds(),{padding:[20,20]});
-      }
-      (t.stops||[]).forEach(s=>{
-        const row = document.createElement('div'); row.className='item';
-        row.innerHTML = `<div style="font-weight:700">${s.name}</div>
-          <div class="muted tiny">${s.time}</div>`;
-        legsHost.appendChild(row);
-      });
-
-      // jármű követés
-      clearInterval(vehTimer);
-      async function refreshVeh(){
-        try{
-          const v = await (await fetch(`${LS.api}/vehicles?${qs({route:depRow.route_short||''})}`)).json();
-          // takarítsunk: egyszerű megoldás – minden frissítésnél új marker réteg
-          if(map._vehLayer){ map.removeLayer(map._vehLayer); }
-          const g = L.layerGroup();
-          (v.vehicles||[]).forEach(vh=>{
-            const m = L.marker([vh.lat,vh.lon]).bindPopup(`${vh.label||vh.id||'veh'}<br>${vh.timestamp||''}`);
-            g.addLayer(m);
-          });
-          g.addTo(map); map._vehLayer=g;
-        }catch{}
-      }
-      refreshVeh(); vehTimer = setInterval(refreshVeh, LS.refresh*1000);
-
-      el('#btnTripClose').onclick = ()=>{
-        showPanel('#panelStops');
-        clearInterval(vehTimer);
-      };
-    }
-
-    // --------------- hot chips ----------------
-    const HOT = ['18','19','1','7','U1','X4'];
-    function renderHot(){
-      const host = el('#hotbar'); host.innerHTML='';
-      HOT.forEach(code=>{
-        const b = document.createElement('button'); b.className='chip'; b.textContent=code;
-        b.onclick = ()=>{ el('#qRoute').value=code; showPanel('#panelRoutes'); el('#btnFindRoute').click(); };
-        host.appendChild(b);
-      });
-    }
-
-    // --------------- settings ----------------
-    el('#btnSettings').onclick = ()=>{
-      el('#apiBase').value = LS.api;
-      el('#refreshSec').value = LS.refresh;
-      el('#lookahead').value = LS.look;
-      el('#dlgSettings').showModal();
-    };
-    el('#dlgSettings').addEventListener('close', ()=>{
-      const api = el('#apiBase').value.trim() || '/api';
-      LS.api = api.startsWith('/')? api : '/'+api;
-      LS.refresh = Math.max(5, +el('#refreshSec').value || 10);
-      LS.look = Math.max(5, +el('#lookahead').value || 60);
+      it.addEventListener('click', ()=>openTrip(d.trip_id, d)); // teljes kártya nyit
+      host.appendChild(it);
     });
+}
 
-    // --------------- language switch --------
-    document.querySelectorAll('.flagbar button').forEach(btn=>{
-      btn.onclick = ()=>{ LS.lang = btn.dataset.lang; setTexts(); };
-    });
+// ROUTE search (opcionális listázás)
+el('#btnRouteSearch').onclick = async ()=>{
+  const q = el('#qRoute').value.trim(); if(!q) return;
+  const js = await (await fetch(`${LS.api}/routes/search?${qs({q})}`)).json();
+  const host = el('#routeList'); host.innerHTML='';
+  (js.results||[]).forEach(r=>{
+    const it = document.createElement('div'); it.className='item';
+    it.innerHTML = `<div class="left"><div class="pill">${r.route_short_name||'–'}</div><div>${r.route_long_name||''}</div></div>`;
+    host.appendChild(it);
+  });
+}
 
-    // init
-    setTexts();
-    renderHot();
-    renderFavs();
-  </script>
+// Trip + Map + Vehicles
+async function openTrip(trip_id, depRow){
+  showPanel('#tripCard');
+  el('#tripTitle').textContent = `${depRow.route_short||depRow.route||''} – ${depRow.headsign||''}`;
+  el('#tripMeta').textContent  = `${depRow.trip_id||trip_id||''} • ${depRow.operator||''}`;
+
+  // init map once
+  if(!map){
+    map = L.map('map');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
+  }
+
+  // trip details
+  const t = await (await fetch(`${LS.api}/trip?${qs({trip_id})}`)).json();
+  const legsHost = el('#tripLegs'); legsHost.innerHTML='';
+
+  if(t.shape && t.shape.length){
+    const latlngs = t.shape.map(p=>[p.lat,p.lon]);
+    if(routePolyline) routePolyline.remove();
+    routePolyline = L.polyline(latlngs).addTo(map);
+    map.fitBounds(routePolyline.getBounds(),{padding:[24,24]});
+  }
+
+  (t.stops||[]).forEach(s=>{
+    const row = document.createElement('div'); row.className='item';
+    row.innerHTML = `<div style="font-weight:700">${s.name}</div>
+                     <div class="tiny muted">${s.time}</div>`;
+    legsHost.appendChild(row);
+  });
+
+  function clearVehLayer(){
+    if(map && map._vehLayer){ map.removeLayer(map._vehLayer); map._vehLayer=null; }
+  }
+
+  async function refreshVeh(){
+    if(!el('#chkVeh').checked){ clearVehLayer(); return; }
+    try{
+      let url = `${LS.api}/vehicles?${qs({trip_id})}`;
+      let r   = await fetch(url);
+      if(r.status===404 || r.status===400){ // fallback: route alapján
+        const route = depRow.route_short || depRow.route || '';
+        url = `${LS.api}/vehicles?${qs({route})}`;
+        r   = await fetch(url);
+      }
+      const v = await r.json();
+      clearVehLayer();
+      const g = L.layerGroup();
+      (v.vehicles||[]).forEach(vh=>{
+        const m = L.marker([vh.lat,vh.lon]).bindPopup(
+          `${vh.label||vh.id||'veh'}<br>${vh.timestamp||''}`
+        );
+        g.addLayer(m);
+      });
+      g.addTo(map); map._vehLayer=g;
+    }catch(e){}
+  }
+
+  clearInterval(vehTimer);
+  await refreshVeh();
+  vehTimer = setInterval(refreshVeh, 10000);
+
+  el('#chkVeh').onchange = refreshVeh;
+  el('#btnTripClose').onclick = ()=>{
+    showPanel('#panelStops');
+    clearInterval(vehTimer); clearVehLayer();
+  };
+}
+
+// Favourites – placeholder (megálló csillagozását teheted a listába)
+function renderFavs(){
+  const host=el('#favList'); host.innerHTML='';
+  LS.favs.forEach(f=>{
+    const it=document.createElement('div'); it.className='item';
+    it.innerHTML = `<div>${f.name} <span class="tiny muted">• ${f.stop_id}</span></div>
+                    <button class="btn">Open</button>`;
+    it.querySelector('button').onclick=()=>{ currentStop=f; showPanel('#panelStops'); el('#selStop').textContent=`${f.name} • Selected stop: ${f.stop_id}`; loadDepartures() }
+    host.appendChild(it);
+  })
+}
+</script>
 </body>
 </html>
