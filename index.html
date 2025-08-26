@@ -5,569 +5,714 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Bluestar menetrend és megálló kereső</title>
 
-<!-- Leaflet (térkép) -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<!-- Leaflet -->
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+  crossorigin=""
+/>
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin=""
+></script>
 
 <style>
-:root{
-  --bg:#0b1020;
-  --card:#121936;
-  --muted:#9aa4c7;
-  --text:#e8ecff;
-  --accent:#b9b8ff;
-  --primary:#a9b2ff;
-  --chip:#2a346b;
-  --ok:#33d17a;
-  --warn:#ffd829;
-  --late:#ff6b6b;
-  --line:#243066;
-}
-*{box-sizing:border-box}
-body{
-  margin:0;background:var(--bg);color:var(--text);font:16px/1.45 Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;
-}
-.container{max-width:980px;margin:24px auto;padding:0 16px}
-.header{display:flex;align-items:center;gap:12px;margin-bottom:8px}
-.header h1{font-size:clamp(22px,4vw,36px);margin:0 0 2px;font-weight:800}
-.sub{color:var(--muted);font-size:14px}
+  :root {
+    --bg: #0f1320;
+    --panel: #161b2b;
+    --card: #1b2135;
+    --muted: #98a2b3;
+    --text: #e8ecf4;
+    --brand: #b9b5ff;
+    --accent: #a9b4ff;
+    --ok: #1dbf73;
+    --warn: #ffc857;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;}
+  a { color: var(--accent); text-decoration: none; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 20px; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .title { font-size: 28px; font-weight: 800; display:flex; align-items:center; gap:10px; }
+  .bus { font-size: 26px; }
+  .clock { font-size: 12px; color:var(--muted); }
+  .lang { display:flex; gap:10px; align-items:center; }
+  .flag { width:26px; height:18px; border-radius:3px; overflow:hidden; filter: saturate(1.1); cursor:pointer; opacity:.7; transition: .15s ease; border:1px solid #0003;}
+  .flag.active, .flag:hover { transform: translateY(-1px); opacity:1; box-shadow: 0 4px 12px #0005; }
 
-.langs{display:flex;gap:10px;align-items:center;margin:10px 0 18px}
-.flag-btn{border:0;background:transparent;font-size:22px;filter:saturate(0.9);cursor:pointer;opacity:.85}
-.flag-btn.active{transform:translateY(-1px);opacity:1}
-.settings-btn{margin-left:auto;background:var(--primary);color:#0b0f26;border:0;border-radius:14px;padding:10px 16px;font-weight:700;cursor:pointer}
+  .tabs { display:flex; gap:10px; margin:16px 0; }
+  .tab { background: #111729; color:#d9def4; padding:12px 18px; border-radius:14px; cursor:pointer; font-weight:700; border:1px solid #2a3350; }
+  .tab.active { background:#2a3350; }
 
-.tabs{display:flex;gap:10px;margin:8px 0 16px}
-.tab{padding:10px 16px;border-radius:12px;background:#141b3c;color:#c7cffb;cursor:pointer}
-.tab.active{background:#202a59;color:#fff}
+  .panel { background: var(--panel); border:1px solid #2a3350; border-radius:18px; padding:16px; box-shadow: 0 10px 24px #0006; }
+  .row { display:flex; gap:10px; }
+  .row.stack { flex-wrap:wrap; }
+  input[type=text] { background:#0e1425; color:#fff; border:1px solid #2a3350; border-radius:14px; padding:14px 16px; flex:1; outline:none; font-size:16px; }
+  .btn { background:#9aa6ff; color:#0b0e1a; font-weight:800; border:none; padding:14px 18px; border-radius:14px; cursor:pointer; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed;}
+  .sub { color:var(--muted); font-size: 13px; }
 
-.card{background:var(--card);border-radius:16px;padding:14px 14px 10px;box-shadow:0 10px 30px rgba(0,0,0,.22);margin-bottom:14px}
-.row{display:flex;gap:10px;align-items:center}
-input[type="text"],input[type="number"]{
-  width:100%;background:#0f1531;border:1px solid #1f2a5c;border-radius:12px;color:var(--text);
-  padding:14px 14px;font-size:16px;outline:none
-}
-.btn{background:var(--primary);color:#0b0f26;border:0;border-radius:12px;padding:12px 16px;font-weight:700;cursor:pointer}
-.btn:disabled{opacity:.6;cursor:not-allowed}
-.list{margin:10px 0 4px;display:flex;flex-direction:column;gap:10px}
+  .card { background: var(--card); border:1px solid #2a3350; border-radius:18px; padding:14px; margin:12px 0; }
+  .head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .pill { background:#10182e; color:#c6ceff; padding:8px 10px; border-radius:12px; font-weight:800; border:1px solid #2a3350; }
+  .tag { padding:6px 10px; border-radius:999px; font-size:12px; font-weight:800; border:1px solid #2a3350; }
+  .tag.live { color:#0f2; border-color:#093; background:#0a1f0f; }
+  .tag.ontime { color:#0f2; border-color:#093; }
+  .tag.late { color:#ffb84d; border-color:#8a5; }
+  .tag.early { color:#7bd; border-color:#59a; }
+  .tag.dim { color:#abb4d1; }
 
-.item{display:flex;gap:14px;align-items:center;justify-content:space-between;background:#0f1633;border:1px solid #1b2452;border-radius:14px;padding:12px 14px}
-.badge{background:var(--chip);color:#d6dbff;border-radius:10px;padding:6px 10px;font-weight:800;min-width:38px;text-align:center}
-.title{font-weight:800}
-.subtle{color:var(--muted);font-size:13px}
+  .due { color:#0f2; font-weight:900; letter-spacing:.5px; }
+  .due.flash { animation: flash .8s linear infinite; }
+  @keyframes flash { 0%{opacity:1} 50%{opacity:.35} 100%{opacity:1} }
 
-.kpi{display:flex;gap:8px;align-items:center}
-.kpi .live{color:var(--ok);font-weight:900}
-.kpi .sch{color:#fff;font-weight:900}
-.chip{background:var(--chip);border-radius:999px;padding:4px 8px;font-size:12px}
-.chip.ok{background:rgba(51,209,122,.15);color:var(--ok);border:1px solid rgba(51,209,122,.35)}
-.chip.warn{background:rgba(255,216,41,.15);color:var(--warn);border:1px solid rgba(255,216,41,.35)}
-.chip.late{background:rgba(255,107,107,.15);color:var(--late);border:1px solid rgba(255,107,107,.35)}
+  .grid2 { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; }
+  .list { margin-top: 10px; }
+  .small { font-size: 13px; color: var(--muted); }
+  .fav { background:#222949; border:1px solid #35407a; color:#e9ecff; border-radius:12px; padding:10px 14px; cursor:pointer; }
+  .fav.on { background:#3943a8; }
 
-.star{background:#2a2f55;border:1px solid #3c4482;color:#cfd6ff;border-radius:10px;padding:6px 9px;cursor:pointer}
-.star.active{background:#ffd829;color:#302400;border-color:#ffd829}
+  .map { height: 360px; border-radius:14px; overflow: hidden; border:1px solid #2a3350; }
+  .muted { color: var(--muted); }
 
-.blink{animation:blink 1s steps(1,end) infinite}
-@keyframes blink{50%{opacity:.25}}
+  .rowline { display:flex; align-items:center; gap:8px; }
+  .rnum { background:#243056; width:38px; height:38px; display:flex; align-items:center; justify-content:center; border-radius:10px; font-weight:900; font-size:16px; }
+  .go { background:#141b2f; border:1px solid #2a3350; color:#dbe2ff; padding:8px 10px; border-radius:12px; cursor:pointer; }
+  .go:hover { background:#1b2340; }
 
-.toast{
-  position:fixed;left:16px;right:16px;bottom:16px;background:#2a0f12;color:#ffd7d7;
-  border:1px solid #7a222a;border-radius:12px;padding:12px 14px;display:none;z-index:10
-}
-.modal{
-  position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:center;justify-content:center;z-index:20
-}
-.modal .sheet{background:var(--card);border:1px solid #26306e;border-radius:18px;padding:16px;max-width:520px;width:92%}
-.sheet h3{margin:4px 0 10px}
-.sheet .row{margin:8px 0}
-.sheet .foot{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}
-
-#map{height:380px;border-radius:16px;border:1px solid #1b2452;margin-top:10px}
-.small{font-size:12px;color:var(--muted)}
-hr.sep{border:none;border-top:1px solid #1b2452;margin:8px 0}
+  .modal { position:fixed; inset:0; display:none; background:#0008; align-items:center; justify-content:center; padding:20px; z-index:50; }
+  .modal .box { background:var(--panel); border:1px solid #2a3350; width:min(940px, 100%); max-height: 90vh; overflow:auto; border-radius:18px; padding:16px; }
+  .modal.show { display:flex; }
+  .right { text-align:right; }
 </style>
 </head>
 <body>
-<div class="container">
-  <div class="header">
-    <div style="font-size:28px">🚌</div>
-    <div>
-      <h1 id="title">Bluestar menetrend és megálló kereső</h1>
-      <div class="sub" id="ukTime">UK: --:--</div>
+<div class="wrap">
+  <header>
+    <div class="title"><span class="bus">🚌</span><span id="title">Bluestar menetrend és megálló kereső</span></div>
+    <div class="lang">
+      <img data-lang="en" class="flag" src="https://flagcdn.com/gb.svg" title="English">
+      <img data-lang="hu" class="flag active" src="https://flagcdn.com/hu.svg" title="Magyar">
+      <img data-lang="de" class="flag" src="https://flagcdn.com/de.svg" title="Deutsch">
+      <img data-lang="fr" class="flag" src="https://flagcdn.com/fr.svg" title="Français">
+      <img data-lang="pl" class="flag" src="https://flagcdn.com/pl.svg" title="Polski">
+      <img data-lang="ro" class="flag" src="https://flagcdn.com/ro.svg" title="Română">
+      <button id="btnSettings" class="btn" style="padding:10px 14px;">⚙️ <span data-i18n="settings">Beállítások</span></button>
     </div>
-  </div>
-
-  <div class="langs">
-    <button class="flag-btn" data-lang="en" title="English">🇬🇧</button>
-    <button class="flag-btn" data-lang="hu" title="Magyar">🇭🇺</button>
-    <button class="flag-btn" data-lang="de" title="Deutsch">🇩🇪</button>
-    <button class="flag-btn" data-lang="fr" title="Français">🇫🇷</button>
-    <button class="flag-btn" data-lang="pl" title="Polski">🇵🇱</button>
-    <button class="flag-btn" data-lang="ro" title="Română">🇷🇴</button>
-    <button class="settings-btn" id="btnSettings">⚙️ <span data-i18n="settings">Beállítások</span></button>
-  </div>
+  </header>
+  <div class="clock">UK: <span id="clock">--:--:--</span></div>
 
   <div class="tabs">
-    <div class="tab active" data-tab="stop"><span data-i18n="tab_stop">Megálló</span></div>
-    <div class="tab" data-tab="route"><span data-i18n="tab_route">Viszonylat</span></div>
-    <div class="tab" data-tab="fav"><span data-i18n="tab_fav">Kedvencek</span></div>
+    <button id="tabStop" class="tab active" data-i18n="tab_stop">Megálló</button>
+    <button id="tabRoute" class="tab" data-i18n="tab_route">Viszonylat</button>
+    <button id="tabFav" class="tab" data-i18n="tab_fav">Kedvencek</button>
   </div>
 
-  <!-- STOP SEARCH -->
-  <div class="card" id="panel-stop">
-    <div class="row">
-      <input id="stopQuery" type="text" placeholder="Shirley / stop code…" />
-      <button class="btn" id="btnStopSearch" data-i18n="search">Keresés</button>
+  <!-- STOP PANEL -->
+  <section id="panelStop" class="panel">
+    <div class="row stack">
+      <input id="inpStop" type="text" placeholder="Adanac Park" />
+      <button id="btnStopSearch" class="btn" data-i18n="search">Keresés</button>
     </div>
-    <div class="list" id="stopResults"></div>
-    <div id="selectedStopWrap" style="display:none">
-      <hr class="sep"/>
-      <div class="row">
-        <div>
-          <div class="title" id="selStopName"></div>
-          <div class="subtle small" id="selStopMeta"></div>
-          <div class="small" id="selStopRefresh"></div>
-        </div>
-        <button id="btnFavStop" class="star">★</button>
-      </div>
-      <div class="list" id="departures"></div>
-      <div id="tripWrap" style="display:none">
-        <hr class="sep"/>
-        <div class="title" data-i18n="trip_title">Járat részletek</div>
-        <div id="tripMeta" class="subtle small"></div>
-        <div id="tripStops" class="list"></div>
-        <div id="map"></div>
-      </div>
-    </div>
-  </div>
+    <div class="sub" id="stopInfo"></div>
+    <div id="stopResults" class="list"></div>
+    <div id="departures"></div>
+  </section>
 
-  <!-- ROUTE SEARCH -->
-  <div class="card" id="panel-route" style="display:none">
-    <div class="row">
-      <input id="routeQuery" type="text" placeholder="17 / U1 / Langley…" />
-      <button class="btn" id="btnRouteSearch" data-i18n="search">Keresés</button>
+  <!-- ROUTE PANEL -->
+  <section id="panelRoute" class="panel" style="display:none">
+    <div class="row stack">
+      <input id="inpRoute" type="text" placeholder="17" />
+      <button id="btnRouteSearch" class="btn" data-i18n="search">Keresés</button>
     </div>
-    <div class="list" id="routeResults"></div>
-  </div>
+    <div class="sub" id="routeInfo"></div>
+    <div id="routeLive" class="card" style="display:none">
+      <div class="map" id="routeMap"></div>
+      <div class="small" id="routeStats" style="margin-top:8px;"></div>
+    </div>
+  </section>
 
   <!-- FAVOURITES -->
-  <div class="card" id="panel-fav" style="display:none">
-    <div class="list" id="favList"></div>
-    <div class="small subtle" data-i18n="fav_hint">A kedvencekhez csillagozd be a megállót.</div>
+  <section id="panelFav" class="panel" style="display:none">
+    <div id="favList" class="list"></div>
+    <div class="small muted" data-i18n="fav_hint">A kedvencekhez csillagozd be a megállót.</div>
+  </section>
+
+  <!-- SETTINGS MODAL -->
+  <div id="modal" class="modal" role="dialog" aria-modal="true">
+    <div class="box">
+      <div class="head">
+        <div style="font-size:18px; font-weight:800" data-i18n="settings">Beállítások</div>
+        <button id="btnCloseModal" class="go">✖</button>
+      </div>
+      <div class="card">
+        <div class="small muted" data-i18n="api_hint">API elérési út (üres = ugyanarról a domainről)</div>
+        <input id="inpApi" type="text" placeholder="/api" value="/api" />
+      </div>
+      <div class="card">
+        <div class="small muted" data-i18n="refresh_hint">Frissítési idő (mp)</div>
+        <input id="inpRefresh" type="text" value="10" />
+      </div>
+      <div class="right">
+        <button id="btnSaveCfg" class="btn" data-i18n="save">Mentés</button>
+      </div>
+      <div class="small muted" id="buildInfo"></div>
+    </div>
   </div>
 
-  <div class="toast" id="toast"></div>
-</div>
-
-<!-- SETTINGS MODAL -->
-<div class="modal" id="modal">
-  <div class="sheet">
-    <h3 data-i18n="settings">Beállítások</h3>
-    <div class="row">
-      <label class="small" style="min-width:180px" for="apiBase" data-i18n="api_base">API elérési út (üres = ugyanarról a domainről)</label>
-      <input id="apiBase" type="text" placeholder="/api" />
+  <!-- TRIP MODAL -->
+  <div id="tripModal" class="modal">
+    <div class="box">
+      <div class="head">
+        <div>
+          <div style="font-weight:800" id="tripTitle">Trip</div>
+          <div class="small" id="tripSub"></div>
+        </div>
+        <button id="btnCloseTrip" class="go">✖</button>
+      </div>
+      <div class="grid2">
+        <div>
+          <div id="tripStops" class="list"></div>
+        </div>
+        <div>
+          <div id="tripDelayTag" class="tag dim">--</div>
+        </div>
+      </div>
+      <div class="card">
+        <div id="tripMap" class="map"></div>
+        <div class="small" id="tripStats" style="margin-top:8px;"></div>
+      </div>
     </div>
-    <div class="row">
-      <label class="small" style="min-width:180px" for="refreshSec" data-i18n="refresh">Frissítési idő (mp)</label>
-      <input id="refreshSec" type="number" min="5" max="120" step="1" />
-    </div>
-    <div class="row">
-      <label class="small" style="min-width:180px" for="lookahead" data-i18n="lookahead">Előretekintési ablak (perc)</label>
-      <input id="lookahead" type="number" min="15" max="240" step="5" />
-    </div>
-    <div class="foot">
-      <button class="btn" id="btnCancel" data-i18n="cancel">Mégse</button>
-      <button class="btn" id="btnSave" data-i18n="save">Mentés</button>
-    </div>
-    <div class="small subtle">v<span id="ver">-</span></div>
   </div>
+
 </div>
 
 <script>
-/* ========= i18n ========= */
+/* ==========================
+   i18n
+========================== */
 const I18N = {
-  en:{ title:"Bluestar timetable & stop finder", settings:"Settings",
-       tab_stop:"Stop", tab_route:"Route", tab_fav:"Favourites",
-       search:"Search", fav_hint:"Star a stop to save it.",
-       api_base:"API base (empty = same origin)", refresh:"Refresh (s)",
-       lookahead:"Lookahead window (min)", cancel:"Cancel", save:"Save",
-       results:"Results", trip_title:"Trip details", open:"Open",
-       no_results:"No results", selected_stop:"Selected stop",
-       due:"DUE", ontime:"on time", late:"late", early:"early",
-       live_refresh:"Refresh: {s}s • Build: {b}"
+  hu: {
+    title: "Bluestar menetrend és megálló kereső",
+    settings: "Beállítások",
+    tab_stop: "Megálló",
+    tab_route: "Viszonylat",
+    tab_fav: "Kedvencek",
+    search: "Keresés",
+    refresh_hint: "Frissítési idő (mp)",
+    api_hint: "API elérési út (üres = ugyanarról a domainről)",
+    save: "Mentés",
+    fav_hint: "A kedvencekhez csillagozd be a megállót.",
+    selected_stop: "Kiválasztott megálló",
+    refresh: "Frissítés",
+    build: "Build",
+    on_time: "időben",
+    late: "késik",
+    early: "siet",
+    due: "DUE",
+    minutes: "min",
+    open: "Megnyit",
   },
-  hu:{ title:"Bluestar menetrend és megálló kereső", settings:"Beállítások",
-       tab_stop:"Megálló", tab_route:"Viszonylat", tab_fav:"Kedvencek",
-       search:"Keresés", fav_hint:"A kedvencekhez csillagozd be a megállót.",
-       api_base:"API elérési út (üres = ugyanarról a domainről)",
-       refresh:"Frissítési idő (mp)", lookahead:"Előretekintési ablak (perc)",
-       cancel:"Mégse", save:"Mentés", results:"Találatok",
-       trip_title:"Járat részletek", open:"Megnyit", no_results:"Nincs találat",
-       selected_stop:"Kiválasztott megálló",
-       due:"DUE", ontime:"időben", late:"késés", early:"korábban",
-       live_refresh:"Frissítés: {s} s • Build: {b}"
+  en: {
+    title: "Bluestar timetable & stop finder",
+    settings: "Settings",
+    tab_stop: "Stop",
+    tab_route: "Route",
+    tab_fav: "Favourites",
+    search: "Search",
+    refresh_hint: "Refresh (s)",
+    api_hint: "API base path (empty = same domain)",
+    save: "Save",
+    fav_hint: "Star a stop to add it here.",
+    selected_stop: "Selected stop",
+    refresh: "Refresh",
+    build: "Build",
+    on_time: "on time",
+    late: "late",
+    early: "early",
+    due: "DUE",
+    minutes: "min",
+    open: "Open",
   },
-  de:{ title:"Bluestar Fahrpläne & Haltestellensuche", settings:"Einstellungen",
-       tab_stop:"Haltestelle", tab_route:"Linie", tab_fav:"Favoriten",
-       search:"Suchen", fav_hint:"Markiere eine Haltestelle mit ★.",
-       api_base:"API-Basis (leer = gleiche Domain)", refresh:"Aktualisierung (s)",
-       lookahead:"Vorschau (Min)", cancel:"Abbrechen", save:"Speichern",
-       results:"Treffer", trip_title:"Fahrt-Details", open:"Öffnen",
-       no_results:"Keine Treffer", selected_stop:"Gewählte Haltestelle",
-       due:"DUE", ontime:"pünktlich", late:"spät", early:"früher",
-       live_refresh:"Aktualisierung: {s}s • Build: {b}"
+  de: {
+    title: "Bluestar Fahrplan & Haltestellensuche",
+    settings: "Einstellungen",
+    tab_stop: "Haltestelle",
+    tab_route: "Linie",
+    tab_fav: "Favoriten",
+    search: "Suchen",
+    refresh_hint: "Aktualisierung (s)",
+    api_hint: "API-Pfad (leer = gleiche Domain)",
+    save: "Speichern",
+    fav_hint: "Markiere eine Haltestelle mit Stern.",
+    selected_stop: "Gewählte Haltestelle",
+    refresh: "Aktualisieren",
+    build: "Build",
+    on_time: "pünktlich",
+    late: "verspätet",
+    early: "zu früh",
+    due: "DUE",
+    minutes: "min",
+    open: "Öffnen",
   },
-  fr:{ title:"Bluestar horaires & recherche d'arrêt", settings:"Réglages",
-       tab_stop:"Arrêt", tab_route:"Ligne", tab_fav:"Favoris",
-       search:"Rechercher", fav_hint:"Ajoutez ★ pour enregistrer l'arrêt.",
-       api_base:"Base API (vide = même domaine)", refresh:"Rafraîchissement (s)",
-       lookahead:"Fenêtre (min)", cancel:"Annuler", save:"Enregistrer",
-       results:"Résultats", trip_title:"Détails du trajet", open:"Ouvrir",
-       no_results:"Aucun résultat", selected_stop:"Arrêt sélectionné",
-       due:"DUE", ontime:"à l'heure", late:"en retard", early:"en avance",
-       live_refresh:"Rafraîch.: {s}s • Build: {b}"
+  fr: {
+    title: "Bluestar horaires & recherche d'arrêt",
+    settings: "Réglages",
+    tab_stop: "Arrêt",
+    tab_route: "Ligne",
+    tab_fav: "Favoris",
+    search: "Rechercher",
+    refresh_hint: "Rafraîchissement (s)",
+    api_hint: "Chemin API (vide = même domaine)",
+    save: "Enregistrer",
+    fav_hint: "Ajoutez un arrêt en l'étoilant.",
+    selected_stop: "Arrêt choisi",
+    refresh: "Rafraîchir",
+    build: "Build",
+    on_time: "à l'heure",
+    late: "retard",
+    early: "en avance",
+    due: "DUE",
+    minutes: "min",
+    open: "Ouvrir",
   },
-  pl:{ title:"Bluestar rozkład i wyszukiwarka przystanków", settings:"Ustawienia",
-       tab_stop:"Przystanek", tab_route:"Linia", tab_fav:"Ulubione",
-       search:"Szukaj", fav_hint:"Zapisz przystanek klikając ★.",
-       api_base:"Adres API (puste = ten sam host)", refresh:"Odświeżanie (s)",
-       lookahead:"Horyzont (min)", cancel:"Anuluj", save:"Zapisz",
-       results:"Wyniki", trip_title:"Szczegóły kursu", open:"Otwórz",
-       no_results:"Brak wyników", selected_stop:"Wybrany przystanek",
-       due:"DUE", ontime:"punktualnie", late:"opóźnienie", early:"wcześniej",
-       live_refresh:"Odświeżanie: {s}s • Build: {b}"
+  pl: {
+    title: "Bluestar rozkład i wyszukiwarka przystanków",
+    settings: "Ustawienia",
+    tab_stop: "Przystanek",
+    tab_route: "Linia",
+    tab_fav: "Ulubione",
+    search: "Szukaj",
+    refresh_hint: "Odświeżanie (s)",
+    api_hint: "Ścieżka API (pusta = ta sama domena)",
+    save: "Zapisz",
+    fav_hint: "Dodaj przystanek do ulubionych gwiazdką.",
+    selected_stop: "Wybrany przystanek",
+    refresh: "Odśwież",
+    build: "Build",
+    on_time: "planowo",
+    late: "opóźniony",
+    early: "za wcześnie",
+    due: "DUE",
+    minutes: "min",
+    open: "Otwórz",
   },
-  ro:{ title:"Bluestar orar & căutare stații", settings:"Setări",
-       tab_stop:"Stație", tab_route:"Linie", tab_fav:"Favorite",
-       search:"Caută", fav_hint:"Salvează stația cu ★.",
-       api_base:"Baza API (gol = același domeniu)", refresh:"Reîmprospătare (s)",
-       lookahead:"Fereastră (min)", cancel:"Anulează", save:"Salvează",
-       results:"Rezultate", trip_title:"Detalii cursă", open:"Deschide",
-       no_results:"Fără rezultate", selected_stop:"Stație selectată",
-       due:"DUE", ontime:"la timp", late:"întârziere", early:"mai devreme",
-       live_refresh:"Refresh: {s}s • Build: {b}"
+  ro: {
+    title: "Bluestar orar & căutare stații",
+    settings: "Setări",
+    tab_stop: "Stație",
+    tab_route: "Linie",
+    tab_fav: "Favorite",
+    search: "Căutare",
+    refresh_hint: "Reîmprospătare (s)",
+    api_hint: "Calea API (goală = același domeniu)",
+    save: "Salvează",
+    fav_hint: "Adaugă o stație la favorite cu steaua.",
+    selected_stop: "Stație selectată",
+    refresh: "Reîmprospătează",
+    build: "Build",
+    on_time: "la timp",
+    late: "întârzie",
+    early: "mai devreme",
+    due: "DUE",
+    minutes: "min",
+    open: "Deschide",
   }
-};
-let lang = localStorage.getItem("lang") || "hu";
-function t(key){ return (I18N[lang] && I18N[lang][key]) || I18N["en"][key] || key; }
-function applyI18n(){
-  document.getElementById("title").textContent = t("title");
-  document.querySelectorAll("[data-i18n]").forEach(el => el.textContent = t(el.dataset.i18n));
-  document.querySelectorAll(".flag-btn").forEach(b=>b.classList.toggle("active", b.dataset.lang===lang));
+}
+let LANG = localStorage.getItem("lang") || "hu";
+function applyI18n() {
+  const t = I18N[LANG] || I18N.hu;
+  document.getElementById("title").textContent = t.title;
+  document.querySelectorAll("[data-i18n]").forEach(el=>{
+    const k = el.dataset.i18n;
+    el.textContent = t[k] || el.textContent;
+  });
+  document.querySelectorAll(".flag").forEach(f=>f.classList.toggle("active", f.dataset.lang===LANG));
 }
 applyI18n();
 
-/* ========= állapot ========= */
-const state = {
-  api: localStorage.getItem("apiBase") || "/api",
-  refreshSec: +(localStorage.getItem("refreshSec") || 10),
-  lookahead: +(localStorage.getItem("lookahead") || 60),
-  build:"-",
-  drift:0, // server-now - client-now
-  selectedStop:null,
-  selectedStopMeta:null,
-  tickHandle:null,
-  map:null, mapLayer:null, shapeLayer:null, vehiclesLayer:null,
-  lastVehiclesRoute:null,
+/* ==========================
+   Config
+========================== */
+const cfg = {
+  api: localStorage.getItem("api_base") || "/api",
+  refresh: parseInt(localStorage.getItem("refresh_sec") || "10", 10)
+};
+document.getElementById("inpApi").value = cfg.api;
+document.getElementById("inpRefresh").value = String(cfg.refresh);
+
+/* ==========================
+   Utils
+========================== */
+const $ = sel => document.querySelector(sel);
+const $$ = sel => Array.from(document.querySelectorAll(sel));
+function fmtTime(dtIso) {
+  try { return new Date(dtIso).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}); }
+  catch { return dtIso; }
+}
+function el(tag, attrs={}, children=[]) {
+  const e = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs)) {
+    if (k==="class") e.className = v;
+    else if (k==="text") e.textContent = v;
+    else e.setAttribute(k,v);
+  }
+  for (const c of children) e.appendChild(c);
+  return e;
+}
+function num(n){ return typeof n==="number" && !isNaN(n); }
+function roundHalf(n){ return Math.round(n*2)/2; }
+
+/* ==========================
+   Clock
+========================== */
+setInterval(()=> {
+  $("#clock").textContent = new Date().toLocaleTimeString("en-GB", {hour12:false});
+}, 1000);
+
+/* ==========================
+   Tabs
+========================== */
+function showPanel(id) {
+  $("#panelStop").style.display = id==="stop"?"block":"none";
+  $("#panelRoute").style.display = id==="route"?"block":"none";
+  $("#panelFav").style.display = id==="fav"?"block":"none";
+  $("#tabStop").classList.toggle("active", id==="stop");
+  $("#tabRoute").classList.toggle("active", id==="route");
+  $("#tabFav").classList.toggle("active", id==="fav");
+}
+$("#tabStop").onclick = ()=>showPanel("stop");
+$("#tabRoute").onclick = ()=>showPanel("route");
+$("#tabFav").onclick = ()=>{ renderFav(); showPanel("fav"); };
+
+/* ==========================
+   Settings
+========================== */
+$("#btnSettings").onclick = ()=>{ $("#modal").classList.add("show"); loadStatus(); };
+$("#btnCloseModal").onclick = ()=> $("#modal").classList.remove("show");
+$("#btnSaveCfg").onclick = ()=>{
+  cfg.api = $("#inpApi").value.trim() || "";
+  cfg.refresh = Math.max(5, parseInt($("#inpRefresh").value||"10",10));
+  localStorage.setItem("api_base", cfg.api);
+  localStorage.setItem("refresh_sec", String(cfg.refresh));
+  $("#modal").classList.remove("show");
 };
 
-/* ========= util ========= */
-const $ = sel => document.querySelector(sel);
-function toast(msg){ const el=$("#toast"); el.textContent=msg; el.style.display="block"; setTimeout(()=>el.style.display="none", 3500); }
-function fmtHM(ts){ const d=new Date(ts*1000); return d.toTimeString().slice(0,5); }
-function mins(x){ return Math.round(x/60); }
-function pad2(n){ return n<10?"0"+n:""+n; }
-function sinceServerNow(){ return Math.floor(Date.now()/1000 + state.drift); }
-
-/* ========= status poll ========= */
 async function loadStatus(){
   try{
-    const r = await fetch(state.api+"/status");
-    const j = await r.json();
-    state.build = j.build || "-";
-    const serverNow = Math.floor(Date.now()/1000);
-    // j.time is string HH:MM:SS in server TZ – only show
-    $("#ukTime").textContent = "UK: " + (j.time || "--:--");
-    applyI18n();
-  }catch(e){}
+    const r = await fetch(cfg.api + "/status");
+    const js = await r.json();
+    $("#buildInfo").textContent = `v${js.version} • ${I18N[LANG].build}: ${js.build} • GTFS: ${js.gtfs_ready?js.gtfs_stops+" stops":"n/a"}`;
+  } catch { $("#buildInfo").textContent = "status: offline"; }
 }
-loadStatus(); setInterval(loadStatus, 30000);
 
-/* ========= beállítások ========= */
-$("#btnSettings").onclick=()=>{
-  $("#apiBase").value = state.api;
-  $("#refreshSec").value = state.refreshSec;
-  $("#lookahead").value = state.lookahead;
-  $("#ver").textContent = state.build;
-  $("#modal").style.display="flex";
-};
-$("#btnCancel").onclick=()=>$("#modal").style.display="none";
-$("#btnSave").onclick=()=>{
-  state.api = ($("#apiBase").value||"/api").trim();
-  state.refreshSec = Math.max(5, Math.min(120, +$("#refreshSec").value||10));
-  state.lookahead = Math.max(15, Math.min(240, +$("#lookahead").value||60));
-  localStorage.setItem("apiBase", state.api);
-  localStorage.setItem("refreshSec", state.refreshSec);
-  localStorage.setItem("lookahead", state.lookahead);
-  $("#modal").style.display="none";
-  if(state.selectedStop) refreshDepartures(true);
-};
-
-/* ========= nyelv ========= */
-document.querySelectorAll(".flag-btn").forEach(btn=>{
-  btn.onclick=()=>{ lang=btn.dataset.lang; localStorage.setItem("lang", lang); applyI18n(); };
+/* ==========================
+   Language switch
+========================== */
+$$(".flag").forEach(f=>{
+  f.onclick = ()=>{ LANG = f.dataset.lang; localStorage.setItem("lang", LANG); applyI18n(); };
 });
 
-/* ========= tabok ========= */
-document.querySelectorAll(".tab").forEach(tab=>{
-  tab.onclick=()=>{
-    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
-    tab.classList.add("active");
-    const name=tab.dataset.tab;
-    $("#panel-stop").style.display = (name==="stop")?"block":"none";
-    $("#panel-route").style.display = (name==="route")?"block":"none";
-    $("#panel-fav").style.display = (name==="fav")?"block":"none";
-  };
-});
+/* ==========================
+   Stop search + departures
+========================== */
+let selStop = null;
+let depTimer = 0;
 
-/* ========= kedvencek ========= */
-function loadFavs(){
-  try{ return JSON.parse(localStorage.getItem("favs")||"[]"); }catch{return []}
-}
-function saveFavs(v){ localStorage.setItem("favs", JSON.stringify(v)); renderFavs(); }
-function renderFavs(){
-  const box=$("#favList"); box.innerHTML="";
-  const favs=loadFavs();
-  if(!favs.length){ box.innerHTML=`<div class="subtle">${t("no_results")}</div>`; return; }
-  favs.forEach(f=>{
-    const row=document.createElement("div"); row.className="item";
-    row.innerHTML=`<div><div class="title">${f.name}</div><div class="subtle small">${f.stop_id}${f.code?(" • "+f.code):""}</div></div>
-      <div class="row">
-        <button class="btn open">${t("open")}</button>
-        <button class="star del">🗑</button>
-      </div>`;
-    row.querySelector(".open").onclick=()=>openStop(f.stop_id, f.name, f.code, f.lat, f.lon);
-    row.querySelector(".del").onclick=()=>saveFavs(favs.filter(x=>x.stop_id!==f.stop_id));
-    box.appendChild(row);
+$("#btnStopSearch").onclick = doStopSearch;
+$("#inpStop").addEventListener("keydown", e=>{ if(e.key==="Enter") doStopSearch(); });
+
+async function doStopSearch(){
+  const q = $("#inpStop").value.trim();
+  $("#stopResults").innerHTML = "";
+  $("#departures").innerHTML = "";
+  $("#stopInfo").textContent = "";
+  if(!q){ return; }
+  const r = await fetch(`${cfg.api}/stops/search?q=${encodeURIComponent(q)}`);
+  const js = await r.json();
+  if(!js.results?.length){ $("#stopResults").innerHTML = `<div class="small muted">Nincs találat</div>`; return; }
+  js.results.slice(0,25).forEach(st=>{
+    const card = el("div",{class:"card"});
+    const head = el("div",{class:"head"},[
+      el("div",{class:"rowline"},[
+        el("div",{class:"rnum", text:"🅢"}),
+        el("div", {text: st.name})
+      ]),
+      el("button",{class:"go", text:I18N[LANG].open})
+    ]);
+    head.querySelector(".go").onclick = ()=>selectStop(st);
+    card.appendChild(head);
+    card.appendChild(el("div",{class:"small muted", text: st.stop_id}));
+    $("#stopResults").appendChild(card);
   });
 }
-renderFavs();
 
-/* ========= megálló kereső ========= */
-$("#btnStopSearch").onclick = async ()=>{
-  const q = $("#stopQuery").value.trim();
-  if(!q){ toast(t("no_results")); return; }
-  try{
-    const r = await fetch(state.api+"/stops/search?q="+encodeURIComponent(q));
-    const j = await r.json();
-    const list = $("#stopResults"); list.innerHTML="";
-    const items = (j && j.results) || [];
-    if(!items.length){ list.innerHTML=`<div class="subtle">${t("no_results")}</div>`; return; }
-    items.forEach(s=>{
-      const row=document.createElement("div"); row.className="item";
-      row.innerHTML = `
-        <div class="row" style="gap:12px">
-          <div class="badge">BUS</div>
-          <div>
-            <div class="title">${s.name}</div>
-            <div class="subtle small">ID: ${s.stop_id}${s.code?(" • "+s.code):""}</div>
-          </div>
-        </div>
-        <div class="row">
-          <button class="star fav">★</button>
-          <button class="btn open">${t("open")}</button>
-        </div>`;
-      row.querySelector(".open").onclick=()=>openStop(s.stop_id, s.name, s.code, s.lat, s.lon);
-      row.querySelector(".fav").onclick=()=>{
-        const favs=loadFavs();
-        if(!favs.find(x=>x.stop_id===s.stop_id)){
-          favs.push(s); saveFavs(favs);
-        }
-      };
-      list.appendChild(row);
-    });
-  }catch(e){ toast("Stop search failed."); }
-};
+function selectStop(st){
+  selStop = st;
+  $("#stopResults").innerHTML = "";
+  $("#stopInfo").textContent = `${I18N[LANG].selected_stop}: ${st.name}`;
+  renderFavStar(st);
+  loadDepartures();
+  clearInterval(depTimer);
+  depTimer = setInterval(loadDepartures, cfg.refresh*1000);
+}
 
-/* ========= megálló megnyitása & indulások ========= */
-async function openStop(stop_id, name, code, lat, lon){
-  state.selectedStop = stop_id;
-  state.selectedStopMeta = {name, code, lat, lon};
-  $("#stopResults").innerHTML="";
-  $("#selectedStopWrap").style.display="block";
-  $("#selStopName").textContent = name;
-  $("#selStopMeta").textContent = `${t("selected_stop")}: ${stop_id}${code?(" • "+code):""}`;
-  const favs=loadFavs();
-  $("#btnFavStop").classList.toggle("active", !!favs.find(x=>x.stop_id===stop_id));
-  $("#btnFavStop").onclick=()=>{
-    const f=loadFavs();
-    const idx=f.findIndex(x=>x.stop_id===stop_id);
-    if(idx===-1){ f.push({stop_id,name,code,lat,lon}); } else { f.splice(idx,1); }
-    saveFavs(f);
-    $("#btnFavStop").classList.toggle("active", idx===-1);
+function renderFavStar(st){
+  const favOn = isFav(st.stop_id);
+  const row = el("div",{class:"row", style:"margin:8px 0; align-items:center; gap:8px;"},[
+    el("button",{class:"fav"+(favOn?" on":""), id:"btnFav", text: favOn ? "★" : "☆"}),
+    el("div",{class:"small muted", text:`${I18N[LANG].refresh}: ${cfg.refresh}s • ${I18N[LANG].build}: ${new Date().getTime().toString().slice(-8)}`})
+  ]);
+  const container = el("div",{}); container.appendChild(row);
+  $("#departures").innerHTML = ""; $("#departures").appendChild(container);
+  $("#btnFav").onclick = ()=>{
+    toggleFav(st.stop_id, st.name);
+    renderFavStar(st);
   };
-  refreshDepartures(true);
 }
 
-function etaText(item, now){
-  const base = item.predicted_epoch || item.scheduled_epoch;
-  let diff = base - now;
-  if(diff <= 60) return `<span class="live blink">${t("due")}</span>`;
-  const m = Math.floor(diff/60);
-  return `<span class="${item.live?'live':'sch'}">${m} min</span>`;
-}
-function delayChip(item){
-  if(item.delay_sec==null) return `<span class="chip ok">${t("ontime")}</span>`;
-  const m = Math.round(item.delay_sec/60);
-  if(Math.abs(m)<=0) return `<span class="chip ok">${t("ontime")}</span>`;
-  if(m>0) return `<span class="chip late">+${m} ${t("late")}</span>`;
-  return `<span class="chip warn">${m} ${t("early")}</span>`;
-}
+async function loadDepartures(){
+  if(!selStop) return;
+  const r = await fetch(`${cfg.api}/departures?stop_id=${encodeURIComponent(selStop.stop_id)}&lookahead_min=120`);
+  const js = await r.json();
+  const list = el("div",{class:"list"});
+  (js.departures||[]).forEach(d=>{
+    const live = !!d.live;
+    const due = !!d.due;
+    const mins = typeof d.minutes==="number" ? d.minutes : Math.round((new Date(d.scheduled)-Date.now())/60000);
+    const row = el("div",{class:"card"});
 
-async function refreshDepartures(first=false){
-  if(!state.selectedStop) return;
-  if(first && state.tickHandle){ clearInterval(state.tickHandle); state.tickHandle=null; }
+    const title = el("div",{class:"head"},[
+      el("div",{class:"rowline"},[
+        el("div",{class:"rnum", text:d.route_short || "?"}),
+        el("div",{text:d.headsign || ""})
+      ]),
+      el("div",{},[
+        el("span",{class:"tag"+(live?" live":" dim"), text: live ? "live" : "sched" })
+      ])
+    ]);
+    row.appendChild(title);
 
-  try{
-    const r = await fetch(`${state.api}/departures?stopId=${encodeURIComponent(state.selectedStop)}&lookahead_mins=${state.lookahead}`);
-    const j = await r.json();
-    // drift
-    const clientNow = Math.floor(Date.now()/1000);
-    state.drift = (j.now_epoch||clientNow) - clientNow;
-
-    // header info
-    $("#selStopRefresh").textContent = t("live_refresh").replace("{s}", state.refreshSec).replace("{b}", state.build);
-
-    const box = $("#departures"); box.innerHTML="";
-    (j.items||[]).forEach(d=>{
-      const row=document.createElement("div"); row.className="item";
-      row.innerHTML=`
-        <div class="row" style="gap:12px">
-          <div class="badge">${d.route||"—"}</div>
-          <div>
-            <div class="title">${d.headsign||""}</div>
-            <div class="subtle small">${t("selected_stop")} • ${fmtHM(d.scheduled_epoch)}</div>
-          </div>
-        </div>
-        <div class="kpi">
-          <div class="when">${etaText(d, sinceServerNow())}</div>
-          <div class="chipline">${delayChip(d)}</div>
-          <button class="star openTrip" title="Trip">⤳</button>
-        </div>`;
-      row.querySelector(".openTrip").onclick=()=>openTrip(d.trip_id, d.route);
-      box.appendChild(row);
-    });
-
-    if(first){
-      // per-second countdown repaint
-      state.tickHandle = setInterval(()=>{
-        document.querySelectorAll("#departures .item").forEach((el, idx)=>{
-          const item = (j.items||[])[idx]; if(!item) return;
-          el.querySelector(".when").innerHTML = etaText(item, sinceServerNow());
-        });
-      }, 1000);
-      // periodic reload
-      setInterval(()=>refreshDepartures(false), state.refreshSec*1000);
+    const info = el("div",{class:"grid2"});
+    const left = el("div",{});
+    if (due && live) {
+      left.appendChild(el("div",{class:"due flash", text:I18N[LANG].due}));
+    } else {
+      const minBox = el("div",{});
+      minBox.appendChild(el("span",{style:"font-size:22px; font-weight:900; margin-right:6px;", text: `${mins}`}));
+      minBox.appendChild(el("span",{class:"small", text: I18N[LANG].minutes}));
+      left.appendChild(minBox);
     }
-  }catch(e){
-    toast("Departures failed.");
-  }
+
+    const delay = d.delay_min;
+    const delayTag = el("span",{class:"tag dim", text:I18N[LANG].on_time});
+    if (num(delay)) {
+      if (delay > 0) { delayTag.className="tag late"; delayTag.textContent = `${I18N[LANG].late} +${roundHalf(delay)}m`; }
+      else if (delay < 0) { delayTag.className="tag early"; delayTag.textContent = `${I18N[LANG].early} ${roundHalf(delay)}m`; }
+      else { delayTag.className="tag ontime"; delayTag.textContent = I18N[LANG].on_time; }
+    } else if (live) {
+      delayTag.className="tag ontime";
+      delayTag.textContent = I18N[LANG].on_time;
+    }
+    const btnTrip = el("button",{class:"go", text:"↷"});
+    btnTrip.title = "Trip";
+    btnTrip.onclick = ()=> openTrip(d.trip_id, d);
+
+    info.appendChild(left);
+    const right = el("div",{});
+    right.appendChild(delayTag);
+    right.appendChild(el("span",{text:" "})); right.appendChild(btnTrip);
+    info.appendChild(right);
+
+    row.appendChild(info);
+    row.appendChild(el("div",{class:"small muted", text:`${new Date(d.scheduled).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})}`}));
+    list.appendChild(row);
+  });
+
+  $("#departures").appendChild(list);
 }
 
-/* ========= trip + térkép ========= */
-async function openTrip(tripId, routeShort){
-  $("#tripWrap").style.display="block";
-  $("#tripStops").innerHTML="...";
-  try{
-    const r = await fetch(`${state.api}/trip?tripId=${encodeURIComponent(tripId)}`);
-    if(!r.ok){ $("#tripStops").innerHTML="<div class='subtle'>Trip not found</div>"; return; }
-    const j = await r.json();
-    $("#tripMeta").textContent = `${j.route.short_name||""} • ${j.headsign||""}`;
+/* ==========================
+   Trip modal
+========================== */
+let tripMap, tripLiveLayer, tripShape;
+let tripTimer = 0;
+
+async function openTrip(tripId, depRow){
+  $("#tripTitle").textContent = `Trip • ${depRow.route_short || ""} ${depRow.headsign || ""}`;
+  $("#tripSub").textContent = `#${tripId}`;
+  $("#tripStops").innerHTML = "";
+  $("#tripDelayTag").className = "tag dim"; $("#tripDelayTag").textContent = "--";
+  $("#tripStats").textContent = "";
+  $("#tripModal").classList.add("show");
+
+  // map init
+  setTimeout(()=>{
+    if(!tripMap){
+      tripMap = L.map('tripMap', {zoomControl:true});
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(tripMap);
+    }
+    tripMap.invalidateSize();
+  },50);
+
+  async function loadTrip(){
+    const r = await fetch(`${cfg.api}/trip?trip_id=${encodeURIComponent(tripId)}`);
+    const js = await r.json();
 
     // stops list
-    const list=$("#tripStops"); list.innerHTML="";
-    (j.stops||[]).forEach(s=>{
-      const line=document.createElement("div"); line.className="item";
-      line.innerHTML = `
-        <div>
-          <div class="title">${s.name}</div>
-          <div class="subtle small">${s.code? (s.code+" • "):""}${s.stop_id}</div>
-        </div>
-        <div class="kpi">
-          <div class="chip">${(s.dep||s.arr||"").slice(0,5)}</div>
-        </div>`;
-      list.appendChild(line);
+    $("#tripStops").innerHTML = "";
+    (js.stops||[]).forEach(s=>{
+      const line = el("div",{class:"rowline", style:"margin:6px 0;"},[
+        el("div",{class:"rnum", text:"🅢"}),
+        el("div",{text: s.name}),
+        el("div",{class:"small muted", text: s.time})
+      ]);
+      $("#tripStops").appendChild(line);
     });
 
-    // map
-    ensureMap();
-    drawShape(j.shape||[]);
-    await drawVehicles(routeShort||j.route.short_name||"");
-    // refresh vehicles every 10s
-    state.lastVehiclesRoute = routeShort||j.route.short_name||"";
-    if(state.vTimer) clearInterval(state.vTimer);
-    state.vTimer = setInterval(()=>drawVehicles(state.lastVehiclesRoute), 10000);
-  }catch(e){
-    $("#tripStops").innerHTML="<div class='subtle'>Trip error</div>";
+    // shape
+    const pts = (js.shape||[]).map(p=>[p.lat, p.lon]);
+    if (tripShape) { tripMap.removeLayer(tripShape); }
+    if (pts.length){
+      tripShape = L.polyline(pts, {weight:4}).addTo(tripMap);
+      tripMap.fitBounds(tripShape.getBounds(), {padding:[20,20]});
+    }
+
+    // live vehicles
+    if (tripLiveLayer) tripMap.removeLayer(tripLiveLayer);
+    tripLiveLayer = L.layerGroup().addTo(tripMap);
+    let cnt = 0;
+    if (js.live?.vehicles?.length){
+      js.live.vehicles.forEach(v=>{
+        if(!num(v.lat)||!num(v.lon)) return;
+        cnt++;
+        L.circleMarker([v.lat, v.lon], {radius:7}).addTo(tripLiveLayer)
+          .bindPopup(`${v.label||""} • ${v.route||""}`);
+      });
+    }
+    const t = I18N[LANG];
+    let stats = `${cnt} live`;
+    if (num(js.live?.delay_min)) {
+      const d = js.live.delay_min;
+      let tag = t.on_time;
+      let cls = "tag ontime";
+      if (d>0){ tag = `${t.late} +${roundHalf(d)}m`; cls="tag late"; }
+      else if (d<0){ tag = `${t.early} ${roundHalf(d)}m`; cls="tag early"; }
+      $("#tripDelayTag").className = cls; $("#tripDelayTag").textContent = tag;
+    } else {
+      $("#tripDelayTag").className = "tag dim"; $("#tripDelayTag").textContent = t.on_time;
+    }
+    $("#tripStats").textContent = stats;
   }
-}
 
-function ensureMap(){
-  if(state.map) return;
-  state.map = L.map('map');
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(state.map);
-  state.map.setView([50.9,-1.4], 12);
-  state.shapeLayer = L.polyline([], {color:"#8ad"}).addTo(state.map);
-  state.vehiclesLayer = L.layerGroup().addTo(state.map);
+  await loadTrip();
+  clearInterval(tripTimer);
+  tripTimer = setInterval(loadTrip, cfg.refresh*1000);
 }
-function drawShape(points){
-  const latlngs = points.map(p=>[p.lat,p.lon]);
-  state.shapeLayer.setLatLngs(latlngs);
-  if(latlngs.length) state.map.fitBounds(L.latLngBounds(latlngs), {padding:[20,20]});
-}
-async function drawVehicles(routeShort){
-  if(!state.map) return;
-  try{
-    state.vehiclesLayer.clearLayers();
-    const r = await fetch(`${state.api}/vehicles?route=${encodeURIComponent(routeShort)}`);
-    const j = await r.json();
-    if(!j.ok) return;
-    (j.vehicles||[]).forEach(v=>{
-      const m = L.circleMarker([v.lat, v.lon], {radius:7, color:"#5cf", fill:true, fillOpacity:.9});
-      m.bindPopup(`${v.line} → ${v.dest||""}<br><span class="small">${v.vehicle_ref||""}</span>`);
-      m.addTo(state.vehiclesLayer);
+$("#btnCloseTrip").onclick = ()=>{ $("#tripModal").classList.remove("show"); clearInterval(tripTimer); };
+
+/* ==========================
+   Route live
+========================== */
+let routeMap, routeLayer, routeShapeLayer;
+let routeTimer = 0;
+
+$("#btnRouteSearch").onclick = doRouteSearch;
+$("#inpRoute").addEventListener("keydown", e=>{ if(e.key==="Enter") doRouteSearch(); });
+
+async function doRouteSearch(){
+  const q = $("#inpRoute").value.trim();
+  if(!q) return;
+  $("#routeLive").style.display = "block";
+
+  setTimeout(()=>{
+    if(!routeMap){
+      routeMap = L.map('routeMap',{zoomControl:true});
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(routeMap);
+    }
+    routeMap.invalidateSize();
+  },50);
+
+  async function loadRoute(){
+    const r = await fetch(`${cfg.api}/route/live?route=${encodeURIComponent(q)}`);
+    const js = await r.json();
+
+    // shape
+    if (routeShapeLayer) routeMap.removeLayer(routeShapeLayer);
+    const pts = (js.shape||[]).map(p=>[p.lat, p.lon]);
+    if (pts.length){
+      routeShapeLayer = L.polyline(pts,{weight:4}).addTo(routeMap);
+      routeMap.fitBounds(routeShapeLayer.getBounds(), {padding:[20,20]});
+    }
+
+    // vehicles
+    if (routeLayer) routeMap.removeLayer(routeLayer);
+    routeLayer = L.layerGroup().addTo(routeMap);
+    (js.vehicles||[]).forEach(v=>{
+      if(!num(v.lat)||!num(v.lon)) return;
+      L.circleMarker([v.lat, v.lon], {radius:7}).addTo(routeLayer)
+        .bindPopup(`${v.label||""} • ${v.route||""}`);
     });
-  }catch(e){}
+    $("#routeStats").textContent = `${(js.vehicles||[]).length} live`;
+  }
+
+  await loadRoute();
+  clearInterval(routeTimer);
+  routeTimer = setInterval(loadRoute, cfg.refresh*1000);
 }
 
-/* ========= viszonylat kereső ========= */
-$("#btnRouteSearch").onclick=async ()=>{
-  const q=$("#routeQuery").value.trim(); if(!q) return;
-  try{
-    const r=await fetch(state.api+"/routes/search?q="+encodeURIComponent(q));
-    const j=await r.json();
-    const list=$("#routeResults"); list.innerHTML="";
-    const items = (j && j.results) || [];
-    if(!items.length){ list.innerHTML=`<div class="subtle">${t("no_results")}</div>`; return; }
-    items.forEach(rte=>{
-      const row=document.createElement("div"); row.className="item";
-      row.innerHTML = `
-        <div class="row" style="gap:12px">
-          <div class="badge">${rte.short_name||"—"}</div>
-          <div>
-            <div class="title">${rte.long_name||""}</div>
-            <div class="subtle small">ID: ${rte.route_id}</div>
-          </div>
-        </div>`;
-      list.appendChild(row);
-    });
-  }catch(e){ toast("Route search failed."); }
-};
+/* ==========================
+   Favourites
+========================== */
+function getFav() {
+  try{ return JSON.parse(localStorage.getItem("fav_stops")||"[]"); } catch { return []; }
+}
+function isFav(id){ return getFav().some(s=>s.id===id); }
+function toggleFav(id, name){
+  const arr = getFav();
+  const i = arr.findIndex(s=>s.id===id);
+  if(i>=0) arr.splice(i,1);
+  else arr.push({id,name});
+  localStorage.setItem("fav_stops", JSON.stringify(arr));
+  renderFav();
+}
+function renderFav(){
+  const t = I18N[LANG];
+  const box = $("#favList"); box.innerHTML = "";
+  const arr = getFav();
+  if(!arr.length){ box.innerHTML = `<div class="small muted">${t.fav_hint}</div>`; return; }
+  arr.forEach(s=>{
+    const card = el("div",{class:"card"});
+    const head = el("div",{class:"head"},[
+      el("div",{text: s.name}),
+      el("div",{},[
+        el("button",{class:"go", text:t.open, onclick:()=>openFavStop(s)}),
+        el("span",{text:" "}),
+        el("button",{class:"go", text:"🗑", onclick:()=>{toggleFav(s.id,s.name);}})
+      ])
+    ]);
+    card.appendChild(head);
+    card.appendChild(el("div",{class:"small muted", text:s.id}));
+    box.appendChild(card);
+  });
+}
+async function openFavStop(s){
+  $("#inpStop").value = s.name;
+  const fake = {stop_id:s.id, name:s.name};
+  selectStop(fake);
+}
 
-/* ========= inicializálás ========= */
-document.addEventListener("DOMContentLoaded", ()=>{
-  // default language flag
-  document.querySelector(`.flag-btn[data-lang="${lang}"]`)?.classList.add("active");
+/* ==========================
+   Init
+========================== */
+renderFav();
+
+/* accessibility: close modal on ESC */
+window.addEventListener("keydown", e=>{
+  if(e.key==="Escape"){ $("#modal").classList.remove("show"); $("#tripModal").classList.remove("show"); }
 });
 </script>
 </body>
