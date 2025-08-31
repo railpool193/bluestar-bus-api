@@ -1,8 +1,8 @@
 fastapi
 uvicorn[standard]
 requests
-pydantic
-python-multipart
-jinja2
 httpx
 pandas
+python-multipart
+jinja2
+xmltodict
