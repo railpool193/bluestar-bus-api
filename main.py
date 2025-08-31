@@ -1,525 +1,624 @@
-import os, io, json, time, math, zipfile, csv
-from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI, Query, Body, Response, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse, PlainTextResponse
+import os
+import io
+import json
+import time
+import csv
+import zipfile
+import math
+import threading
+from datetime import datetime, timezone, timedelta
+from typing import Dict, List, Any, Optional
+from fastapi import FastAPI, UploadFile, File, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import requests
+import xml.etree.ElementTree as ET
 
-# ---------------------------------------------------------
-# App & globals
-# ---------------------------------------------------------
-app = FastAPI(title="Bluestar Bus — API", version="5.3.0")
+# ---------------------- App & CORS ----------------------
+APP_VERSION = "5.3.0"
+BUILD = str(int(time.time()))
+TZ_NAME = "Europe/London"
+try:
+    import zoneinfo
+    TZ = zoneinfo.ZoneInfo(TZ_NAME)  # Python 3.9+
+except Exception:
+    TZ = timezone.utc
 
+app = FastAPI(title="Bluestar Bus — API", version=APP_VERSION)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
 )
 
-STATE: Dict[str, Any] = {
-    "build": str(int(time.time())),
-    "live_cfg": {"feed_url": os.getenv("LIVE_FEED_URL", "").strip()},
-    "gtfs_ready": False,
-    "gtfs": {
-        "stops": {},        # stop_id -> {stop_id, name, lat, lon}
-        "routes": {},       # route_id -> {route_id, route_short_name, route_long_name}
-        "trips": {},        # trip_id -> {trip_id, route_id, shape_id, headsign}
-        "stop_times": {},   # trip_id -> [ {stop_id, arr, dep, seq} ... ]
-        "shapes": {},       # shape_id -> [ {lat, lon, seq} ... ]
-        "route2shapes": {}, # route_id -> set(shape_id)
-        "index_stop_name": {}
-    },
-    "live": {"fetched_at": 0.0, "vehicles": []}
-}
+# Ha a projekt gyökerébe teszed az index.html-t, ezt szolgáljuk ki:
+INDEX_PATH = os.path.abspath(os.path.join(os.getcwd(), "index.html"))
 
-TZ = timezone.utc
+# Opcionális statikus fájlok (ha van ./public mappa)
+if os.path.isdir("public"):
+    app.mount("/open", StaticFiles(directory="public", html=True), name="public")
 
-def now_utc() -> datetime:
-    return datetime.now(tz=TZ)
+# ---------------------- Adattár ----------------------
+DATA_DIR = os.path.join("data", "gtfs")
+os.makedirs(DATA_DIR, exist_ok=True)
+LIVE_CFG_FILE = os.path.join("data", "live_config.json")
 
-def parse_hhmmss(s: str) -> int:
-    if not s:
-        return 0
-    parts = s.split(":")
-    while len(parts) < 3:
-        parts.append("0")
-    h, m, sec = parts[:3]
-    return int(h) * 3600 + int(m) * 60 + int(sec)
+REQ_FILES = ["stops.txt", "routes.txt", "trips.txt", "stop_times.txt"]
+# shapes.txt opcionális, de útvonal rajzhoz kell
+SHAPES_FILE = "shapes.txt"
 
-def parse_iso(dt: Optional[str]) -> Optional[datetime]:
-    if not dt:
-        return None
+def now_uk():
     try:
-        # SIRI időpontok ISO formátumban vannak (Z végződés vagy offset)
-        return datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        return datetime.now(TZ)
+    except Exception:
+        return datetime.utcnow().replace(tzinfo=timezone.utc)
+
+def sec_since_midnight(dt: Optional[datetime] = None) -> int:
+    dt = dt or now_uk()
+    return dt.hour*3600 + dt.minute*60 + dt.second
+
+def parse_hms_to_sec(s: str) -> Optional[int]:
+    # GTFS-ben lehet 24:xx is -> 86400 felett
+    try:
+        parts = [int(p) for p in s.strip().split(":")]
+        if len(parts) != 3: 
+            return None
+        return parts[0]*3600 + parts[1]*60 + parts[2]
     except Exception:
         return None
 
-def normalize_route(x: Optional[str]) -> str:
-    if x is None:
-        return ""
-    s = str(x).strip().upper()
-    for sep in (":", "/"):
-        if sep in s:
-            s = s.split(sep)[-1]
-    if s.startswith("HAA0") and s[4:].isdigit():
-        return str(int(s[4:]))
-    if s.isdigit():
-        return str(int(s))
-    return s
+def normalize(s: str) -> str:
+    return (s or "").strip().lower()
 
-def haversine_m(lat1, lon1, lat2, lon2) -> float:
-    # méterben
-    R = 6371000.0
-    p1 = math.radians(lat1); p2 = math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlmb = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dlmb/2)**2
-    return 2*R*math.asin(math.sqrt(a))
+class GTFSStore:
+    def __init__(self):
+        self.ready = False
+        self.gtfs_dir = DATA_DIR
+        # indexek
+        self.stops: Dict[str, Dict[str, Any]] = {}
+        self.routes: Dict[str, Dict[str, Any]] = {}
+        self.trips: Dict[str, Dict[str, Any]] = {}
+        self.stop_times_by_stop: Dict[str, List[Dict[str, Any]]] = {}
+        self.shapes: Dict[str, List[List[float]]] = {}
+        self.route_to_shape: Dict[str, str] = {}
+        self.route_short_to_id: Dict[str, str] = {}
+        self.lock = threading.Lock()
 
-def status_ok():
-    return {
-        "ok": True,
-        "version": app.version,
-        "build": STATE["build"],
-        "time": now_utc().strftime("%H:%M:%S"),
-        "tz": "Europe/London",
-        "live_feed_configured": bool(STATE["live_cfg"]["feed_url"]),
-        "gtfs_dir": "data/gtfs",
-        "gtfs_ready": STATE["gtfs_ready"],
-        "gtfs_stops": len(STATE["gtfs"]["stops"])
-    }
+    # ---- GTFS beolvasás zip-ből ----
+    def load_zip_bytes(self, zip_bytes: bytes):
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+            names = set(z.namelist())
+            missing = [f for f in REQ_FILES if f not in names]
+            if missing:
+                return {"ok": False, "missing": missing, "stops": 0}
+            # Mentés fájlokba (kibontás)
+            z.extractall(self.gtfs_dir)
+        return self.reload_from_dir()
 
-# ---------------------------------------------------------
-# Root + index
-# ---------------------------------------------------------
-@app.get("/", response_class=JSONResponse)
+    def reload_from_dir(self):
+        with self.lock:
+            # kötelezők
+            for f in REQ_FILES:
+                if not os.path.isfile(os.path.join(self.gtfs_dir, f)):
+                    return {"ok": False, "missing": REQ_FILES, "stops": 0}
+            # stops
+            self.stops.clear()
+            with open(os.path.join(self.gtfs_dir, "stops.txt"), "r", encoding="utf-8-sig") as fh:
+                rdr = csv.DictReader(fh)
+                for row in rdr:
+                    sid = row.get("stop_id") or row.get("id")
+                    if not sid: 
+                        continue
+                    self.stops[sid] = {
+                        "id": sid,
+                        "name": row.get("stop_name") or row.get("name"),
+                        "code": row.get("stop_code") or row.get("code"),
+                        "lat": float(row.get("stop_lat") or row.get("lat") or 0),
+                        "lon": float(row.get("stop_lon") or row.get("lon") or 0),
+                    }
+            # routes
+            self.routes.clear()
+            self.route_short_to_id.clear()
+            with open(os.path.join(self.gtfs_dir, "routes.txt"), "r", encoding="utf-8-sig") as fh:
+                rdr = csv.DictReader(fh)
+                for row in rdr:
+                    rid = row.get("route_id")
+                    if not rid: 
+                        continue
+                    short = row.get("route_short_name") or row.get("short_name") or ""
+                    self.routes[rid] = {
+                        "id": rid,
+                        "short_name": short,
+                        "long_name": row.get("route_long_name") or row.get("long_name") or "",
+                    }
+                    if short:
+                        self.route_short_to_id[normalize(short)] = rid
+            # trips
+            self.trips.clear()
+            with open(os.path.join(self.gtfs_dir, "trips.txt"), "r", encoding="utf-8-sig") as fh:
+                rdr = csv.DictReader(fh)
+                for row in rdr:
+                    tid = row.get("trip_id")
+                    if not tid:
+                        continue
+                    self.trips[tid] = {
+                        "id": tid,
+                        "route_id": row.get("route_id"),
+                        "service_id": row.get("service_id"),
+                        "headsign": row.get("trip_headsign") or row.get("headsign") or "",
+                        "direction_id": int(row.get("direction_id") or 0),
+                        "shape_id": row.get("shape_id") or "",
+                    }
+            # stop_times (index megállóra)
+            self.stop_times_by_stop.clear()
+            with open(os.path.join(self.gtfs_dir, "stop_times.txt"), "r", encoding="utf-8-sig") as fh:
+                rdr = csv.DictReader(fh)
+                for row in rdr:
+                    sid = row.get("stop_id")
+                    tid = row.get("trip_id")
+                    if not sid or not tid:
+                        continue
+                    arr = parse_hms_to_sec(row.get("arrival_time") or row.get("arrival"))
+                    dep = parse_hms_to_sec(row.get("departure_time") or row.get("departure"))
+                    self.stop_times_by_stop.setdefault(sid, []).append({
+                        "trip_id": tid,
+                        "arrival": arr,
+                        "departure": dep if dep is not None else arr,
+                        "stop_sequence": int(row.get("stop_sequence") or 0),
+                    })
+            for sid in list(self.stop_times_by_stop.keys()):
+                self.stop_times_by_stop[sid].sort(key=lambda x: (x["departure"] or 0, x["stop_sequence"]))
+            # shapes (ha van)
+            self.shapes.clear()
+            shp_path = os.path.join(self.gtfs_dir, SHAPES_FILE)
+            if os.path.isfile(shp_path):
+                tmp: Dict[str, List[Dict[str, Any]]] = {}
+                with open(shp_path, "r", encoding="utf-8-sig") as fh:
+                    rdr = csv.DictReader(fh)
+                    for row in rdr:
+                        sid = row.get("shape_id")
+                        if not sid: 
+                            continue
+                        tmp.setdefault(sid, []).append({
+                            "lat": float(row.get("shape_pt_lat") or 0),
+                            "lon": float(row.get("shape_pt_lon") or 0),
+                            "seq": int(row.get("shape_pt_sequence") or 0),
+                        })
+                for sid, pts in tmp.items():
+                    pts.sort(key=lambda x: x["seq"])
+                    self.shapes[sid] = [[p["lon"], p["lat"]] for p in pts]
+            # route->shape heurisztika: leggyakoribb shape a route-hoz
+            self.route_to_shape.clear()
+            cnt: Dict[str, Dict[str, int]] = {}
+            for t in self.trips.values():
+                rid = t["route_id"]; shp = t.get("shape_id") or ""
+                if rid and shp:
+                    cnt.setdefault(rid, {}).setdefault(shp, 0)
+                    cnt[rid][shp] += 1
+            for rid, mp in cnt.items():
+                best = max(mp.items(), key=lambda kv: kv[1])[0]
+                self.route_to_shape[rid] = best
+
+            self.ready = True
+            return {"ok": True, "missing": [], "stops": len(self.stops)}
+
+    # ---- lekérdezések ----
+    def search_stops(self, q: str, limit=10):
+        qn = normalize(q)
+        out = []
+        for s in self.stops.values():
+            if qn in normalize(s["name"]):
+                out.append(s)
+            if len(out) >= limit:
+                break
+        return out
+
+    def search_routes(self, q: str, limit=10):
+        qn = normalize(q)
+        out = []
+        # előnyben a short_name pontos egyezés
+        for r in self.routes.values():
+            if qn == normalize(r["short_name"]):
+                out.append(r)
+        if not out:
+            for r in self.routes.values():
+                if qn in normalize(r["short_name"]) or qn in normalize(r["long_name"]):
+                    out.append(r)
+                    if len(out) >= limit: break
+        # shape hozzáfűzés
+        for r in out:
+            rid = r["id"]
+            shp_id = self.route_to_shape.get(rid)
+            if shp_id and shp_id in self.shapes:
+                r["shape"] = self.shapes[shp_id]
+        return out
+
+    def upcoming_departures(self, stop_id: str, window_min: int = 60):
+        if stop_id not in self.stop_times_by_stop:
+            return []
+        now = now_uk()
+        now_s = sec_since_midnight(now)
+        end_s = now_s + window_min*60
+
+        items = []
+        for st in self.stop_times_by_stop[stop_id]:
+            dep_s = st["departure"]
+            if dep_s is None:
+                continue
+            # ma/holnap ablak
+            for off in (0, 86400):
+                dep = dep_s - now_s + off
+                if 0 <= dep <= window_min*60:
+                    t = self.trips.get(st["trip_id"], {})
+                    rid = t.get("route_id")
+                    items.append({
+                        "stop_id": stop_id,
+                        "stop_time": f"{(dep_s//3600)%24:02d}:{(dep_s%3600)//60:02d}",
+                        "route_id": rid,
+                        "line": self.routes.get(rid, {}).get("short_name", ""),
+                        "headsign": t.get("headsign", ""),
+                        "trip_id": st["trip_id"],
+                        "departure_in_min": dep/60.0,  # statikus fallback
+                    })
+        items.sort(key=lambda x: x["departure_in_min"])
+        return items
+
+
+GTFS = GTFSStore()
+
+# ---------------------- Live feed ----------------------
+class LiveConfig(BaseModel):
+    feed_url: Optional[str] = None
+
+class LiveFeed:
+    def __init__(self):
+        self.feed_url: Optional[str] = None
+        self.last_fetch: float = 0.0
+        self.min_period = 10.0  # sec
+        self.vehicles: List[Dict[str, Any]] = []  # lat,lon,line,route_short,direction_id,label,delay_min
+        # stop+line -> list of updates (eta_sec, delay_sec, direction_id)
+        self.stop_line_live: Dict[str, List[Dict[str, Any]]] = {}
+        self.lock = threading.Lock()
+        self.load_config()
+
+    def config_path(self): return LIVE_CFG_FILE
+
+    def save_config(self):
+        os.makedirs(os.path.dirname(self.config_path()), exist_ok=True)
+        with open(self.config_path(), "w", encoding="utf-8") as f:
+            json.dump({"feed_url": self.feed_url}, f)
+
+    def load_config(self):
+        try:
+            with open(self.config_path(), "r", encoding="utf-8") as f:
+                self.feed_url = json.load(f).get("feed_url")
+        except Exception:
+            self.feed_url = None
+
+    def ensure_fresh(self):
+        if not self.feed_url:
+            return
+        if time.time() - self.last_fetch < self.min_period:
+            return
+        with self.lock:
+            if time.time() - self.last_fetch < self.min_period:
+                return
+            try:
+                r = requests.get(self.feed_url, timeout=10)
+                r.raise_for_status()
+                ctype = r.headers.get("Content-Type","").lower()
+                if "xml" in ctype or r.text.strip().startswith("<"):
+                    self.parse_siri_xml(r.text)
+                else:
+                    self.parse_siri_json(r.json())
+                self.last_fetch = time.time()
+            except Exception:
+                # hibánál nem borítjuk fel a korábbi adatot
+                pass
+
+    # ---- SIRI XML (VehicleMonitoring/StopMonitoring) ----
+    def parse_siri_xml(self, text: str):
+        root = ET.fromstring(text)
+        ns = {"s":"http://www.siri.org.uk/siri"}
+        vehicles = []
+        stop_line = {}
+
+        # VehicleActivity
+        for va in root.findall(".//s:VehicleActivity", ns):
+            mj = va.find(".//s:MonitoredVehicleJourney", ns)
+            if mj is None: 
+                continue
+            line = (mj.findtext("s:LineRef", default="", namespaces=ns) or "").strip()
+            dirref = mj.findtext("s:DirectionRef", default="", namespaces=ns)
+            dest = mj.findtext("s:DestinationName", default="", namespaces=ns)
+            vehref = mj.findtext("s:VehicleRef", default="", namespaces=ns)
+            lat = mj.findtext(".//s:VehicleLocation/s:Latitude", default="", namespaces=ns)
+            lon = mj.findtext(".//s:VehicleLocation/s:Longitude", default="", namespaces=ns)
+            try:
+                lat = float(lat or 0); lon = float(lon or 0)
+            except Exception:
+                continue
+            delay_min = 0.0
+            # MonitoredCall (Expected vs Aimed)
+            aimed = mj.findtext(".//s:MonitoredCall/s:AimedArrivalTime", default="", namespaces=ns) or \
+                    mj.findtext(".//s:MonitoredCall/s:AimedDepartureTime", default="", namespaces=ns)
+            expected = mj.findtext(".//s:MonitoredCall/s:ExpectedArrivalTime", default="", namespaces=ns) or \
+                       mj.findtext(".//s:MonitoredCall/s:ExpectedDepartureTime", default="", namespaces=ns)
+            stop_ref = mj.findtext(".//s:MonitoredCall/s:StopPointRef", default="", namespaces=ns)
+
+            eta_sec = None
+            if expected:
+                try:
+                    exp = datetime.fromisoformat(expected.replace("Z","+00:00"))
+                    eta_sec = max(0, int((exp - now_uk()).total_seconds()))
+                except Exception:
+                    pass
+            if aimed and expected:
+                try:
+                    a = datetime.fromisoformat(aimed.replace("Z","+00:00"))
+                    e = datetime.fromisoformat(expected.replace("Z","+00:00"))
+                    delay_min = round((e - a).total_seconds()/60.0, 2)
+                except Exception:
+                    pass
+
+            vehicles.append({
+                "lat": lat, "lon": lon,
+                "label": vehref or "",
+                "line": line, "route_short": line,
+                "direction_id": int(dirref) if (dirref or "").isdigit() else None,
+                "delay_min": delay_min,
+                "dest": dest or "",
+            })
+            if stop_ref and line:
+                key = f"{stop_ref}|{normalize(line)}"
+                stop_line.setdefault(key, []).append({
+                    "eta_sec": eta_sec,
+                    "delay_sec": None if delay_min is None else int(delay_min*60),
+                    "direction_id": int(dirref) if (dirref or "").isdigit() else None,
+                })
+
+        self.vehicles = vehicles
+        self.stop_line_live = stop_line
+
+    # ---- SIRI JSON (ugyanez JSON-ban) ----
+    def parse_siri_json(self, data: Any):
+        # Próbáljunk a VehicleActivity tömbhöz eljutni rugalmasan
+        va = None
+        try:
+            va = data["Siri"]["ServiceDelivery"]["VehicleMonitoringDelivery"][0]["VehicleActivity"]
+        except Exception:
+            # lehet, hogy közvetlen tömb
+            va = data.get("VehicleActivity") or []
+        vehicles = []
+        stop_line = {}
+        for item in va or []:
+            mj = item.get("MonitoredVehicleJourney", {})
+            line = (mj.get("LineRef") or "").strip()
+            dirref = mj.get("DirectionRef")
+            veh = mj.get("VehicleRef") or ""
+            dest = mj.get("DestinationName") or ""
+            loc = (mj.get("VehicleLocation") or {})
+            lat = float(loc.get("Latitude") or 0)
+            lon = float(loc.get("Longitude") or 0)
+            mc = mj.get("MonitoredCall") or {}
+            stop_ref = mc.get("StopPointRef")
+            aimed = mc.get("AimedArrivalTime") or mc.get("AimedDepartureTime")
+            expected = mc.get("ExpectedArrivalTime") or mc.get("ExpectedDepartureTime")
+            eta_sec = None
+            delay_min = 0.0
+            if expected:
+                try:
+                    exp = datetime.fromisoformat(expected.replace("Z","+00:00"))
+                    eta_sec = max(0, int((exp - now_uk()).total_seconds()))
+                except Exception:
+                    pass
+            if aimed and expected:
+                try:
+                    a = datetime.fromisoformat(aimed.replace("Z","+00:00"))
+                    e = datetime.fromisoformat(expected.replace("Z","+00:00"))
+                    delay_min = round((e - a).total_seconds()/60.0, 2)
+                except Exception:
+                    pass
+            vehicles.append({
+                "lat": lat, "lon": lon,
+                "label": veh,
+                "line": line, "route_short": line,
+                "direction_id": int(dirref) if str(dirref).isdigit() else None,
+                "delay_min": delay_min,
+                "dest": dest,
+            })
+            if stop_ref and line:
+                key = f"{stop_ref}|{normalize(line)}"
+                stop_line.setdefault(key, []).append({
+                    "eta_sec": eta_sec,
+                    "delay_sec": None if delay_min is None else int(delay_min*60),
+                    "direction_id": int(dirref) if str(dirref).isdigit() else None,
+                })
+        self.vehicles = vehicles
+        self.stop_line_live = stop_line
+
+LIVE = LiveFeed()
+
+# ---------------------- API: alap ----------------------
+@app.get("/")
 def root():
     return {"detail": "Open /index.html", "docs": "/docs"}
 
-@app.get("/index.html", response_class=PlainTextResponse)
-def index_html():
-    try:
-        with open("index.html", "r", encoding="utf-8") as f:
-            return Response(f.read(), media_type="text/html; charset=utf-8")
-    except FileNotFoundError:
-        return Response("<h1>index.html missing</h1>", media_type="text/html")
+@app.get("/index.html")
+def serve_index():
+    if os.path.isfile(INDEX_PATH):
+        return FileResponse(INDEX_PATH, media_type="text/html")
+    return JSONResponse({"detail":"Missing index.html"}, status_code=404)
 
 @app.get("/api/status")
-def api_status(): return status_ok()
+def api_status():
+    return {
+        "ok": True,
+        "version": APP_VERSION,
+        "build": BUILD,
+        "time": now_uk().strftime("%H:%M:%S"),
+        "tz": TZ_NAME,
+        "live_feed_configured": bool(LIVE.feed_url),
+        "gtfs_dir": GTFS.gtfs_dir,
+        "gtfs_ready": GTFS.ready,
+        "gtfs_stops": len(GTFS.stops),
+    }
 
-# ---------------------------------------------------------
-# Live feed config
-# ---------------------------------------------------------
-class LiveConfigIn(BaseModel):
-    feed_url: str
-
+# ---------------------- Live config ----------------------
 @app.get("/api/live/config")
-def get_live_cfg(): return STATE["live_cfg"]
+def get_live_cfg():
+    return {"feed_url": LIVE.feed_url, "last_fetch": LIVE.last_fetch}
 
 @app.post("/api/live/config")
-def set_live_cfg(cfg: LiveConfigIn):
-    STATE["live_cfg"]["feed_url"] = cfg.feed_url.strip()
-    return {"ok": True, "feed_url": STATE["live_cfg"]["feed_url"]}
+def set_live_cfg(cfg: LiveConfig):
+    LIVE.feed_url = (cfg.feed_url or "").strip() or None
+    LIVE.save_config()
+    return {"ok": True, "feed_url": LIVE.feed_url}
 
-# ---------------------------------------------------------
-# GTFS betöltés (upload / URL) + reload + loader
-# ---------------------------------------------------------
-def ensure_dir(p: str):
-    os.makedirs(p, exist_ok=True)
-
-def _extract_zip_to_dir(zip_bytes: bytes, target_dir="data/gtfs") -> Dict[str, Any]:
-    ensure_dir(target_dir)
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-        for name in z.namelist():
-            if not name.lower().endswith(".txt"):
-                continue
-            with z.open(name) as src, open(os.path.join(target_dir, os.path.basename(name)), "wb") as dst:
-                dst.write(src.read())
-    # jelöljük újratöltésre
-    STATE["gtfs_ready"] = False
-    G = load_gtfs_if_needed()
-    return {"ok": STATE["gtfs_ready"], "stops": len(G["stops"])}
-
+# ---------------------- GTFS feltöltés/letöltés ----------------------
 class GtfsUrlIn(BaseModel):
-    url: str
-
-@app.post("/api/gtfs/upload")
-async def gtfs_upload(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".zip"):
-        raise HTTPException(400, "Please upload a .zip GTFS file.")
-    data = await file.read()
-    return _extract_zip_to_dir(data)
+    feed_url: str
 
 @app.post("/api/gtfs/load-url")
-def gtfs_load_url(inp: GtfsUrlIn):
-    import requests
-    r = requests.get(inp.url, timeout=60)
+def gtfs_load_url(body: GtfsUrlIn):
+    url = body.feed_url.strip()
+    r = requests.get(url, timeout=30)
     r.raise_for_status()
-    return _extract_zip_to_dir(r.content)
+    return GTFS.load_zip_bytes(r.content)
 
-def load_gtfs_if_needed() -> Dict[str, Any]:
-    if STATE["gtfs_ready"]:
-        return STATE["gtfs"]
-    base = "data/gtfs"
-    need = ["stops.txt", "routes.txt", "trips.txt", "stop_times.txt"]
-    if not all(os.path.exists(os.path.join(base, n)) for n in need):
-        STATE["gtfs_ready"] = False
-        return STATE["gtfs"]
-
-    G = STATE["gtfs"] = {"stops":{}, "routes":{}, "trips":{}, "stop_times":{}, "shapes":{}, "route2shapes":{}, "index_stop_name":{}}
-
-    # stops
-    with open(os.path.join(base, "stops.txt"), encoding="utf-8") as f:
-        for r in csv.DictReader(f):
-            sid = r.get("stop_id") or ""
-            if not sid: continue
-            st = {
-                "stop_id": sid,
-                "name": r.get("stop_name",""),
-                "lat": float(r.get("stop_lat", 0) or 0),
-                "lon": float(r.get("stop_lon", 0) or 0)
-            }
-            G["stops"][sid] = st
-            key = st["name"].strip().lower()
-            if key: G["index_stop_name"].setdefault(key, []).append(sid)
-
-    # routes
-    with open(os.path.join(base, "routes.txt"), encoding="utf-8") as f:
-        for r in csv.DictReader(f):
-            rid = r.get("route_id") or ""
-            if not rid: continue
-            G["routes"][rid] = {
-                "route_id": rid,
-                "route_short_name": r.get("route_short_name",""),
-                "route_long_name": r.get("route_long_name",""),
-            }
-
-    # trips
-    with open(os.path.join(base, "trips.txt"), encoding="utf-8") as f:
-        for r in csv.DictReader(f):
-            tid = r.get("trip_id") or ""
-            if not tid: continue
-            rid = r.get("route_id","")
-            shp = r.get("shape_id","")
-            G["trips"][tid] = {
-                "trip_id": tid,
-                "route_id": rid,
-                "shape_id": shp,
-                "headsign": r.get("trip_headsign","") or r.get("trip_short_name","")
-            }
-            if shp:
-                G["route2shapes"].setdefault(rid, set()).add(shp)
-
-    # stop_times
-    with open(os.path.join(base, "stop_times.txt"), encoding="utf-8") as f:
-        for r in csv.DictReader(f):
-            tid = r.get("trip_id") or ""
-            if not tid: continue
-            G["stop_times"].setdefault(tid, []).append({
-                "stop_id": r.get("stop_id",""),
-                "arr": r.get("arrival_time",""),
-                "dep": r.get("departure_time",""),
-                "seq": int(r.get("stop_sequence") or 0)
-            })
-    for tid, arr in G["stop_times"].items():
-        arr.sort(key=lambda x: x["seq"])
-
-    # shapes (opcionális, de jó ha van)
-    shp_path = os.path.join(base, "shapes.txt")
-    if os.path.exists(shp_path):
-        with open(shp_path, encoding="utf-8") as f:
-            for r in csv.DictReader(f):
-                sid = r.get("shape_id") or ""
-                if not sid: continue
-                STATE["gtfs"]["shapes"].setdefault(sid, []).append({
-                    "lat": float(r.get("shape_pt_lat", 0) or 0),
-                    "lon": float(r.get("shape_pt_lon", 0) or 0),
-                    "seq": int(r.get("shape_pt_sequence") or 0)
-                })
-        for sid, arr in STATE["gtfs"]["shapes"].items():
-            arr.sort(key=lambda x: x["seq"])
-
-    STATE["gtfs_ready"] = True
-    return G
+@app.post("/api/gtfs/upload")
+def gtfs_upload(file: UploadFile = File(...)):
+    content = file.file.read()
+    return GTFS.load_zip_bytes(content)
 
 @app.post("/api/reload-gtfs")
 def reload_gtfs():
-    STATE["gtfs_ready"] = False
-    G = load_gtfs_if_needed()
-    missing = []
-    if not G["stops"]: missing.append("stops.txt")
-    if not G["routes"]: missing.append("routes.txt")
-    if not G["trips"]: missing.append("trips.txt")
-    if not G["stop_times"]: missing.append("stop_times.txt")
-    if not STATE["gtfs"]["shapes"]: missing.append("shapes.txt")
-    return {"ok": len(missing) == 0, "missing": missing, "stops": len(G["stops"])}
+    return GTFS.reload_from_dir()
 
-# ---------------------------------------------------------
-# Live jármű feed (SIRI-VM kompat)
-# ---------------------------------------------------------
-def fetch_live_raw() -> List[Dict[str, Any]]:
-    url = STATE["live_cfg"]["feed_url"]
-    if not url:
-        return STATE["live"]["vehicles"]
-    # kis cache, hogy ne terheljük túl
-    if time.time() - STATE["live"]["fetched_at"] < 5 and STATE["live"]["vehicles"]:
-        return STATE["live"]["vehicles"]
-
-    import requests
-    try:
-        r = requests.get(url, timeout=12)
-        r.raise_for_status()
-        data = r.json()
-    except Exception:
-        return STATE["live"]["vehicles"]
-
-    out: List[Dict[str, Any]] = []
-
-    # 1) Egyszerű JSON: {"vehicles":[{lat,lon,route,trip_id,label,...}]}
-    if isinstance(data, dict) and "vehicles" in data and isinstance(data["vehicles"], list):
-        raw = data["vehicles"]
-        for v in raw:
-            try:
-                lat = float(v.get("lat") or v.get("latitude"))
-                lon = float(v.get("lon") or v.get("longitude"))
-            except Exception:
-                continue
-            out.append({
-                "lat": lat, "lon": lon,
-                "route": normalize_route(v.get("route") or v.get("line") or v.get("line_ref") or ""),
-                "trip_id": str(v.get("trip_id") or v.get("journey_id") or ""),
-                "label": str(v.get("label") or v.get("id") or ""),
-                "timestamp": v.get("timestamp") or v.get("time") or "",
-                "stop_id": v.get("stop_id") or "",
-                "aimed": v.get("aimed") or "",
-                "expected": v.get("expected") or ""
-            })
-
-    # 2) SIRI-VM
-    elif isinstance(data, dict) and "Siri" in data:
-        try:
-            vm = data["Siri"]["ServiceDelivery"]["VehicleMonitoringDelivery"][0]["VehicleActivity"]
-        except Exception:
-            vm = []
-
-        for ent in vm:
-            mon = ent.get("MonitoredVehicleJourney", {})
-            pos = mon.get("VehicleLocation", {}) or {}
-            call = mon.get("MonitoredCall", {}) or {}
-            lat = pos.get("Latitude"); lon = pos.get("Longitude")
-            try:
-                lat = float(lat); lon = float(lon)
-            except Exception:
-                continue
-
-            aimed = parse_iso(call.get("AimedDepartureTime") or call.get("AimedArrivalTime"))
-            expected = parse_iso(call.get("ExpectedDepartureTime") or call.get("ExpectedArrivalTime"))
-            delay_min = None
-            if aimed and expected:
-                delta = (expected - aimed).total_seconds() / 60.0
-                # félperces kerekítés
-                delay_min = round(delta * 2) / 2.0
-
-            out.append({
-                "lat": lat, "lon": lon,
-                "route": normalize_route(mon.get("LineRef")),
-                "trip_id": str(mon.get("FramedVehicleJourneyRef", {}).get("DatedVehicleJourneyRef") or ""),
-                "label": str(mon.get("VehicleRef") or ""),
-                "timestamp": ent.get("RecordedAtTime") or "",
-                "stop_id": str(call.get("StopPointRef") or ""),
-                "aimed": call.get("AimedDepartureTime") or call.get("AimedArrivalTime") or "",
-                "expected": call.get("ExpectedDepartureTime") or call.get("ExpectedArrivalTime") or "",
-                "delay_min": delay_min
-            })
-    else:
-        out = []
-
-    STATE["live"]["vehicles"] = out
-    STATE["live"]["fetched_at"] = time.time()
-    return out
-
-@app.get("/api/vehicles")
-def api_vehicles(trip_id: Optional[str] = None, route: Optional[str] = None):
-    V = fetch_live_raw()
-    if trip_id:
-        tid = str(trip_id).strip()
-        V = [v for v in V if v.get("trip_id") == tid]
-    elif route:
-        rn = normalize_route(route)
-        V = [v for v in V if normalize_route(v.get("route")) == rn]
-    return {"vehicles": V}
-
-# ---------------------------------------------------------
-# Keresés: megállók, viszonylatok
-# ---------------------------------------------------------
+# ---------------------- Keresők ----------------------
 @app.get("/api/stops/search")
-def stops_search(q: str = Query(..., min_length=1)):
-    G = load_gtfs_if_needed()
-    ql = q.strip().lower()
-    res = []
-    for sid, st in G["stops"].items():
-        if ql in st["name"].lower():
-            res.append(st)
-            if len(res) >= 30:
-                break
-    return {"results": res}
+def stops_search(q: str = Query(..., min_length=1), limit: int = 10):
+    if not GTFS.ready:
+        return {"stops": []}
+    return {"stops": GTFS.search_stops(q, limit)}
 
 @app.get("/api/routes/search")
-def routes_search(q: str = Query(..., min_length=1)):
-    G = load_gtfs_if_needed()
-    qn = normalize_route(q)
-    res = []
-    for rid, r in G["routes"].items():
-        if qn and (normalize_route(r.get("route_short_name")) == qn or normalize_route(rid) == qn):
-            res.append({"route_id": rid, **r})
-    return {"results": res}
+def routes_search(q: str = Query(..., min_length=1), limit: int = 10):
+    if not GTFS.ready:
+        return {"routes": []}
+    return {"routes": GTFS.search_routes(q, limit)}
 
-# ---------------------------------------------------------
-# Indulások megállóból (lookahead)
-#  - due: élő + <=1 perc
-#  - delay_min: ha SIRI-ből kiolvasható
-# ---------------------------------------------------------
+# ---------------------- Departures ----------------------
 @app.get("/api/departures")
-def departures(stop_id: str = Query(...), lookahead_min: int = 60):
-    G = load_gtfs_if_needed()
-    if stop_id not in G["stops"]:
+def departures(stop_id: str, window_min: int = 60):
+    if not GTFS.ready:
         return {"departures": []}
+    LIVE.ensure_fresh()
+    deps = GTFS.upcoming_departures(stop_id, window_min)
 
-    now = now_utc()
-    end = now + timedelta(minutes=lookahead_min)
-    today0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # élő illesztés: stop_ref + line alapján
+    for d in deps:
+        key = f"{d['stop_id']}|{normalize(d.get('line',''))}"
+        live_list = LIVE.stop_line_live.get(key) or []
+        # válasszunk legjobban illeszkedőt (legközelebbi ETA)
+        live = None
+        if live_list:
+            # ha van ETA, vegyük a legkisebbet
+            live = sorted([x for x in live_list if x.get("eta_sec") is not None], key=lambda x:x["eta_sec"])[0] \
+                   if any(x.get("eta_sec") is not None for x in live_list) else live_list[0]
+        if live and live.get("eta_sec") is not None:
+            d["live"] = True
+            d["eta_sec"] = int(live["eta_sec"])
+            d["delay_sec"] = live.get("delay_sec")
+        else:
+            d["live"] = False
+    return {"departures": deps}
 
-    # élő járművek gyors indexe route szerint
-    V = fetch_live_raw()
-    by_route: Dict[str, List[Dict[str, Any]]] = {}
-    for v in V:
-        by_route.setdefault(normalize_route(v.get("route")), []).append(v)
-
-    out = []
-    for tid, times in G["stop_times"].items():
-        # keresd meg ezt a stopot az adott tripben
-        for t in times:
-            if t["stop_id"] != stop_id:
-                continue
-            sec = parse_hhmmss(t.get("dep") or t.get("arr"))
-            dep_dt = today0 + timedelta(seconds=sec)
-            if dep_dt < now - timedelta(minutes=5):
-                continue
-            if dep_dt > end:
-                continue
-
-            trip = G["trips"].get(tid, {})
-            route = G["routes"].get(trip.get("route_id", ""), {})
-            route_short = route.get("route_short_name", "")
-            headsign = trip.get("headsign", "")
-
-            # élő-jel: ha ugyanazon a viszonylaton van jármű és a megállótól < 2km
-            live = False
-            live_delay = None
-            due = False
-
-            cand = by_route.get(normalize_route(route_short), [])
-            if cand:
-                s = G["stops"][stop_id]
-                # legközelebbi jármű a stophoz
-                cand_sorted = sorted(
-                    cand,
-                    key=lambda v: haversine_m(s["lat"], s["lon"], float(v["lat"]), float(v["lon"]))
-                )
-                if cand_sorted:
-                    v0 = cand_sorted[0]
-                    dist_m = haversine_m(s["lat"], s["lon"], float(v0["lat"]), float(v0["lon"]))
-                    if dist_m <= 2000:  # 2 km-en belül
-                        live = True
-                        if isinstance(v0.get("delay_min"), (int, float)):
-                            live_delay = v0["delay_min"]
-
-            mins = (dep_dt - now).total_seconds() / 60.0
-            if live and mins <= 1.0:
-                due = True
-
-            out.append({
-                "trip_id": tid,
-                "route_short": route_short,
-                "headsign": headsign,
-                "scheduled": dep_dt.isoformat(),
-                "minutes": round(mins),
-                "live": live,
-                "due": due,
-                "delay_min": live_delay  # lehet None, ha a feed nem adja
-            })
-
-    out.sort(key=lambda d: d["scheduled"])
-    return {"departures": out}
-
-# ---------------------------------------------------------
-# Trip részletek (shape + megállók + live, delay ha elérhető)
-# ---------------------------------------------------------
+# ---------------------- Trip részletek + shape ----------------------
 @app.get("/api/trip")
-def trip_detail(trip_id: str = Query(...)):
-    G = load_gtfs_if_needed()
-    trip = G["trips"].get(trip_id)
-    if not trip:
-        return {"trip_id": trip_id, "stops": [], "shape": [], "live": {}}
+def trip_detail(trip_id: str, stop_id: Optional[str] = None):
+    if not GTFS.ready:
+        return {}
+    LIVE.ensure_fresh()
+    t = GTFS.trips.get(trip_id)
+    if not t:
+        return {}
+    # stops a triphez (stop_times alapján)
+    stops = []
+    # megkeressük a trip összes megállóját
+    seqs: List[Dict[str, Any]] = []
+    for sid, arr in GTFS.stop_times_by_stop.items():
+        for st in arr:
+            if st["trip_id"] == trip_id:
+                seqs.append({"stop_id": sid, **st})
+    seqs.sort(key=lambda x: x["stop_sequence"])
 
-    # stops
-    legs = []
-    for st in G["stop_times"].get(trip_id, []):
-        S = G["stops"].get(st["stop_id"], {})
-        legs.append({
-            "stop_id": st["stop_id"],
-            "name": S.get("name", ""),
-            "lat": S.get("lat"),
-            "lon": S.get("lon"),
-            "time": st.get("dep") or st.get("arr") or ""
-        })
+    line = GTFS.routes.get(t["route_id"], {}).get("short_name", "")
+    for it in seqs:
+        s = GTFS.stops.get(it["stop_id"], {})
+        row = {
+            "seq": it["stop_sequence"],
+            "id": it["stop_id"],
+            "name": s.get("name",""),
+            "code": s.get("code",""),
+            "time": f"{(it['departure']//3600)%24:02d}:{(it['departure']%3600)//60:02d}",
+            "eta_sec": None
+        }
+        # live ETA? stop_ref + line
+        key = f"{it['stop_id']}|{normalize(line)}"
+        live_list = LIVE.stop_line_live.get(key) or []
+        if live_list:
+            live = sorted([x for x in live_list if x.get("eta_sec") is not None], key=lambda x:x["eta_sec"])[0] \
+                   if any(x.get("eta_sec") is not None for x in live_list) else live_list[0]
+            row["eta_sec"] = live.get("eta_sec")
+        stops.append(row)
+
+    # késés összegzés (ha van)
+    delay_sec = None
+    key_curr = f"{(stop_id or (stops[0]['id'] if stops else ''))}|{normalize(line)}"
+    live_list = LIVE.stop_line_live.get(key_curr) or []
+    if live_list and live_list[0].get("delay_sec") is not None:
+        delay_sec = live_list[0]["delay_sec"]
 
     # shape
-    shape = []
-    if trip.get("shape_id") and trip["shape_id"] in G["shapes"]:
-        for p in G["shapes"][trip["shape_id"]]:
-            shape.append({"lat": p["lat"], "lon": p["lon"]})
+    shape_coords = []
+    shp_id = t.get("shape_id") or GTFS.route_to_shape.get(t.get("route_id") or "", "")
+    if shp_id and shp_id in GTFS.shapes:
+        shape_coords = GTFS.shapes[shp_id]
 
-    # live: route alapján (trip_id egyezés ritka a SIRI-ben)
-    route_short = G["routes"].get(trip.get("route_id",""), {}).get("route_short_name","")
-    V = api_vehicles(route=route_short)["vehicles"]
-    live = {"vehicles": V}
+    return {
+        "trip": {k:t[k] for k in ("id","route_id","direction_id") if k in t},
+        "delay_sec": delay_sec,
+        "stops": stops,
+        "shape": shape_coords
+    }
 
-    # delay becslés: ha bármelyik jármű ad MonitoredCall aimed/expected-et
-    delay_min = None
-    for v in V:
-        if isinstance(v.get("delay_min"), (int, float)):
-            delay_min = v["delay_min"]
-            break
-    if delay_min is not None:
-        live["delay_min"] = delay_min
-
-    return {"trip_id": trip_id, "headsign": trip.get("headsign",""), "stops": legs, "shape": shape, "live": live}
-
-# ---------------------------------------------------------
-# Route shape + route live (viszonylat térképhez)
-# ---------------------------------------------------------
-@app.get("/api/route/shape")
-def route_shape(route: str = Query(...)):
-    G = load_gtfs_if_needed()
-    rn = normalize_route(route)
-    # keresünk egy route_id-t, aminek short_name = rn
-    rid = None
-    for k, r in G["routes"].items():
-        if normalize_route(r.get("route_short_name")) == rn or normalize_route(k) == rn:
-            rid = k; break
-    pts: List[Dict[str, float]] = []
-    if rid:
-        shapes = list(G["route2shapes"].get(rid, []))
-        if shapes:
-            sid = shapes[0]  # legegyszerűbb: első shape
-            for p in G["shapes"].get(sid, []):
-                pts.append({"lat": p["lat"], "lon": p["lon"]})
-    return {"route": route, "shape": pts}
-
-@app.get("/api/route/live")
-def route_live(route: str = Query(...)):
-    V = api_vehicles(route=route)["vehicles"]
-    shp = route_shape(route)["shape"]
-    return {"route": route, "shape": shp, "vehicles": V}
+# ---------------------- Vehicles ----------------------
+@app.get("/api/vehicles")
+def vehicles(route_id: Optional[str] = None):
+    if not GTFS.ready:
+        return {"vehicles":[]}
+    LIVE.ensure_fresh()
+    rshort = None
+    if route_id:
+        # elfogadunk rövid nevet is
+        if route_id in GTFS.routes:
+            rshort = GTFS.routes[route_id]["short_name"]
+        else:
+            rshort = route_id
+    out = []
+    for v in LIVE.vehicles:
+        if rshort and normalize(v.get("route_short") or v.get("line") or "") != normalize(rshort):
+            continue
+        out.append({
+            "id": v.get("label") or "",
+            "label": v.get("label") or "",
+            "lat": v.get("lat"), "lon": v.get("lon"),
+            "route_short": v.get("route_short") or v.get("line") or "",
+            "direction_id": v.get("direction_id"),
+            "delay_min": v.get("delay_min"),
+            "dest": v.get("dest",""),
+        })
+    return {"vehicles": out}
