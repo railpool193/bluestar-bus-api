@@ -50,27 +50,17 @@
     </div>
   </main>
   <nav class="border-t border-gray-800 bg-gray-900 flex justify-around py-2">
-    <button id="nav-home" class="flex flex-col items-center px-2 text-xs text-blue-400">
-      <span class="text-lg leading-none">🏠</span><span>Home</span>
-    </button>
-    <button id="nav-routes" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400">
-      <span class="text-lg leading-none">🚌</span><span>Routes</span>
-    </button>
-    <button id="nav-map" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400">
-      <span class="text-lg leading-none">🗺️</span><span>Map</span>
-    </button>
-    <button id="nav-settings" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400">
-      <span class="text-lg leading-none">⚙️</span><span>Settings</span>
-    </button>
-    <!-- hidden nav for trip tab -->
-    <button id="nav-trip" class="flex flex-col items-center px-2 text-xs text-gray-400 hidden">
-      <span class="text-lg leading-none">🚏</span><span>Trip</span>
-    </button>
+    <button id="nav-home"     class="flex flex-col items-center px-2 text-xs text-blue-400"><span class="text-lg leading-none">🏠</span><span>Home</span></button>
+    <button id="nav-routes"   class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">🚌</span><span>Routes</span></button>
+    <button id="nav-map"      class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">🗺️</span><span>Map</span></button>
+    <button id="nav-settings" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">⚙️</span><span>Settings</span></button>
+    <!-- Hidden nav for trip tab -->
+    <button id="nav-trip" class="flex flex-col items-center px-2 text-xs text-gray-400 hidden"><span class="text-lg leading-none">🚏</span><span>Trip</span></button>
   </nav>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {
-      // Tabs
+      // Tab management
       const tabs = {
         home: document.getElementById('home-tab'),
         routes: document.getElementById('routes-tab'),
@@ -95,10 +85,10 @@
         currentTab = name;
         if (name === 'settings') loadSettings();
       }
-      navButtons.home.addEventListener('click', () => showTab('home'));
-      navButtons.routes.addEventListener('click', () => showTab('routes'));
-      navButtons.map.addEventListener('click', () => showTab('map'));
-      navButtons.settings.addEventListener('click', () => showTab('settings'));
+      navButtons.home.addEventListener('click',    () => showTab('home'));
+      navButtons.routes.addEventListener('click',  () => showTab('routes'));
+      navButtons.map.addEventListener('click',     () => showTab('map'));
+      navButtons.settings.addEventListener('click',() => showTab('settings'));
 
       // Status updater
       async function fetchStatus() {
@@ -114,10 +104,10 @@
       fetchStatus();
       setInterval(fetchStatus, 10000);
 
-      // Home: search stops
-      const homeSearch = document.getElementById('home-search');
+      // Home tab logic: search stops and show departures
+      const homeSearch  = document.getElementById('home-search');
       const homeResults = document.getElementById('home-results');
-      const homeDeps = document.getElementById('home-departures');
+      const homeDeps    = document.getElementById('home-departures');
       let homeTimer = null;
       homeSearch.addEventListener('input', () => {
         if (homeTimer) clearTimeout(homeTimer);
@@ -160,10 +150,17 @@
             deps.forEach(d => {
               const li = document.createElement('li');
               li.className = 'flex justify-between py-1 text-sm cursor-pointer';
-              // if the departure is due, show as green and pulse
-              const timeClass = d.is_due ? 'text-green-400 animate-pulse' : (d.delay_min && d.delay_min > 0 ? 'text-red-400' : (d.delay_min && d.delay_min < 0 ? 'text-yellow-400' : 'text-green-400'));
+              // Colour logic: live vs timetable
+              let timeClass;
+              if (d.is_live) {
+                if (d.is_due)                timeClass = 'text-green-400 animate-pulse';
+                else if (d.delay_min > 0)    timeClass = 'text-red-400';
+                else if (d.delay_min < 0)    timeClass = 'text-yellow-400';
+                else                          timeClass = 'text-green-400';
+              } else {
+                timeClass = 'text-white';
+              }
               li.innerHTML = `<span>${d.route} → ${d.destination}</span><span class="${timeClass}">${d.time_display}</span>`;
-              // clicking a departure opens its trip detail page
               li.onclick = () => showTrip(d.trip_id, d);
               list.appendChild(li);
             });
@@ -175,8 +172,8 @@
         }
       }
 
-      // Routes: search and list
-      const routesSearch = document.getElementById('routes-search');
+      // Routes tab logic: search routes and show live fleet counts
+      const routesSearch  = document.getElementById('routes-search');
       const routesResults = document.getElementById('routes-results');
       let routesTimer = null;
       let vehiclesCache = [];
@@ -201,22 +198,21 @@
             const data = await res.json();
             routesResults.innerHTML = '';
             if (data && data.length > 0) {
-              // compute counts
+              // map route to number of live buses and list their IDs
               const counts = {};
               vehiclesCache.forEach(v => {
                 const lbl = v.label || '';
-                const r = lbl.split('·')[0].trim();
-                if (r) counts[r] = (counts[r] || 0) + 1;
+                const routeName = lbl.split('·')[0].trim();
+                if (routeName) counts[routeName] = (counts[routeName] || 0) + 1;
               });
               data.forEach(r => {
                 const div = document.createElement('div');
                 div.className = 'p-3 flex justify-between items-center cursor-pointer hover:bg-gray-700';
                 const count = counts[r.route] || 0;
-                // build bus list by matching vehicles with the same route label
+                // list bus IDs for this route
                 const busList = vehiclesCache.filter(v => {
-                  const lbl = v.label || '';
-                  const rr = lbl.split('·')[0].trim();
-                  return rr === r.route;
+                  const routeName = (v.label || '').split('·')[0].trim();
+                  return routeName === r.route;
                 }).map(v => v.vehicle_ref || '').filter(x => x);
                 let sub;
                 if (count > 0) {
@@ -237,7 +233,7 @@
         }, 300);
       });
 
-      // Map
+      // Map tab logic: draw shape and live buses for selected route
       let map = null;
       let shapeLayer = null;
       let markers = [];
@@ -252,7 +248,7 @@
         if (!selectedRoute) return;
         initMap();
         document.getElementById('map-title').textContent = 'Route ' + selectedRoute;
-        // shape
+        // fetch shape
         try {
           const shapeRes = await fetch('/api/route-shape?route=' + encodeURIComponent(selectedRoute));
           const shapeData = await shapeRes.json();
@@ -263,7 +259,7 @@
             map.fitBounds(shapeLayer.getBounds());
           }
         } catch (e) {}
-        // vehicles
+        // fetch vehicles
         try {
           const vRes = await fetch('/api/vehicles?route=' + encodeURIComponent(selectedRoute));
           const vData = await vRes.json();
@@ -283,7 +279,7 @@
         if (currentTab === 'map' && selectedRoute) updateMap();
       }, 20000);
 
-      // Settings
+      // Settings tab logic
       async function loadSettings() {
         if (!statusCache) return;
         const c = statusCache;
@@ -295,43 +291,49 @@
         `;
       }
 
-      // Show the details of a single trip (full stop list and times)
+      // Trip tab logic: show full stop list for one trip
       async function showTrip(trip_id, depInfo) {
-        // navigate to trip tab
         showTab('trip');
-        const title = document.getElementById('trip-title');
+        const title   = document.getElementById('trip-title');
         const content = document.getElementById('trip-content');
-        // build a heading using route and destination
-        title.textContent = `${depInfo.route} → ${depInfo.destination}`;
         content.innerHTML = '<p class="text-sm text-gray-500">Loading trip…</p>';
         try {
-          const res = await fetch('/api/trip?trip_id=' + encodeURIComponent(trip_id));
-          const data = await res.json();
-          const stops = (data && data.stops) ? data.stops : [];
+          const [tripRes, vehRes] = await Promise.all([
+            fetch('/api/trip?trip_id=' + encodeURIComponent(trip_id)),
+            fetch('/api/vehicles?route=' + encodeURIComponent(depInfo.route))
+          ]);
+          const tripData = await tripRes.json();
+          const vehData  = await vehRes.json();
+          const stops    = (tripData && tripData.stops) ? tripData.stops : [];
+          const fleets   = (vehData && vehData.items) ? vehData.items.map(v => v.vehicle_ref || '').filter(x => x) : [];
+          title.textContent = `${depInfo.route} → ${depInfo.destination}${fleets.length ? ' (Fleet: ' + fleets.join(', ') + ')' : ''}`;
           if (!stops || stops.length === 0) {
             content.innerHTML = '<p class="text-gray-500 text-sm">No trip data.</p>';
             return;
           }
+          const currentIndex = stops.findIndex(s => !s.is_past);
           const list = document.createElement('ul');
           list.className = 'divide-y divide-gray-800';
-          stops.forEach(s => {
+          stops.forEach((s, idx) => {
             const li = document.createElement('li');
             li.className = 'flex justify-between py-1 text-sm';
-            // highlight past stops by graying them out
-            const pastClass = s.is_past ? 'text-gray-500' : '';
-            li.innerHTML = `<span class="${pastClass}">${s.stop_name}</span><span class="${pastClass}">${s.time_display}</span>`;
+            let css;
+            if (s.is_past)       css = 'text-gray-500';
+            else if (idx === currentIndex) css = 'text-green-400 font-bold';
+            else                css = '';
+            li.innerHTML = `<span class="${css}">${s.stop_name}</span><span class="${css}">${s.time_display}</span>`;
             list.appendChild(li);
           });
           content.innerHTML = '';
           content.appendChild(list);
         } catch (e) {
+          title.textContent = `${depInfo.route} → ${depInfo.destination}`;
           content.innerHTML = '<p class="text-red-400 text-sm">Error loading trip.</p>';
         }
       }
 
       // Default tab
       showTab('home');
-
     });
   </script>
 </body>
