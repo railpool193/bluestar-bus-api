@@ -38,6 +38,11 @@
       <h2 id="map-title" class="text-lg mb-2"></h2>
       <div id="map" class="h-80 rounded overflow-hidden"></div>
     </div>
+    <!-- Trip Tab -->
+    <div id="trip-tab" class="p-4 hidden">
+      <h2 id="trip-title" class="text-lg mb-2"></h2>
+      <div id="trip-content" class="space-y-2"></div>
+    </div>
     <!-- Settings Tab -->
     <div id="settings-tab" class="p-4 space-y-2 hidden">
       <h2 class="text-lg font-semibold mb-2">Settings</h2>
@@ -57,6 +62,10 @@
     <button id="nav-settings" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400">
       <span class="text-lg leading-none">⚙️</span><span>Settings</span>
     </button>
+    <!-- hidden nav for trip tab -->
+    <button id="nav-trip" class="flex flex-col items-center px-2 text-xs text-gray-400 hidden">
+      <span class="text-lg leading-none">🚏</span><span>Trip</span>
+    </button>
   </nav>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
@@ -66,13 +75,15 @@
         home: document.getElementById('home-tab'),
         routes: document.getElementById('routes-tab'),
         map: document.getElementById('map-tab'),
-        settings: document.getElementById('settings-tab')
+        settings: document.getElementById('settings-tab'),
+        trip: document.getElementById('trip-tab')
       };
       const navButtons = {
         home: document.getElementById('nav-home'),
         routes: document.getElementById('nav-routes'),
         map: document.getElementById('nav-map'),
-        settings: document.getElementById('nav-settings')
+        settings: document.getElementById('nav-settings'),
+        trip: document.getElementById('nav-trip')
       };
       let currentTab = 'home';
       function showTab(name) {
@@ -148,8 +159,12 @@
             list.className = 'divide-y divide-gray-800';
             deps.forEach(d => {
               const li = document.createElement('li');
-              li.className = 'flex justify-between py-1 text-sm';
-              li.innerHTML = `<span>${d.route} → ${d.destination}</span><span class="${d.is_due ? 'text-red-400' : (d.delay_min && d.delay_min > 0 ? 'text-red-400' : (d.delay_min && d.delay_min < 0 ? 'text-yellow-400' : 'text-green-400'))}">${d.time_display}</span>`;
+              li.className = 'flex justify-between py-1 text-sm cursor-pointer';
+              // if the departure is due, show as green and pulse
+              const timeClass = d.is_due ? 'text-green-400 animate-pulse' : (d.delay_min && d.delay_min > 0 ? 'text-red-400' : (d.delay_min && d.delay_min < 0 ? 'text-yellow-400' : 'text-green-400'));
+              li.innerHTML = `<span>${d.route} → ${d.destination}</span><span class="${timeClass}">${d.time_display}</span>`;
+              // clicking a departure opens its trip detail page
+              li.onclick = () => showTrip(d.trip_id, d);
               list.appendChild(li);
             });
             homeDeps.innerHTML = '';
@@ -196,7 +211,20 @@
               data.forEach(r => {
                 const div = document.createElement('div');
                 div.className = 'p-3 flex justify-between items-center cursor-pointer hover:bg-gray-700';
-                div.innerHTML = `<span class="font-semibold text-sm text-blue-300">${r.route}</span><span class="${counts[r.route] ? 'text-green-400' : 'text-gray-500'} text-xs">${counts[r.route] ? 'Live (' + counts[r.route] + ')' : 'No buses'}</span>`;
+                const count = counts[r.route] || 0;
+                // build bus list by matching vehicles with the same route label
+                const busList = vehiclesCache.filter(v => {
+                  const lbl = v.label || '';
+                  const rr = lbl.split('·')[0].trim();
+                  return rr === r.route;
+                }).map(v => v.vehicle_ref || '').filter(x => x);
+                let sub;
+                if (count > 0) {
+                  sub = `Live (${count}): ${busList.join(', ')}`;
+                } else {
+                  sub = 'No buses';
+                }
+                div.innerHTML = `<span class="font-semibold text-sm text-blue-300">${r.route}</span><span class="${count ? 'text-green-400' : 'text-gray-500'} text-xs">${sub}</span>`;
                 div.onclick = () => { selectedRoute = r.route; updateMap(); showTab('map'); };
                 routesResults.appendChild(div);
               });
@@ -267,8 +295,43 @@
         `;
       }
 
+      // Show the details of a single trip (full stop list and times)
+      async function showTrip(trip_id, depInfo) {
+        // navigate to trip tab
+        showTab('trip');
+        const title = document.getElementById('trip-title');
+        const content = document.getElementById('trip-content');
+        // build a heading using route and destination
+        title.textContent = `${depInfo.route} → ${depInfo.destination}`;
+        content.innerHTML = '<p class="text-sm text-gray-500">Loading trip…</p>';
+        try {
+          const res = await fetch('/api/trip?trip_id=' + encodeURIComponent(trip_id));
+          const data = await res.json();
+          const stops = (data && data.stops) ? data.stops : [];
+          if (!stops || stops.length === 0) {
+            content.innerHTML = '<p class="text-gray-500 text-sm">No trip data.</p>';
+            return;
+          }
+          const list = document.createElement('ul');
+          list.className = 'divide-y divide-gray-800';
+          stops.forEach(s => {
+            const li = document.createElement('li');
+            li.className = 'flex justify-between py-1 text-sm';
+            // highlight past stops by graying them out
+            const pastClass = s.is_past ? 'text-gray-500' : '';
+            li.innerHTML = `<span class="${pastClass}">${s.stop_name}</span><span class="${pastClass}">${s.time_display}</span>`;
+            list.appendChild(li);
+          });
+          content.innerHTML = '';
+          content.appendChild(list);
+        } catch (e) {
+          content.innerHTML = '<p class="text-red-400 text-sm">Error loading trip.</p>';
+        }
+      }
+
       // Default tab
       showTab('home');
+
     });
   </script>
 </body>
