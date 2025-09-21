@@ -26,7 +26,6 @@ setting the ``TZ`` environment variable.  See the accompanying
 """
 
 import io
-import json
 import os
 import time
 import zipfile
@@ -117,7 +116,6 @@ def parse_hhmmss_to_today(hhmmss: str, local_day: date) -> datetime:
 def service_is_running(trip_row: pd.Series, dt_local: datetime) -> bool:
     service_id = trip_row.get("service_id")
     day = dt_local.date()
-
     cal = STATE.gtfs_tables.get("calendar")
     ok_calendar = True
     if cal is not None and not cal.empty:
@@ -129,16 +127,10 @@ def service_is_running(trip_row: pd.Series, dt_local: datetime) -> bool:
             end = pd.to_datetime(c["end_date"], format="%Y%m%d").date()
             if start <= day <= end:
                 weekday = [
-                    "monday",
-                    "tuesday",
-                    "wednesday",
-                    "thursday",
-                    "friday",
-                    "saturday",
-                    "sunday",
+                    "monday", "tuesday", "wednesday", "thursday", "friday",
+                    "saturday", "sunday"
                 ][day.weekday()]
                 ok_calendar = bool(int(c[weekday]))
-
     dates = STATE.gtfs_tables.get("calendar_dates")
     if dates is not None and not dates.empty:
         d = dates[dates["service_id"] == service_id]
@@ -320,9 +312,9 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
             dep_local = parse_hhmmss_to_today(dep_str, now_local_dt.date())
         except Exception:
             continue
+        if dep_local <= now_local_dt:
+            continue  # skip past departures
         dep_utc = dep_local.astimezone(pytz.utc)
-        if dep_local < now_local_dt - timedelta(minutes=1):
-            continue
         if dep_local > end_local_dt:
             continue
         trip_id = st_row.get("trip_id")
@@ -352,9 +344,10 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
                 pass
         mins = int((dep_use - now_utc()).total_seconds() // 60)
         is_due = is_live and (-1 <= mins <= 0)
+        destination = headsign or (li or {}).get("destination") or "–"
         rows.append({
             "route": route or "–",
-            "destination": headsign or (li or {}).get("destination") or "–",
+            "destination": destination,
             "time_iso": dep_use.isoformat(),
             "time_display": "Due" if is_due else dep_use.astimezone(TZ).strftime("%H:%M"),
             "is_live": is_live,
@@ -569,7 +562,7 @@ async def api_vehicles(route: Optional[str] = None) -> Dict[str, Any]:
     now_dt = now_utc()
     items: Dict[str, Dict[str, Any]] = {}
     for v in STATE.vehicles:
-        if route and str(v.get("line") or "").strip() != str(route).strip():
+        if route and str(v.get("line") or "").strip().lower() != str(route).strip().lower():
             continue
         lat = v.get("lat")
         lon = v.get("lon")
@@ -592,7 +585,7 @@ async def api_vehicles(route: Optional[str] = None) -> Dict[str, Any]:
                 "lon": lon,
                 "bearing": v.get("bearing"),
                 "timestamp": ts.isoformat(),
-                "label": f"{v.get('line', '').strip()} · {v.get('destination', '').strip()}".strip(),
+                "label": f"{str(v.get('line') or '').strip()} · {str(v.get('destination') or '').strip()}".strip(),
             }
     return {"items": list(items.values()), "ts": STATE.vehicles_ts}
 
@@ -611,7 +604,7 @@ def api_route_shape(route: str) -> Dict[str, Any]:
             short = str(row.get("route_short_name") or "").strip()
             longn = str(row.get("route_long_name") or "").strip()
             rid = row.get("route_id") or ""
-            if rparam == short or rparam == longn:
+            if rparam.lower() == short.lower() or rparam.lower() == longn.lower():
                 route_id = rid
                 break
     if not route_id:
@@ -619,7 +612,7 @@ def api_route_shape(route: str) -> Dict[str, Any]:
     shape_id = None
     if trips_df is not None and not trips_df.empty:
         for _, row in trips_df.iterrows():
-            if str(row.get("route_id") or "") == route_id:
+            if str(row.get("route_id") or "").lower() == route_id.lower():
                 shape_id = row.get("shape_id")
                 if shape_id:
                     break
