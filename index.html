@@ -62,12 +62,12 @@
     <button id="nav-routes"   class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">🚌</span><span>Routes</span></button>
     <button id="nav-map"      class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">🗺️</span><span>Map</span></button>
     <button id="nav-settings" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">⚙️</span><span>Settings</span></button>
-    <button id="nav-trip" class="flex flex-col items-center px-2 text-xs text-gray-400 hidden"><span class="text-lg leading-none">🚏</span><span>Trip</span></button>
+    <button id="nav-trip" class="flex flex-col items-center px-2 text-xs text-gray-400 hidden"><span class="text-lg leading-one">🚏</span><span>Trip</span></button>
   </nav>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {
-      // Tabs management
+      // Tabs
       const tabs = {
         home: document.getElementById('home-tab'),
         routes: document.getElementById('routes-tab'),
@@ -111,7 +111,7 @@
       fetchStatus();
       setInterval(fetchStatus, 10000);
 
-      // Home tab: search stops and show departures
+      // Home tab
       const homeSearch  = document.getElementById('home-search');
       const homeResults = document.getElementById('home-results');
       const homeDeps    = document.getElementById('home-departures');
@@ -178,7 +178,7 @@
         }
       }
 
-      // Routes tab: search and list routes with live bus count
+      // Routes tab
       const routesSearch  = document.getElementById('routes-search');
       const routesResults = document.getElementById('routes-results');
       let routesTimer = null;
@@ -237,7 +237,7 @@
         }, 300);
       });
 
-      // Map tab: show shape and live buses for selected route
+      // Map tab
       let map = null;
       let shapeLayer = null;
       let markers = [];
@@ -293,7 +293,7 @@
         `;
       }
 
-      // Trip tab: show full stop list
+      // Trip tab
       async function showTrip(trip_id, depInfo) {
         showTab('trip');
         const title   = document.getElementById('trip-title');
@@ -334,7 +334,7 @@
         }
       }
 
-      // GTFS upload form handling
+      // GTFS upload form
       document.getElementById('gtfs-upload').addEventListener('submit', async (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
@@ -346,7 +346,7 @@
           alert('Error uploading GTFS: ' + err);
         }
       });
-      // Live feed save button handling
+      // Live feed save button
       document.getElementById('feed-submit').addEventListener('click', async () => {
         const url = document.getElementById('feed-url').value.trim();
         if (!url) { alert('Please enter feed URL'); return; }
