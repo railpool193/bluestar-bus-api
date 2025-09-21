@@ -39,7 +39,7 @@ import httpx
 import xmltodict
 from fastapi import FastAPI, File, UploadFile, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -130,13 +130,7 @@ def parse_hhmmss_to_today(hhmmss: str, local_day: date) -> datetime:
     return dt
 
 def service_is_running(trip_row: pd.Series, dt_local: datetime) -> bool:
-    """Determine if a trip is operating on the given day.
-
-    This implements GTFS calendar.txt and calendar_dates.txt rules.  If
-    calendar.txt is present, the service must be active on the
-    corresponding weekday between start_date and end_date.  calendar_dates
-    modifies the service by explicitly adding or removing dates.
-    """
+    """Determine if a trip is operating on the given day."""
     service_id = trip_row.get("service_id")
     day = dt_local.date()
 
@@ -174,20 +168,13 @@ def service_is_running(trip_row: pd.Series, dt_local: datetime) -> bool:
     return ok_calendar
 
 async def fetch_live_if_needed() -> None:
-    """Fetch SIRI‑VM live vehicle data if the cache is stale.
-
-    Live data is only downloaded if a feed URL is configured and the
-    previous fetch is older than ``refresh_sec`` seconds.  Any
-    exceptions during download or parsing are silently ignored and
-    the previous cache is retained.
-    """
+    """Fetch SIRI‑VM live vehicle data if the cache is stale."""
     cfg = STATE.live_cfg
     if not cfg.feed_url:
         return
     now_ts = time.time()
     if now_ts - STATE.vehicles_ts < cfg.refresh_sec:
         return
-    # download
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(cfg.feed_url)
@@ -195,7 +182,6 @@ async def fetch_live_if_needed() -> None:
             text = resp.text
     except Exception:
         return
-    # parse XML
     try:
         payload = xmltodict.parse(text)
     except Exception:
@@ -207,7 +193,6 @@ async def fetch_live_if_needed() -> None:
             .get("ServiceDelivery", {})
             .get("VehicleMonitoringDelivery", [])
         )
-        # deliveries can be a list or dict; normalise to list
         if isinstance(deliveries, dict):
             deliveries = [deliveries]
         for delivery in deliveries:
@@ -251,7 +236,6 @@ async def fetch_live_if_needed() -> None:
                 })
     except Exception:
         pass
-    # compute delay minutes if both aimed and expected are present
     for v in vehicles:
         try:
             a = v.get("aimed_dep_utc")
@@ -268,13 +252,7 @@ async def fetch_live_if_needed() -> None:
     STATE.vehicles_ts = now_ts
 
 def load_gtfs_from_dir(gtfs_dir: str) -> None:
-    """Load GTFS tables from a directory into dataframes and update state.
-
-    Required tables are ``stops``, ``routes``, ``trips`` and
-    ``stop_times``.  Optional tables include ``shapes``, ``calendar`` and
-    ``calendar_dates``.  Missing required tables raise a runtime
-    error.
-    """
+    """Load GTFS tables from a directory into dataframes and update state."""
     required = ["stops", "routes", "trips", "stop_times"]
     tables: Dict[str, pd.DataFrame] = {}
     for name in required + ["shapes", "calendar", "calendar_dates"]:
@@ -298,7 +276,6 @@ def load_gtfs_from_dir(gtfs_dir: str) -> None:
 
 def extract_and_load_gtfs(zip_bytes: bytes) -> None:
     """Extract a GTFS zip file into ``GTFS_DIR`` and load the tables."""
-    # purge existing contents
     for fname in os.listdir(GTFS_DIR):
         try:
             os.remove(os.path.join(GTFS_DIR, fname))
@@ -314,13 +291,7 @@ def ensure_gtfs_loaded() -> None:
         raise HTTPException(status_code=503, detail="GTFS data not loaded")
 
 def build_live_by_route() -> Dict[str, Dict[str, Any]]:
-    """Return a mapping of route -> freshest live record.
-
-    Only records newer than 90 seconds and with a line name are
-    considered.  Per route, the record with the latest timestamp is
-    chosen.  Returned values include expected departure, aimed
-    departure, delay, destination and timestamp.
-    """
+    """Return a mapping of route -> freshest live record."""
     best: Dict[str, Dict[str, Any]] = {}
     now = now_utc()
     for v in STATE.vehicles:
@@ -345,13 +316,7 @@ def build_live_by_route() -> Dict[str, Dict[str, Any]]:
     return best
 
 def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any]]:
-    """Compute upcoming departures for a stop.
-
-    This function assumes GTFS tables are loaded.  It searches all
-    trips that stop at the given ``stop_id`` and collects departures
-    occurring within the next ``window_min`` minutes.  Live data is
-    merged when available to adjust departure times and delays.
-    """
+    """Compute upcoming departures for a stop."""
     trips_df = STATE.gtfs_tables.get("trips")
     stop_times_df = STATE.gtfs_tables.get("stop_times")
     routes_df = STATE.gtfs_tables.get("routes")
@@ -359,7 +324,6 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
         return []
     now_local_dt = now_local()
     end_local_dt = now_local_dt + timedelta(minutes=max(1, min(window_min, 480)))
-    # Build lookup for route_id -> display name
     route_names: Dict[str, str] = {}
     if routes_df is not None and not routes_df.empty:
         for _, row in routes_df.iterrows():
@@ -367,10 +331,8 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
             short = (row.get("route_short_name") or "").strip()
             longn = (row.get("route_long_name") or "").strip()
             route_names[rid] = short or longn or rid
-    # Precompute live by route
     live = build_live_by_route()
     rows: List[Dict[str, Any]] = []
-    # Group stop_times by stop_id
     grouped = stop_times_df[stop_times_df["stop_id"] == stop_id]
     for _, st_row in grouped.iterrows():
         dep_str = st_row.get("departure_time") or st_row.get("arrival_time") or ""
@@ -381,10 +343,8 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
         except Exception:
             continue
         dep_utc = dep_local.astimezone(pytz.utc)
-        # skip if departure already more than a minute in the past
         if dep_local < now_local_dt - timedelta(minutes=1):
             continue
-        # skip if departure after window
         if dep_local > end_local_dt:
             continue
         trip_id = st_row.get("trip_id")
@@ -394,13 +354,11 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
         if trip_row.empty:
             continue
         trip_meta = trip_row.iloc[0]
-        # check if service is running today
         if not service_is_running(trip_meta, now_local_dt):
             continue
         route_id = trip_meta.get("route_id") or ""
         route = route_names.get(route_id, route_id)
         headsign = (trip_meta.get("trip_headsign") or "").strip()
-        # use live if available
         li = live.get(route)
         dep_use = dep_utc
         is_live = False
@@ -408,7 +366,6 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
         if li and li.get("expected"):
             try:
                 exp = datetime.fromisoformat(li["expected"])
-                # if difference within 2 hours, override
                 if abs((exp - dep_utc).total_seconds()) < 2 * 3600:
                     dep_use = exp
                     is_live = True
@@ -427,7 +384,6 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
             "delay_min": delay_min,
             "trip_id": trip_id,
         })
-    # deduplicate on route + destination + time_iso
     seen = set()
     uniq: List[Dict[str, Any]] = []
     for r in rows:
@@ -436,7 +392,6 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
             continue
         seen.add(key)
         uniq.append(r)
-    # sort: due (live and within a minute) first, then by time
     uniq.sort(key=lambda r: (not r["is_due"], r["time_iso"]))
     return uniq
 
@@ -451,9 +406,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Serve static files (index.html and related assets)
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 @app.get("/api/status")
 async def api_status() -> Dict[str, Any]:
@@ -482,24 +434,17 @@ async def api_set_live_config(cfg: LiveConfig) -> Dict[str, Any]:
     if cfg.refresh_sec < 5 or cfg.refresh_sec > 3600:
         raise HTTPException(status_code=400, detail="refresh_sec must be between 5 and 3600 seconds")
     STATE.live_cfg = cfg
-    # reset live cache
     STATE.vehicles_ts = 0.0
     return {"ok": True}
 
 @app.post("/api/gtfs/upload")
 async def api_gtfs_upload(file: UploadFile = File(...)) -> Dict[str, Any]:
-    """Upload a GTFS zip file.
-
-    The uploaded file is extracted and parsed.  The GTFS must include
-    stops.txt, routes.txt, trips.txt and stop_times.txt.  Returns the
-    number of stops on success.
-    """
+    """Upload a GTFS zip file."""
     data = await file.read()
     try:
         extract_and_load_gtfs(data)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    # persist the uploaded file for later reload
     try:
         with open(GTFS_ZIP, "wb") as f:
             f.write(data)
@@ -526,7 +471,6 @@ async def api_gtfs_load_url(body: GtfsUrlIn) -> Dict[str, Any]:
         extract_and_load_gtfs(data)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    # persist to file
     try:
         with open(GTFS_ZIP, "wb") as f:
             f.write(data)
@@ -536,12 +480,7 @@ async def api_gtfs_load_url(body: GtfsUrlIn) -> Dict[str, Any]:
 
 @app.post("/api/reload-gtfs")
 async def api_reload_gtfs() -> Dict[str, Any]:
-    """Reload the previously uploaded GTFS file or directory.
-
-    If a zip file exists at ``GTFS_ZIP``, it is extracted and loaded.
-    Otherwise, the current ``GTFS_DIR`` contents are reloaded.  Throws
-    a 400 if neither is available.
-    """
+    """Reload the previously uploaded GTFS file or directory."""
     if os.path.exists(GTFS_ZIP):
         try:
             with open(GTFS_ZIP, "rb") as f:
@@ -604,7 +543,6 @@ async def api_departures(stop_id: str, window: int = 90) -> Dict[str, Any]:
     """Get upcoming departures from a stop."""
     ensure_gtfs_loaded()
     window = max(1, min(window, 480))
-    # fetch live if necessary
     await fetch_live_if_needed()
     rows = departure_rows_for_stop(stop_id, window)
     return {"departures": rows}
@@ -661,7 +599,6 @@ async def api_trip(trip_id: str) -> Dict[str, Any]:
 @app.get("/api/vehicles")
 async def api_vehicles(route: Optional[str] = None) -> Dict[str, Any]:
     """Get current live vehicles.  Optionally filter by route."""
-    # fetch live if necessary
     await fetch_live_if_needed()
     now_dt = now_utc()
     items: Dict[str, Dict[str, Any]] = {}
@@ -676,13 +613,11 @@ async def api_vehicles(route: Optional[str] = None) -> Dict[str, Any]:
             ts = datetime.fromisoformat(v["timestamp_utc"])
         except Exception:
             continue
-        # ignore stale points (older than 60s)
         if (now_dt - ts).total_seconds() > 60:
             continue
         vref = v.get("vehicle_ref") or ""
         if not vref:
             continue
-        # only keep the freshest record for each vehicle
         cur = items.get(vref)
         if (not cur) or (ts > datetime.fromisoformat(cur["timestamp"])):
             items[vref] = {
@@ -697,23 +632,15 @@ async def api_vehicles(route: Optional[str] = None) -> Dict[str, Any]:
 
 @app.get("/api/route-shape")
 def api_route_shape(route: str) -> Dict[str, Any]:
-    """Return the shape (list of [lat, lon]) for the given route.
-
-    The route parameter is matched against short or long route names
-    in routes.txt.  The first trip with a matching route_id is used
-    to determine the shape_id.  If no shape or route is available
-    the shape list will be empty.
-    """
+    """Return the shape (list of [lat, lon]) for the given route."""
     ensure_gtfs_loaded()
     shapes_df = STATE.gtfs_tables.get("shapes")
     trips_df = STATE.gtfs_tables.get("trips")
     routes_df = STATE.gtfs_tables.get("routes")
-    # no shapes available
     if shapes_df is None or shapes_df.empty:
         return {"shape": []}
     rparam = (route or "").strip()
     route_id = None
-    # map route name to route_id using short/long names
     if routes_df is not None and not routes_df.empty:
         for _, row in routes_df.iterrows():
             short = (row.get("route_short_name") or "").strip()
@@ -722,11 +649,9 @@ def api_route_shape(route: str) -> Dict[str, Any]:
             if rparam == short or rparam == longn:
                 route_id = rid
                 break
-    # fallback: treat the input as route_id
     if not route_id:
         route_id = rparam
     shape_id = None
-    # find first trip for this route_id with shape_id defined
     if trips_df is not None and not trips_df.empty:
         for _, row in trips_df.iterrows():
             if (row.get("route_id") or "") == route_id:
@@ -738,7 +663,6 @@ def api_route_shape(route: str) -> Dict[str, Any]:
     seg = shapes_df[shapes_df["shape_id"] == shape_id]
     if seg.empty:
         return {"shape": []}
-    # order points by sequence if available
     if "shape_pt_sequence" in seg.columns:
         try:
             seg = seg.copy()
@@ -755,3 +679,13 @@ def api_route_shape(route: str) -> Dict[str, Any]:
         except Exception:
             continue
     return {"shape": coords}
+
+# ---------- Static files and root route ----------
+
+@app.get("/")
+def serve_root():
+    """Serve the index.html at the root path."""
+    return FileResponse(os.path.join("static", "index.html"))
+
+# Mount static assets under /static so they don't intercept /api routes
+app.mount("/static", StaticFiles(directory="static", html=True), name="static")
