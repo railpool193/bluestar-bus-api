@@ -1,411 +1,292 @@
-<!doctype html>
-<html lang="hu">
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Bluestar menetrend & megálló kereső</title>
-  <link rel="preconnect" href="https://unpkg.com">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bluestar</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/17.0.2/umd/react.development.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/17.0.2/umd/react-dom.development.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.17.12/babel.min.js"></script>
   <style>
-    :root{
-      --bg:#0c1222;
-      --card:#121a2e;
-      --muted:#8aa0c8;
-      --txt:#e8edff;
-      --brand:#aeb6ff;
-      --accent:#9aa9ff;
-      --ok:#19c37d;
-      --chip:#18233f;
-      --warn:#ffd166;
-    }
-    *{box-sizing:border-box}
-    html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial}
-    .wrap{max-width:920px;margin:0 auto;padding:16px 12px 24px}
-    h1{font-size:28px;margin:8px 0 0}
-    .subtitle{opacity:.8;margin:4px 0 12px}
-    .tabs{display:flex;gap:10px;margin:14px 0}
-    .tab{background:var(--card);border-radius:14px;padding:10px 16px;cursor:pointer;opacity:.9}
-    .tab.active{outline:2px solid var(--accent);opacity:1}
-    .card{background:var(--card);border-radius:18px;padding:14px;margin:12px 0}
-    .row{display:flex;gap:8px;align-items:center}
-    input,button,select{border-radius:12px;border:0;outline:0}
-    input{flex:1;padding:12px 14px;background:#0f1730;color:var(--txt)}
-    button{padding:12px 16px;background:#aeb6ff;color:#0b0f1e;font-weight:700;cursor:pointer}
-    .hint{color:var(--muted);font-size:13px}
-    .result{border-top:1px solid #1a2547;margin-top:10px;padding-top:10px}
-    .dep{display:flex;align-items:center;gap:12px;background:#0f1730;border-radius:16px;padding:12px 12px;margin:10px 0}
-    .badge{width:38px;height:38px;border-radius:12px;background:#23325d;display:grid;place-items:center;font-weight:800}
-    .line{min-width:38px;text-align:center}
-    .title{font-weight:700}
-    .pill{background:#0c1a34;border-radius:999px;padding:6px 10px;font-size:12px;color:#a5ffc8}
-    .pill.gray{color:#cfe0ff;background:#0e1a31}
-    .chip{background:var(--chip);border-radius:12px;padding:8px 10px;color:#cfe0ff;font-size:13px}
-    .right{margin-left:auto;display:flex;gap:10px;align-items:center}
-    .blink{animation:blink 1s linear infinite}
-    @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:.2}}
-    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-    .fav-btn{background:#18233f;color:#cfe0ff}
-    .fav-btn.active{background:#ffd166;color:#1a1a1a}
-    .map{height:340px;border-radius:16px;overflow:hidden}
-    .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-end}
-    .sheet{background:var(--card);width:100%;max-height:80vh;border-radius:16px 16px 0 0;padding:12px;overflow:auto}
-    .sheet h3{margin:6px 4px 10px}
-    .kpi{display:flex;gap:10px;flex-wrap:wrap}
-    .kpi .chip{background:#112149}
-    .lang{display:flex;gap:8px;margin:8px 0}
-    .lang button{background:#1b2646;color:#cfe0ff}
-    .tiny{font-size:12px;color:#a9b8e6}
-    .danger{color:#ff8080}
+    body { background-color: #0d1220; color: #e7ecff; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { background: #2a354d; border-radius: 3px; }
+    ::-webkit-scrollbar-track { background: #0d1220; }
   </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="row" style="gap:10px">
-    <h1>🚍 Bluestar menetrend & megálló kereső</h1>
-    <button id="btnSettings" class="right">⚙️ Settings</button>
-  </div>
-  <div class="subtitle" id="clock">UK: --:--:--</div>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
 
-  <div class="lang" id="langBar"></div>
+    function App() {
+      const [tab, setTab] = useState('home');
+      const [status, setStatus] = useState(null);
+      const [selectedRoute, setSelectedRoute] = useState(null);
 
-  <div class="tabs">
-    <div class="tab active" data-tab="stop">Megálló</div>
-    <div class="tab" data-tab="route">Viszonylat</div>
-    <div class="tab" data-tab="fav">Kedvencek</div>
-  </div>
+      useEffect(() => {
+        async function fetchStatus() {
+          try {
+            const res = await fetch('/api/status');
+            if (res.ok) {
+              const json = await res.json();
+              setStatus(json);
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        }
+        fetchStatus();
+        const id = setInterval(fetchStatus, 10000);
+        return () => clearInterval(id);
+      }, []);
 
-  <!-- STOP TAB -->
-  <div id="tab-stop">
-    <div class="card">
-      <div class="row">
-        <input id="qStop" placeholder="pl. Adanac Park"/>
-        <button id="btnStopSearch" data-i18n="search">Keresés</button>
-      </div>
-      <div class="hint" id="stopInfo"></div>
-      <div class="result" id="stopResults"></div>
-    </div>
-  </div>
-
-  <!-- ROUTE TAB -->
-  <div id="tab-route" style="display:none">
-    <div class="card">
-      <div class="row">
-        <input id="qRoute" placeholder="pl. 17 vagy U1"/>
-        <button id="btnRouteSearch" data-i18n="search">Keresés</button>
-      </div>
-      <div class="result" id="routeResults"></div>
-    </div>
-  </div>
-
-  <!-- FAV TAB -->
-  <div id="tab-fav" style="display:none">
-    <div class="card">
-      <h3>Kedvencek</h3>
-      <div id="favList" class="result"></div>
-      <div class="tiny">A kedvencekhez csillagozd be a megállót.</div>
-    </div>
-  </div>
-
-  <!-- Trip modal (bottom sheet) -->
-  <div class="modal" id="tripModal">
-    <div class="sheet">
-      <div class="row">
-        <h3 id="tripTitle">Indulás</h3>
-        <button id="tripClose" class="right">Bezár</button>
-      </div>
-      <div class="kpi" id="tripKpi"></div>
-      <div id="tripList" class="result"></div>
-      <div id="tripMap" class="map" style="margin-top:8px"></div>
-    </div>
-  </div>
-
-</div>
-
-<script>
-/* ---------------- CONFIG ---------------- */
-const API_BASE = localStorage.getItem('apiBase') || '/api';
-const REFRESH_SEC = Number(localStorage.getItem('refresh')) || 10;
-const PREVIEW_MIN = Number(localStorage.getItem('preview')) || 60;
-
-const I18N = {
-  en:{ search:"Search", due:"DUE", ontime:"on time", late:"late", early:"early", nores:"No results" },
-  hu:{ search:"Keresés", due:"DUE", ontime:"időben", late:"késik", early:"siet", nores:"Nincs találat" },
-  de:{ search:"Suchen", due:"JETZT", ontime:"pünktlich", late:"spät", early:"früh", nores:"Keine Treffer" },
-  fr:{ search:"Rechercher", due:"DUE", ontime:"à l'heure", late:"en retard", early:"en avance", nores:"Aucun résultat" },
-  pl:{ search:"Szukaj", due:"DUE", ontime:"na czas", late:"opóźn.", early:"wcześ.", nores:"Brak wyników" },
-  ro:{ search:"Caută", due:"IMINENT", ontime:"la timp", late:"întârziat", early:"mai devreme", nores:"Fără rezultate" }
-};
-let LANG = localStorage.getItem('lang') || 'hu';
-function t(k){ return (I18N[LANG]||I18N.hu)[k]||k; }
-function setLangBar(){
-  const langs = {en:"🇬🇧",hu:"🇭🇺",de:"🇩🇪",fr:"🇫🇷",pl:"🇵🇱",ro:"🇷🇴"};
-  const bar = document.getElementById('langBar'); bar.innerHTML='';
-  Object.entries(langs).forEach(([code,flag])=>{
-    const b=document.createElement('button'); b.textContent=flag; b.onclick=()=>{LANG=code;localStorage.setItem('lang',code);applyI18n();};
-    bar.appendChild(b);
-  });
-}
-function applyI18n(){
-  document.querySelectorAll('[data-i18n="search"]').forEach(el=>el.textContent=t('search'));
-  renderStopResults(lastStopData); // re-render labels
-  renderRouteResults(lastRouteData);
-}
-setLangBar();
-
-/* ---------------- CLOCK ---------------- */
-setInterval(()=>{
-  const d=new Date(); document.getElementById('clock').textContent=
-    'UK: '+d.toLocaleTimeString('en-GB',{hour12:false});
-},1000);
-
-/* ---------------- TABS ---------------- */
-document.querySelectorAll('.tab').forEach(tab=>{
-  tab.onclick=()=>{
-    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-    tab.classList.add('active');
-    ['stop','route','fav'].forEach(id=>{
-      document.getElementById('tab-'+id).style.display = (tab.dataset.tab===id)?'block':'none';
-    });
-    if(tab.dataset.tab==='fav') renderFavs();
-  };
-});
-
-/* ---------------- HELPERS ---------------- */
-const fmtMin=(m)=> m<=0 ? t('due') : (m+' min');
-function halfMinute(valSec){
-  return Math.round((valSec/60)*2)/2; // 0.5 perc pontosság
-}
-function el(tag,cls,txt){ const e=document.createElement(tag); if(cls) e.className=cls; if(txt) e.textContent=txt; return e;}
-function qs(id){ return document.getElementById(id); }
-function api(u){ return fetch(API_BASE+u).then(r=>r.json()); }
-
-/* ---------------- STOP SEARCH ---------------- */
-let lastStopData=null, currentStop=null, depTimer=null;
-qs('btnStopSearch').onclick=async()=>{
-  const q=qs('qStop').value.trim();
-  qs('stopResults').innerHTML=''; qs('stopInfo').textContent='';
-  if(!q) return;
-  const data = await api(`/stops/search?q=${encodeURIComponent(q)}`);
-  lastStopData=data; renderStopResults(data);
-};
-function renderStopResults(data){
-  const box=qs('stopResults'); box.innerHTML='';
-  if(!data || !data.stops || data.stops.length===0){ box.innerHTML=`<div class="tiny">${t('nores')}</div>`; return; }
-  const s=data.stops[0]; // legjobb találat
-  currentStop=s;
-  qs('stopInfo').textContent=`${s.name} • Kiválasztott megálló: ${s.code || s.atco || s.id}`;
-  // csillag
-  const favBtn = el('button','fav-btn'); favBtn.textContent='★';
-  if(isFav(s)) favBtn.classList.add('active');
-  favBtn.onclick=()=>{ toggleFav(s); if(isFav(s)) favBtn.classList.add('active'); else favBtn.classList.remove('active'); renderFavs(); };
-  qs('stopInfo').append(' ', favBtn);
-
-  loadDepartures();
-  if(depTimer) clearInterval(depTimer);
-  depTimer=setInterval(loadDepartures, REFRESH_SEC*1000);
-}
-async function loadDepartures(){
-  if(!currentStop) return;
-  const res = await api(`/departures?stop_id=${encodeURIComponent(currentStop.id)}&window_min=${PREVIEW_MIN}`);
-  const list = res.departures || [];
-  const box=qs('stopResults'); box.innerHTML='';
-  if(list.length===0){ box.innerHTML=`<div class="tiny">${t('nores')}</div>`; return; }
-  list.forEach(dep=>{
-    const row=el('div','dep');
-    row.onclick=()=>openTrip(dep); // katt → Trip + térkép
-    row.appendChild(el('div','badge line',dep.line || (dep.route_short_name||'')));
-
-    const info=el('div',null);
-    info.appendChild(el('div','title',dep.headsign || dep.destination || ''));
-    info.appendChild(el('div','tiny',`Kiválasztott megálló • ${dep.stop_time || ''}`));
-    row.appendChild(info);
-
-    // Visszaszámlálás / DUE
-    const right=el('div','right');
-    const mins = dep.live && dep.eta_sec!=null ? Math.max(0, Math.floor(dep.eta_sec/60)) :
-                  dep.departure_in_min!=null ? Math.max(0, Math.floor(dep.departure_in_min)) : null;
-
-    let pill; 
-    if(dep.live){
-      if(dep.eta_sec<=60){
-        pill = el('div','pill blink',t('due'));
-      }else{
-        pill = el('div','pill',fmtMin(mins));
-      }
-    }else{
-      pill = el('div','pill gray',fmtMin(mins));
+      return (
+        <div className="flex flex-col min-h-screen">
+          <header className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
+            <div className="flex items-center space-x-2">
+              <span className="text-blue-400 text-2xl">★</span>
+              <h1 className="text-lg font-bold">bluestar</h1>
+            </div>
+            {status && <span className="text-sm text-gray-400">UK: {status.time}</span>}
+          </header>
+          <main className="flex-1 overflow-auto">
+            {tab === 'home' && <Home />}
+            {tab === 'routes' && <Routes onSelect={(route) => { setSelectedRoute(route); setTab('map'); }} />}
+            {tab === 'map' && <MapPage route={selectedRoute} />}
+            {tab === 'settings' && <Settings status={status} />}
+          </main>
+          <nav className="border-t border-gray-800 bg-gray-900 flex justify-around py-2">
+            <NavButton label="Home" icon="🏠" active={tab === 'home'} onClick={() => setTab('home')} />
+            <NavButton label="Routes" icon="🚌" active={tab === 'routes'} onClick={() => setTab('routes')} />
+            <NavButton label="Map" icon="🗺️" active={tab === 'map'} onClick={() => setTab('map')} />
+            <NavButton label="Settings" icon="⚙️" active={tab === 'settings'} onClick={() => setTab('settings')} />
+          </nav>
+        </div>
+      );
     }
-    right.appendChild(pill);
-    // on-time / late / early
-    if(dep.live && dep.delay_sec!=null){
-      const deltaMin = halfMinute(dep.delay_sec);
-      let label = t('ontime'), cls='pill';
-      if(deltaMin>0.25){ label = `${deltaMin} ${t('late')}`; cls='pill'; }
-      else if(deltaMin<-0.25){ label = `${Math.abs(deltaMin)} ${t('early')}`; cls='pill'; }
-      right.appendChild(el('div',cls,label));
+
+    function NavButton({ label, icon, active, onClick }) {
+      return (
+        <button onClick={onClick} className={"flex flex-col items-center px-2 text-xs " + (active ? 'text-blue-400' : 'text-gray-400 hover:text-blue-400') }>
+          <span className="text-lg leading-none">{icon}</span>
+          <span>{label}</span>
+        </button>
+      );
     }
-    // nyíl
-    right.appendChild(el('div','chip','↦'));
-    row.appendChild(right);
-    box.appendChild(row);
-  });
-}
 
-/* ---------------- TRIP + MAP ---------------- */
-let tripMap=null, mapLine=null, mapVehLayer=null, liveTimer=null, lastTrip=null;
+    function Home() {
+      const [query, setQuery] = useState('');
+      const [stops, setStops] = useState([]);
+      const [selectedStop, setSelectedStop] = useState(null);
+      const [departures, setDepartures] = useState([]);
 
-function ensureMap(divId){
-  if(tripMap) return;
-  tripMap=L.map(divId,{zoomControl:true}).setView([50.9097,-1.4044],12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(tripMap);
-}
-async function openTrip(dep){
-  qs('tripModal').style.display='flex';
-  qs('tripTitle').textContent = `${dep.line||''} • ${dep.headsign||dep.destination||''}`;
-  qs('tripList').innerHTML='Betöltés…';
-  qs('tripKpi').innerHTML='';
-  ensureMap('tripMap');
-  if(mapLine){ mapLine.remove(); mapLine=null; }
-  if(mapVehLayer){ mapVehLayer.remove(); mapVehLayer=null; }
-  lastTrip = dep;
+      useEffect(() => {
+        const handler = setTimeout(() => {
+          if (!query) { setStops([]); return; }
+          fetch(`/api/stops/search?q=${encodeURIComponent(query)}`)
+            .then(res => res.ok ? res.json() : [])
+            .then(data => setStops(data || []))
+            .catch(() => setStops([]));
+        }, 400);
+        return () => clearTimeout(handler);
+      }, [query]);
 
-  const trip = await api(`/trip?trip_id=${encodeURIComponent(dep.trip_id)}&stop_id=${encodeURIComponent(dep.stop_id||dep.stop||'')}`);
-  renderTripDetail(dep, trip);
+      const selectStop = (stop) => {
+        setSelectedStop(stop);
+        fetch(`/api/departures?stop_id=${encodeURIComponent(stop.id)}&window=120`)
+          .then(res => res.ok ? res.json() : { departures: [] })
+          .then(data => setDepartures(data.departures || []))
+          .catch(() => setDepartures([]));
+      };
 
-  // útvonal
-  if(trip && trip.shape && trip.shape.length){
-    const latlngs = trip.shape.map(p=>[p[1],p[0]]);
-    mapLine = L.polyline(latlngs,{weight:5}).addTo(tripMap);
-    tripMap.fitBounds(mapLine.getBounds(),{padding:[30,30]});
-  }
-  await drawLiveVehicles(dep.route_id || dep.line_id || '', dep.direction_id);
-
-  if(liveTimer) clearInterval(liveTimer);
-  liveTimer=setInterval(async()=>{ await drawLiveVehicles(dep.route_id||dep.line_id||'', dep.direction_id); updateLiveCountdowns(); }, 10000);
-}
-qs('tripClose').onclick=()=>{ qs('tripModal').style.display='none'; if(liveTimer) clearInterval(liveTimer); };
-
-function renderTripDetail(dep, trip){
-  const kpi=qs('tripKpi');
-  const delayMin = halfMinute((dep.delay_sec!=null?dep.delay_sec: (trip?.delay_sec||0)));
-  let lbl=t('ontime'); let extra='';
-  if(delayMin>0.25){ lbl=t('late'); extra=`+${delayMin} min`; }
-  else if(delayMin<-0.25){ lbl=t('early'); extra=`-${Math.abs(delayMin)} min`; }
-  kpi.appendChild(el('div','chip',`Állapot: ${lbl} ${extra}`));
-  if(dep.live) kpi.appendChild(el('div','chip',`Live ✓`)); else kpi.appendChild(el('div','chip',`Live –`));
-
-  const list=qs('tripList'); list.innerHTML='';
-  (trip?.stops||[]).forEach(s=>{
-    const row=el('div','dep');
-    row.appendChild(el('div','badge',s.seq));
-    const left=el('div',null);
-    left.appendChild(el('div','title',s.name));
-    left.appendChild(el('div','tiny',s.code||s.id||''));
-    row.appendChild(left);
-
-    const right=el('div','right');
-    const etaSec = (s.eta_sec!=null) ? s.eta_sec : null;
-    if(etaSec!=null){
-      const mins=Math.floor(Math.max(0,etaSec)/60);
-      const pill = etaSec<=60 ? el('div','pill blink',t('due')) : el('div','pill',fmtMin(mins));
-      right.appendChild(pill);
-    }else{
-      right.appendChild(el('div','pill gray',s.time||'--:--'));
+      return (
+        <div className="p-4 space-y-4">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search stops..."
+            className="w-full px-3 py-2 rounded bg-gray-800 text-white placeholder-gray-500 focus:outline-none"
+          />
+          <div className="max-h-40 overflow-y-auto border border-gray-800 rounded">
+            {stops.map(stop => (
+              <div key={stop.id} className="p-2 border-b border-gray-800 hover:bg-gray-700 cursor-pointer" onClick={() => selectStop(stop)}>
+                {stop.name}
+              </div>
+            ))}
+            {stops.length === 0 && query && <div className="p-2 text-gray-500">No stops found</div>}
+          </div>
+          {selectedStop && (
+            <div>
+              <h2 className="text-lg mb-2">Live Departures for <span className="text-blue-400">{selectedStop.name}</span></h2>
+              <ul className="divide-y divide-gray-800">
+                {departures.map((d, idx) => (
+                  <li key={idx} className="flex justify-between py-1 text-sm">
+                    <span>{d.route} → {d.destination}</span>
+                    <span className={d.is_due ? 'text-red-400' : (d.delay_min && d.delay_min > 0 ? 'text-red-400' : (d.delay_min && d.delay_min < 0 ? 'text-yellow-400' : 'text-green-400'))}>{d.time_display}</span>
+                  </li>
+                ))}
+                {departures.length === 0 && <li className="py-2 text-gray-500">No departures in the next 2h.</li>}
+              </ul>
+            </div>
+          )}
+        </div>
+      );
     }
-    row.appendChild(right);
-    list.appendChild(row);
-  });
-}
-async function drawLiveVehicles(routeId, direction){
-  if(!routeId) return;
-  const vs = await api(`/vehicles?route_id=${encodeURIComponent(routeId)}`);
-  if(mapVehLayer) mapVehLayer.remove();
-  mapVehLayer = L.layerGroup().addTo(tripMap);
-  (vs?.vehicles||[]).forEach(v=>{
-    if(direction!=null && v.direction_id!=null && v.direction_id!==direction) return;
-    const m = L.circleMarker([v.lat,v.lon],{radius:6}).bindTooltip(`${v.label||v.id||'veh'} • ${v.delay_min||0}m`);
-    m.addTo(mapVehLayer);
-  });
-}
-function updateLiveCountdowns(){
-  // egyszerű frissítés: újra lekéri az indulásokat a kiválasztott megállóra
-  if(currentStop) loadDepartures();
-}
 
-/* ---------------- ROUTE SEARCH ---------------- */
-let lastRouteData=null;
-qs('btnRouteSearch').onclick=async()=>{
-  const q=qs('qRoute').value.trim();
-  const res = await api(`/routes/search?q=${encodeURIComponent(q)}`);
-  lastRouteData=res; renderRouteResults(res);
-};
-function renderRouteResults(res){
-  const box=qs('routeResults'); box.innerHTML='';
-  if(!res || !res.routes || res.routes.length===0){ box.innerHTML=`<div class="tiny">${t('nores')}</div>`; return; }
-  const r=res.routes[0];
-  const header=el('div','row');
-  header.appendChild(el('div','badge line',r.short_name||r.code||''));
-  header.appendChild(el('div','title',r.long_name||r.name||''));
-  box.appendChild(header);
+    function Routes({ onSelect }) {
+      const [query, setQuery] = useState('');
+      const [routes, setRoutes] = useState([]);
+      const [vehicles, setVehicles] = useState([]);
 
-  const mapDiv=el('div','map'); mapDiv.id='routeMap'; box.appendChild(mapDiv);
-  const m=L.map('routeMap').setView([50.91,-1.4],12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(m);
+      useEffect(() => {
+          const loadVehicles = async () => {
+              try {
+                const res = await fetch('/api/vehicles');
+                const json = await res.json();
+                setVehicles(json.items || []);
+              } catch (e) {
+                setVehicles([]);
+              }
+          };
+          loadVehicles();
+          const id = setInterval(loadVehicles, 15000);
+          return () => clearInterval(id);
+      }, []);
 
-  if(r.shape && r.shape.length){
-    const latlngs = r.shape.map(p=>[p[1],p[0]]);
-    const pl=L.polyline(latlngs,{weight:5}).addTo(m);
-    m.fitBounds(pl.getBounds(),{padding:[30,30]});
-  }
-  // élő járművek a viszonylaton
-  api(`/vehicles?route_id=${encodeURIComponent(r.id||r.route_id||'')}`).then(vs=>{
-    (vs?.vehicles||[]).forEach(v=>{
-      L.circleMarker([v.lat,v.lon],{radius:6}).bindTooltip(`${v.label||v.id||''} • ${v.delay_min||0}m`).addTo(m);
-    });
-  });
-}
+      useEffect(() => {
+        const handler = setTimeout(() => {
+          if (!query) { setRoutes([]); return; }
+          fetch(`/api/routes/search?q=${encodeURIComponent(query)}`)
+            .then(res => res.ok ? res.json() : [])
+            .then(data => setRoutes(data || []))
+            .catch(() => setRoutes([]));
+        }, 400);
+        return () => clearTimeout(handler);
+      }, [query]);
 
-/* ---------------- FAVOURITES ---------------- */
-const FKEY='bluestar_favs';
-function favs(){ try{return JSON.parse(localStorage.getItem(FKEY)||'[]')}catch{return[]} }
-function isFav(s){ return favs().some(x=>x.id===s.id); }
-function toggleFav(s){
-  const arr=favs();
-  const i=arr.findIndex(x=>x.id===s.id);
-  if(i>=0){ arr.splice(i,1); } else { arr.push({id:s.id,name:s.name,code:s.code||s.atco}); }
-  localStorage.setItem(FKEY,JSON.stringify(arr));
-}
-function renderFavs(){
-  const box=qs('favList'); box.innerHTML='';
-  favs().forEach(f=>{
-    const row=el('div','dep');
-    row.appendChild(el('div','badge','★'));
-    row.appendChild(el('div','title',f.name+' ['+(f.code||'')+']'));
-    const r=el('div','right');
-    const open=el('button',null,'Megnyit'); open.onclick=async()=>{
-      // betöltjük megállóként és indulásokat
-      lastStopData={stops:[{id:f.id,name:f.name,code:f.code}]}; renderStopResults(lastStopData);
-      document.querySelector('.tab[data-tab="stop"]').click();
-    };
-    const del=el('button','fav-btn','🗑'); del.onclick=()=>{ toggleFav(f); renderFavs(); };
-    r.appendChild(open); r.appendChild(del); row.appendChild(r); box.appendChild(row);
-  });
-}
+      const liveCounts = vehicles.reduce((acc, v) => {
+        const label = v.label || '';
+        const routeName = label.split('·')[0].trim();
+        if (routeName) acc[routeName] = (acc[routeName] || 0) + 1;
+        return acc;
+      }, {});
 
-/* ---------------- SETTINGS DIALOG ---------------- */
-qs('btnSettings').onclick=()=>{
-  const base = prompt('API elérési út (üres = ugyanarról a domainről):', localStorage.getItem('apiBase')||'/api');
-  if(base!=null) localStorage.setItem('apiBase', base || '/api');
-  const r = prompt('Frissítési idő (mp):', localStorage.getItem('refresh')||REFRESH_SEC);
-  if(r!=null) localStorage.setItem('refresh', r);
-  const w = prompt('Előretekintési ablak (perc):', localStorage.getItem('preview')||PREVIEW_MIN);
-  if(w!=null) localStorage.setItem('preview', w);
-  location.reload();
-};
+      return (
+        <div className="p-4 space-y-4">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search routes..."
+            className="w-full px-3 py-2 rounded bg-gray-800 text-white placeholder-gray-500 focus:outline-none"
+          />
+          <div className="max-h-72 overflow-y-auto border border-gray-800 rounded divide-y divide-gray-800">
+            {routes.map((r, idx) => {
+              const count = liveCounts[r.route] || 0;
+              return (
+                <div key={idx} className="p-3 flex justify-between items-center cursor-pointer hover:bg-gray-700" onClick={() => onSelect(r)}>
+                  <div>
+                    <span className="font-semibold text-sm text-blue-300">{r.route}</span>
+                  </div>
+                  {count > 0 ? (
+                    <span className="text-green-400 text-xs">Live ({count})</span>
+                  ) : (
+                    <span className="text-gray-500 text-xs">No buses</span>
+                  )}
+                </div>
+              );
+            })}
+            {routes.length === 0 && query && <div className="p-2 text-gray-500">No routes found</div>}
+          </div>
+        </div>
+      );
+    }
 
-/* --------------- INIT --------------- */
-applyI18n(); renderFavs();
-</script>
+    function MapPage({ route }) {
+      const mapRef = useRef(null);
+      const polyRef = useRef(null);
+      const markersRef = useRef([]);
+      useEffect(() => {
+        if (!mapRef.current) {
+          const map = L.map('mapDiv').setView([50.92, -1.40], 12);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: ''
+          }).addTo(map);
+          mapRef.current = map;
+        }
+      }, []);
+      useEffect(() => {
+        if (!route || !mapRef.current) return;
+        const loadRoute = async () => {
+          try {
+            const shapeRes = await fetch(`/api/route-shape?route=${encodeURIComponent(route.route)}`);
+            const shapeData = await shapeRes.json();
+            if (polyRef.current) {
+              mapRef.current.removeLayer(polyRef.current);
+              polyRef.current = null;
+            }
+            if (shapeData.shape && shapeData.shape.length > 0) {
+              const coords = shapeData.shape.map(([lat, lon]) => [lat, lon]);
+              polyRef.current = L.polyline(coords, { color: '#007bff' }).addTo(mapRef.current);
+              mapRef.current.fitBounds(polyRef.current.getBounds());
+            }
+            const vehiclesRes = await fetch(`/api/vehicles?route=${encodeURIComponent(route.route)}`);
+            const vehiclesData = await vehiclesRes.json();
+            markersRef.current.forEach(m => mapRef.current.removeLayer(m));
+            markersRef.current = [];
+            (vehiclesData.items || []).forEach(item => {
+              if(item.lat && item.lon) {
+                const m = L.marker([item.lat, item.lon]);
+                m.bindPopup(item.label || 'bus');
+                m.addTo(mapRef.current);
+                markersRef.current.push(m);
+              }
+            });
+          } catch (e) {
+            console.error(e);
+          }
+        };
+        loadRoute();
+        const id = setInterval(loadRoute, 20000);
+        return () => clearInterval(id);
+      }, [route]);
+      return (
+        <div className="p-4">
+          {route ? (
+            <div>
+              <h2 className="text-lg mb-2">Route {route.route}</h2>
+              <div id="mapDiv" className="h-80 rounded overflow-hidden" />
+            </div>
+          ) : (
+            <p className="text-gray-500">Select a route in the Routes tab to view on map.</p>
+          )}
+        </div>
+      );
+    }
+
+    function Settings({ status }) {
+      return (
+        <div className="p-4 space-y-2">
+          <h2 className="text-lg font-semibold mb-2">Settings</h2>
+          {status ? (
+            <div className="space-y-1 text-sm">
+              <p>Version: {status.version}</p>
+              <p>Build: {status.build}</p>
+              <p>GTFS ready: {status.gtfs_ready ? 'Yes' : 'No'} ({status.gtfs_stops})</p>
+              <p>Live feed configured: {status.live_feed_configured ? 'Yes' : 'No'}</p>
+            </div>
+          ) : (
+            <p className="text-gray-500 text-sm">Loading status...</p>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
 </body>
 </html>
