@@ -1,120 +1,292 @@
-<!doctype html>
-<html lang="hu">
+<!DOCTYPE html>
+<html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Bluestar menetrend & live</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<style>
-:root{--bg:#0d1220;--card:#10172a;--text:#e7ecff;--muted:#9aa3b2;--accent:#7c8cff;--good:#2bd576;}
-*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,Arial}
-.container{max-width:1000px;margin:24px auto;padding:0 14px}
-.card{background:var(--card);border-radius:16px;padding:16px;box-shadow:0 8px 26px rgba(0,0,0,.35);margin-bottom:16px}
-.row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
-input,button{font:inherit} input{flex:1;background:#0f1426;color:#fff;border:1px solid #1c2745;border-radius:12px;padding:10px}
-button{background:var(--accent);color:#fff;border:none;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer}
-.badge{display:inline-block;background:#0f1426;border:1px solid #1c2745;padding:6px 10px;border-radius:999px;margin-right:8px}
-h1{margin:0 0 8px} small{color:var(--muted)}
-.list li{padding:6px 4px;border-bottom:1px dashed #223}
-#map{height:420px;border-radius:16px;overflow:hidden}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bluestar</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/17.0.2/umd/react.development.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/17.0.2/umd/react-dom.development.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.17.12/babel.min.js"></script>
+  <style>
+    body { background-color: #0d1220; color: #e7ecff; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { background: #2a354d; border-radius: 3px; }
+    ::-webkit-scrollbar-track { background: #0d1220; }
+  </style>
 </head>
 <body>
-<div class="container">
-  <h1>🚌 Bluestar menetrend & megálló kereső</h1>
-  <div class="card"><div class="row">
-    <div class="badge" id="uk">UK: --:--:--</div>
-    <div class="badge" id="gtfs">GTFS: …</div>
-    <div class="badge" id="live">Live: …</div>
-  </div></div>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
 
-  <div class="card">
-    <h3>Megálló kereső</h3>
-    <div class="row">
-      <input id="qstop" placeholder="Megálló neve…">
-      <button onclick="searchStops()">Keresés</button>
-    </div>
-    <ul id="stops" class="list"></ul>
-  </div>
+    function App() {
+      const [tab, setTab] = useState('home');
+      const [status, setStatus] = useState(null);
+      const [selectedRoute, setSelectedRoute] = useState(null);
 
-  <div class="card">
-    <h3>Indulások</h3>
-    <ul id="deps" class="list"></ul>
-  </div>
+      useEffect(() => {
+        async function fetchStatus() {
+          try {
+            const res = await fetch('/api/status');
+            if (res.ok) {
+              const json = await res.json();
+              setStatus(json);
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        }
+        fetchStatus();
+        const id = setInterval(fetchStatus, 10000);
+        return () => clearInterval(id);
+      }, []);
 
-  <div class="card">
-    <h3>Viszonylat & élő járművek</h3>
-    <div class="row">
-      <input id="qroute" placeholder="Pl. 17, U1, 19a…">
-      <button onclick="loadVehicles()">Frissítés</button>
-    </div>
-    <div id="map"></div>
-  </div>
-</div>
+      return (
+        <div className="flex flex-col min-h-screen">
+          <header className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
+            <div className="flex items-center space-x-2">
+              <span className="text-blue-400 text-2xl">★</span>
+              <h1 className="text-lg font-bold">bluestar</h1>
+            </div>
+            {status && <span className="text-sm text-gray-400">UK: {status.time}</span>}
+          </header>
+          <main className="flex-1 overflow-auto">
+            {tab === 'home' && <Home />}
+            {tab === 'routes' && <Routes onSelect={(route) => { setSelectedRoute(route); setTab('map'); }} />}
+            {tab === 'map' && <MapPage route={selectedRoute} />}
+            {tab === 'settings' && <Settings status={status} />}
+          </main>
+          <nav className="border-t border-gray-800 bg-gray-900 flex justify-around py-2">
+            <NavButton label="Home" icon="🏠" active={tab === 'home'} onClick={() => setTab('home')} />
+            <NavButton label="Routes" icon="🚌" active={tab === 'routes'} onClick={() => setTab('routes')} />
+            <NavButton label="Map" icon="🗺️" active={tab === 'map'} onClick={() => setTab('map')} />
+            <NavButton label="Settings" icon="⚙️" active={tab === 'settings'} onClick={() => setTab('settings')} />
+          </nav>
+        </div>
+      );
+    }
 
-<script>
-const API = location.origin; // ugyanarról a domainről szolgáljuk
+    function NavButton({ label, icon, active, onClick }) {
+      return (
+        <button onClick={onClick} className={"flex flex-col items-center px-2 text-xs " + (active ? 'text-blue-400' : 'text-gray-400 hover:text-blue-400') }>
+          <span className="text-lg leading-none">{icon}</span>
+          <span>{label}</span>
+        </button>
+      );
+    }
 
-async function refreshStatus(){
-  try{
-    const r = await fetch(`${API}/api/status`); const s = await r.json();
-    document.getElementById('uk').textContent = `UK: ${s.time}`;
-    document.getElementById('gtfs').textContent = s.gtfs_ready ? `GTFS: ${s.gtfs_stops} stops` : `GTFS: not loaded`;
-    document.getElementById('live').textContent = s.live_feed_configured ? `Live: configured` : `Live: not configured`;
-  }catch(e){}
-}
-setInterval(refreshStatus, 5000); refreshStatus();
+    function Home() {
+      const [query, setQuery] = useState('');
+      const [stops, setStops] = useState([]);
+      const [selectedStop, setSelectedStop] = useState(null);
+      const [departures, setDepartures] = useState([]);
 
-async function searchStops(){
-  const q = document.getElementById('qstop').value.trim();
-  const ul = document.getElementById('stops'); ul.innerHTML = '';
-  if(!q) return;
-  let res = await fetch(`${API}/api/stops/search?q=`+encodeURIComponent(q));
-  if(!res.ok){ ul.innerHTML = `<li>Hiba: ${res.status}</li>`; return; }
-  let arr = await res.json();
-  arr.forEach(st => {
-    const li = document.createElement('li');
-    li.textContent = `${st.name}  (id: ${st.id})`;
-    li.style.cursor = 'pointer';
-    li.onclick = ()=> loadDepartures(st.id, st.name);
-    ul.appendChild(li);
-  });
-}
+      useEffect(() => {
+        const handler = setTimeout(() => {
+          if (!query) { setStops([]); return; }
+          fetch(`/api/stops/search?q=${encodeURIComponent(query)}`)
+            .then(res => res.ok ? res.json() : [])
+            .then(data => setStops(data || []))
+            .catch(() => setStops([]));
+        }, 400);
+        return () => clearTimeout(handler);
+      }, [query]);
 
-async function loadDepartures(stop_id, stop_name){
-  const ul = document.getElementById('deps'); ul.innerHTML = `<li>Megálló: ${stop_name} (#${stop_id})</li>`;
-  let res = await fetch(`${API}/api/departures?stop_id=${encodeURIComponent(stop_id)}&window=120`);
-  if(!res.ok){ ul.innerHTML += `<li>Hiba: ${res.status}</li>`; return; }
-  let obj = await res.json();
-  if(!obj.departures || obj.departures.length===0){ ul.innerHTML += `<li>Nincs indulás az ablakban.</li>`; return; }
-  obj.departures.forEach(d=>{
-    const li = document.createElement('li');
-    li.innerHTML = `<b>${d.route}</b> → ${d.destination}&nbsp;&nbsp; <span>${d.time_display}</span>`;
-    ul.appendChild(li);
-  });
-}
+      const selectStop = (stop) => {
+        setSelectedStop(stop);
+        fetch(`/api/departures?stop_id=${encodeURIComponent(stop.id)}&window=120`)
+          .then(res => res.ok ? res.json() : { departures: [] })
+          .then(data => setDepartures(data.departures || []))
+          .catch(() => setDepartures([]));
+      };
 
-// ---- Leaflet térkép
-const map = L.map('map').setView([50.910, -1.404], 12);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
-let markers = [];
+      return (
+        <div className="p-4 space-y-4">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search stops..."
+            className="w-full px-3 py-2 rounded bg-gray-800 text-white placeholder-gray-500 focus:outline-none"
+          />
+          <div className="max-h-40 overflow-y-auto border border-gray-800 rounded">
+            {stops.map(stop => (
+              <div key={stop.id} className="p-2 border-b border-gray-800 hover:bg-gray-700 cursor-pointer" onClick={() => selectStop(stop)}>
+                {stop.name}
+              </div>
+            ))}
+            {stops.length === 0 && query && <div className="p-2 text-gray-500">No stops found</div>}
+          </div>
+          {selectedStop && (
+            <div>
+              <h2 className="text-lg mb-2">Live Departures for <span className="text-blue-400">{selectedStop.name}</span></h2>
+              <ul className="divide-y divide-gray-800">
+                {departures.map((d, idx) => (
+                  <li key={idx} className="flex justify-between py-1 text-sm">
+                    <span>{d.route} → {d.destination}</span>
+                    <span className={d.is_due ? 'text-red-400' : (d.delay_min && d.delay_min > 0 ? 'text-red-400' : (d.delay_min && d.delay_min < 0 ? 'text-yellow-400' : 'text-green-400'))}>{d.time_display}</span>
+                  </li>
+                ))}
+                {departures.length === 0 && <li className="py-2 text-gray-500">No departures in the next 2h.</li>}
+              </ul>
+            </div>
+          )}
+        </div>
+      );
+    }
 
-function clearMarkers(){ markers.forEach(m => m.remove()); markers=[]; }
+    function Routes({ onSelect }) {
+      const [query, setQuery] = useState('');
+      const [routes, setRoutes] = useState([]);
+      const [vehicles, setVehicles] = useState([]);
 
-async function loadVehicles(){
-  const route = document.getElementById('qroute').value.trim();
-  const url = route ? `${API}/api/vehicles?route=${encodeURIComponent(route)}` : `${API}/api/vehicles`;
-  const res = await fetch(url);
-  const obj = await res.json();
-  clearMarkers();
-  if(!obj.items || obj.items.length===0) return;
-  obj.items.forEach(v=>{
-    const m = L.marker([v.lat, v.lon]).addTo(map);
-    m.bindPopup(v.label || 'vehicle');
-    markers.push(m);
-  });
-}
-</script>
+      useEffect(() => {
+          const loadVehicles = async () => {
+              try {
+                const res = await fetch('/api/vehicles');
+                const json = await res.json();
+                setVehicles(json.items || []);
+              } catch (e) {
+                setVehicles([]);
+              }
+          };
+          loadVehicles();
+          const id = setInterval(loadVehicles, 15000);
+          return () => clearInterval(id);
+      }, []);
+
+      useEffect(() => {
+        const handler = setTimeout(() => {
+          if (!query) { setRoutes([]); return; }
+          fetch(`/api/routes/search?q=${encodeURIComponent(query)}`)
+            .then(res => res.ok ? res.json() : [])
+            .then(data => setRoutes(data || []))
+            .catch(() => setRoutes([]));
+        }, 400);
+        return () => clearTimeout(handler);
+      }, [query]);
+
+      const liveCounts = vehicles.reduce((acc, v) => {
+        const label = v.label || '';
+        const routeName = label.split('·')[0].trim();
+        if (routeName) acc[routeName] = (acc[routeName] || 0) + 1;
+        return acc;
+      }, {});
+
+      return (
+        <div className="p-4 space-y-4">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search routes..."
+            className="w-full px-3 py-2 rounded bg-gray-800 text-white placeholder-gray-500 focus:outline-none"
+          />
+          <div className="max-h-72 overflow-y-auto border border-gray-800 rounded divide-y divide-gray-800">
+            {routes.map((r, idx) => {
+              const count = liveCounts[r.route] || 0;
+              return (
+                <div key={idx} className="p-3 flex justify-between items-center cursor-pointer hover:bg-gray-700" onClick={() => onSelect(r)}>
+                  <div>
+                    <span className="font-semibold text-sm text-blue-300">{r.route}</span>
+                  </div>
+                  {count > 0 ? (
+                    <span className="text-green-400 text-xs">Live ({count})</span>
+                  ) : (
+                    <span className="text-gray-500 text-xs">No buses</span>
+                  )}
+                </div>
+              );
+            })}
+            {routes.length === 0 && query && <div className="p-2 text-gray-500">No routes found</div>}
+          </div>
+        </div>
+      );
+    }
+
+    function MapPage({ route }) {
+      const mapRef = useRef(null);
+      const polyRef = useRef(null);
+      const markersRef = useRef([]);
+      useEffect(() => {
+        if (!mapRef.current) {
+          const map = L.map('mapDiv').setView([50.92, -1.40], 12);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: ''
+          }).addTo(map);
+          mapRef.current = map;
+        }
+      }, []);
+      useEffect(() => {
+        if (!route || !mapRef.current) return;
+        const loadRoute = async () => {
+          try {
+            const shapeRes = await fetch(`/api/route-shape?route=${encodeURIComponent(route.route)}`);
+            const shapeData = await shapeRes.json();
+            if (polyRef.current) {
+              mapRef.current.removeLayer(polyRef.current);
+              polyRef.current = null;
+            }
+            if (shapeData.shape && shapeData.shape.length > 0) {
+              const coords = shapeData.shape.map(([lat, lon]) => [lat, lon]);
+              polyRef.current = L.polyline(coords, { color: '#007bff' }).addTo(mapRef.current);
+              mapRef.current.fitBounds(polyRef.current.getBounds());
+            }
+            const vehiclesRes = await fetch(`/api/vehicles?route=${encodeURIComponent(route.route)}`);
+            const vehiclesData = await vehiclesRes.json();
+            markersRef.current.forEach(m => mapRef.current.removeLayer(m));
+            markersRef.current = [];
+            (vehiclesData.items || []).forEach(item => {
+              if(item.lat && item.lon) {
+                const m = L.marker([item.lat, item.lon]);
+                m.bindPopup(item.label || 'bus');
+                m.addTo(mapRef.current);
+                markersRef.current.push(m);
+              }
+            });
+          } catch (e) {
+            console.error(e);
+          }
+        };
+        loadRoute();
+        const id = setInterval(loadRoute, 20000);
+        return () => clearInterval(id);
+      }, [route]);
+      return (
+        <div className="p-4">
+          {route ? (
+            <div>
+              <h2 className="text-lg mb-2">Route {route.route}</h2>
+              <div id="mapDiv" className="h-80 rounded overflow-hidden" />
+            </div>
+          ) : (
+            <p className="text-gray-500">Select a route in the Routes tab to view on map.</p>
+          )}
+        </div>
+      );
+    }
+
+    function Settings({ status }) {
+      return (
+        <div className="p-4 space-y-2">
+          <h2 className="text-lg font-semibold mb-2">Settings</h2>
+          {status ? (
+            <div className="space-y-1 text-sm">
+              <p>Version: {status.version}</p>
+              <p>Build: {status.build}</p>
+              <p>GTFS ready: {status.gtfs_ready ? 'Yes' : 'No'} ({status.gtfs_stops})</p>
+              <p>Live feed configured: {status.live_feed_configured ? 'Yes' : 'No'}</p>
+            </div>
+          ) : (
+            <p className="text-gray-500 text-sm">Loading status...</p>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
 </body>
 </html>
