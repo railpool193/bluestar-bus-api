@@ -54,13 +54,12 @@
     <button id="nav-routes"   class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">🚌</span><span>Routes</span></button>
     <button id="nav-map"      class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">🗺️</span><span>Map</span></button>
     <button id="nav-settings" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">⚙️</span><span>Settings</span></button>
-    <!-- Hidden nav for trip tab -->
-    <button id="nav-trip" class="flex flex-col items-center px-2 text-xs text-gray-400 hidden"><span class="text-lg leading-none">🚏</span><span>Trip</span></button>
+    <button id="nav-trip" class="flex flex-col items-center px-2 text-xs text-gray-400 hidden"><span class="text-lg leading-one">🚏</span><span>Trip</span></button>
   </nav>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {
-      // Tab management
+      // Tabs
       const tabs = {
         home: document.getElementById('home-tab'),
         routes: document.getElementById('routes-tab'),
@@ -104,7 +103,7 @@
       fetchStatus();
       setInterval(fetchStatus, 10000);
 
-      // Home tab logic: search stops and show departures
+      // Home: search stops and show departures
       const homeSearch  = document.getElementById('home-search');
       const homeResults = document.getElementById('home-results');
       const homeDeps    = document.getElementById('home-departures');
@@ -150,7 +149,6 @@
             deps.forEach(d => {
               const li = document.createElement('li');
               li.className = 'flex justify-between py-1 text-sm cursor-pointer';
-              // Colour logic: live vs timetable
               let timeClass;
               if (d.is_live) {
                 if (d.is_due)                timeClass = 'text-green-400 animate-pulse';
@@ -172,7 +170,7 @@
         }
       }
 
-      // Routes tab logic: search routes and show live fleet counts
+      // Routes tab: search and list routes with live bus count
       const routesSearch  = document.getElementById('routes-search');
       const routesResults = document.getElementById('routes-results');
       let routesTimer = null;
@@ -198,7 +196,6 @@
             const data = await res.json();
             routesResults.innerHTML = '';
             if (data && data.length > 0) {
-              // map route to number of live buses and list their IDs
               const counts = {};
               vehiclesCache.forEach(v => {
                 const lbl = v.label || '';
@@ -209,7 +206,6 @@
                 const div = document.createElement('div');
                 div.className = 'p-3 flex justify-between items-center cursor-pointer hover:bg-gray-700';
                 const count = counts[r.route] || 0;
-                // list bus IDs for this route
                 const busList = vehiclesCache.filter(v => {
                   const routeName = (v.label || '').split('·')[0].trim();
                   return routeName === r.route;
@@ -233,7 +229,7 @@
         }, 300);
       });
 
-      // Map tab logic: draw shape and live buses for selected route
+      // Map tab: show shape and live buses for selected route
       let map = null;
       let shapeLayer = null;
       let markers = [];
@@ -248,7 +244,6 @@
         if (!selectedRoute) return;
         initMap();
         document.getElementById('map-title').textContent = 'Route ' + selectedRoute;
-        // fetch shape
         try {
           const shapeRes = await fetch('/api/route-shape?route=' + encodeURIComponent(selectedRoute));
           const shapeData = await shapeRes.json();
@@ -259,7 +254,6 @@
             map.fitBounds(shapeLayer.getBounds());
           }
         } catch (e) {}
-        // fetch vehicles
         try {
           const vRes = await fetch('/api/vehicles?route=' + encodeURIComponent(selectedRoute));
           const vData = await vRes.json();
@@ -279,7 +273,7 @@
         if (currentTab === 'map' && selectedRoute) updateMap();
       }, 20000);
 
-      // Settings tab logic
+      // Settings tab
       async function loadSettings() {
         if (!statusCache) return;
         const c = statusCache;
@@ -291,7 +285,7 @@
         `;
       }
 
-      // Trip tab logic: show full stop list for one trip
+      // Trip tab: show full stop list
       async function showTrip(trip_id, depInfo) {
         showTab('trip');
         const title   = document.getElementById('trip-title');
