@@ -6,10 +6,6 @@
   <title>Bluestar</title>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/17.0.2/umd/react.development.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/17.0.2/umd/react-dom.development.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.17.12/babel.min.js"></script>
   <style>
     body { background-color: #0d1220; color: #e7ecff; }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -17,276 +13,263 @@
     ::-webkit-scrollbar-track { background: #0d1220; }
   </style>
 </head>
-<body>
-  <div id="root"></div>
-  <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
-
-    function App() {
-      const [tab, setTab] = useState('home');
-      const [status, setStatus] = useState(null);
-      const [selectedRoute, setSelectedRoute] = useState(null);
-
-      useEffect(() => {
-        async function fetchStatus() {
-          try {
-            const res = await fetch('/api/status');
-            if (res.ok) {
-              const json = await res.json();
-              setStatus(json);
-            }
-          } catch (e) {
-            console.error(e);
-          }
-        }
-        fetchStatus();
-        const id = setInterval(fetchStatus, 10000);
-        return () => clearInterval(id);
-      }, []);
-
-      return (
-        <div className="flex flex-col min-h-screen">
-          <header className="px-4 py-3 flex items-center justify-between border-b border-gray-800">
-            <div className="flex items-center space-x-2">
-              <span className="text-blue-400 text-2xl">★</span>
-              <h1 className="text-lg font-bold">bluestar</h1>
-            </div>
-            {status && <span className="text-sm text-gray-400">UK: {status.time}</span>}
-          </header>
-          <main className="flex-1 overflow-auto">
-            {tab === 'home' && <Home />}
-            {tab === 'routes' && <Routes onSelect={(route) => { setSelectedRoute(route); setTab('map'); }} />}
-            {tab === 'map' && <MapPage route={selectedRoute} />}
-            {tab === 'settings' && <Settings status={status} />}
-          </main>
-          <nav className="border-t border-gray-800 bg-gray-900 flex justify-around py-2">
-            <NavButton label="Home" icon="🏠" active={tab === 'home'} onClick={() => setTab('home')} />
-            <NavButton label="Routes" icon="🚌" active={tab === 'routes'} onClick={() => setTab('routes')} />
-            <NavButton label="Map" icon="🗺️" active={tab === 'map'} onClick={() => setTab('map')} />
-            <NavButton label="Settings" icon="⚙️" active={tab === 'settings'} onClick={() => setTab('settings')} />
-          </nav>
-        </div>
-      );
-    }
-
-    function NavButton({ label, icon, active, onClick }) {
-      return (
-        <button onClick={onClick} className={"flex flex-col items-center px-2 text-xs " + (active ? 'text-blue-400' : 'text-gray-400 hover:text-blue-400') }>
-          <span className="text-lg leading-none">{icon}</span>
-          <span>{label}</span>
-        </button>
-      );
-    }
-
-    function Home() {
-      const [query, setQuery] = useState('');
-      const [stops, setStops] = useState([]);
-      const [selectedStop, setSelectedStop] = useState(null);
-      const [departures, setDepartures] = useState([]);
-
-      useEffect(() => {
-        const handler = setTimeout(() => {
-          if (!query) { setStops([]); return; }
-          fetch(`/api/stops/search?q=${encodeURIComponent(query)}`)
-            .then(res => res.ok ? res.json() : [])
-            .then(data => setStops(data || []))
-            .catch(() => setStops([]));
-        }, 400);
-        return () => clearTimeout(handler);
-      }, [query]);
-
-      const selectStop = (stop) => {
-        setSelectedStop(stop);
-        fetch(`/api/departures?stop_id=${encodeURIComponent(stop.id)}&window=120`)
-          .then(res => res.ok ? res.json() : { departures: [] })
-          .then(data => setDepartures(data.departures || []))
-          .catch(() => setDepartures([]));
+<body class="flex flex-col min-h-screen">
+  <header class="px-4 py-3 flex items-center justify-between border-b border-gray-800">
+    <div class="flex items-center space-x-2">
+      <span class="text-blue-400 text-2xl">★</span>
+      <h1 class="text-lg font-bold">bluestar</h1>
+    </div>
+    <span id="status-time" class="text-sm text-gray-400"></span>
+  </header>
+  <main id="main" class="flex-1 overflow-auto">
+    <!-- Home Tab -->
+    <div id="home-tab" class="p-4 space-y-4">
+      <input id="home-search" type="text" placeholder="Search stops..." class="w-full px-3 py-2 rounded bg-gray-800 text-white placeholder-gray-500 focus:outline-none" />
+      <div id="home-results" class="max-h-40 overflow-y-auto border border-gray-800 rounded"></div>
+      <div id="home-departures"></div>
+    </div>
+    <!-- Routes Tab -->
+    <div id="routes-tab" class="p-4 space-y-4 hidden">
+      <input id="routes-search" type="text" placeholder="Search routes..." class="w-full px-3 py-2 rounded bg-gray-800 text-white placeholder-gray-500 focus:outline-none" />
+      <div id="routes-results" class="max-h-72 overflow-y-auto border border-gray-800 rounded divide-y divide-gray-800"></div>
+    </div>
+    <!-- Map Tab -->
+    <div id="map-tab" class="p-4 hidden">
+      <h2 id="map-title" class="text-lg mb-2"></h2>
+      <div id="map" class="h-80 rounded overflow-hidden"></div>
+    </div>
+    <!-- Settings Tab -->
+    <div id="settings-tab" class="p-4 space-y-2 hidden">
+      <h2 class="text-lg font-semibold mb-2">Settings</h2>
+      <div id="settings-content" class="space-y-1 text-sm"></div>
+    </div>
+  </main>
+  <nav class="border-t border-gray-800 bg-gray-900 flex justify-around py-2">
+    <button id="nav-home" class="flex flex-col items-center px-2 text-xs text-blue-400">
+      <span class="text-lg leading-none">🏠</span><span>Home</span>
+    </button>
+    <button id="nav-routes" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400">
+      <span class="text-lg leading-none">🚌</span><span>Routes</span>
+    </button>
+    <button id="nav-map" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400">
+      <span class="text-lg leading-none">🗺️</span><span>Map</span>
+    </button>
+    <button id="nav-settings" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400">
+      <span class="text-lg leading-none">⚙️</span><span>Settings</span>
+    </button>
+  </nav>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Tabs
+      const tabs = {
+        home: document.getElementById('home-tab'),
+        routes: document.getElementById('routes-tab'),
+        map: document.getElementById('map-tab'),
+        settings: document.getElementById('settings-tab')
       };
+      const navButtons = {
+        home: document.getElementById('nav-home'),
+        routes: document.getElementById('nav-routes'),
+        map: document.getElementById('nav-map'),
+        settings: document.getElementById('nav-settings')
+      };
+      let currentTab = 'home';
+      function showTab(name) {
+        Object.keys(tabs).forEach(key => {
+          tabs[key].classList.toggle('hidden', key !== name);
+          navButtons[key].classList.toggle('text-blue-400', key === name);
+          navButtons[key].classList.toggle('text-gray-400', key !== name);
+        });
+        currentTab = name;
+        if (name === 'settings') loadSettings();
+      }
+      navButtons.home.addEventListener('click', () => showTab('home'));
+      navButtons.routes.addEventListener('click', () => showTab('routes'));
+      navButtons.map.addEventListener('click', () => showTab('map'));
+      navButtons.settings.addEventListener('click', () => showTab('settings'));
 
-      return (
-        <div className="p-4 space-y-4">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search stops..."
-            className="w-full px-3 py-2 rounded bg-gray-800 text-white placeholder-gray-500 focus:outline-none"
-          />
-          <div className="max-h-40 overflow-y-auto border border-gray-800 rounded">
-            {stops.map(stop => (
-              <div key={stop.id} className="p-2 border-b border-gray-800 hover:bg-gray-700 cursor-pointer" onClick={() => selectStop(stop)}>
-                {stop.name}
-              </div>
-            ))}
-            {stops.length === 0 && query && <div className="p-2 text-gray-500">No stops found</div>}
-          </div>
-          {selectedStop && (
-            <div>
-              <h2 className="text-lg mb-2">Live Departures for <span className="text-blue-400">{selectedStop.name}</span></h2>
-              <ul className="divide-y divide-gray-800">
-                {departures.map((d, idx) => (
-                  <li key={idx} className="flex justify-between py-1 text-sm">
-                    <span>{d.route} → {d.destination}</span>
-                    <span className={d.is_due ? 'text-red-400' : (d.delay_min && d.delay_min > 0 ? 'text-red-400' : (d.delay_min && d.delay_min < 0 ? 'text-yellow-400' : 'text-green-400'))}>{d.time_display}</span>
-                  </li>
-                ))}
-                {departures.length === 0 && <li className="py-2 text-gray-500">No departures in the next 2h.</li>}
-              </ul>
-            </div>
-          )}
-        </div>
-      );
-    }
+      // Status updater
+      async function fetchStatus() {
+        try {
+          const res = await fetch('/api/status');
+          if (!res.ok) return;
+          const data = await res.json();
+          document.getElementById('status-time').textContent = 'UK: ' + data.time;
+          statusCache = data;
+        } catch (e) {}
+      }
+      let statusCache = null;
+      fetchStatus();
+      setInterval(fetchStatus, 10000);
 
-    function Routes({ onSelect }) {
-      const [query, setQuery] = useState('');
-      const [routes, setRoutes] = useState([]);
-      const [vehicles, setVehicles] = useState([]);
-
-      useEffect(() => {
-          const loadVehicles = async () => {
-              try {
-                const res = await fetch('/api/vehicles');
-                const json = await res.json();
-                setVehicles(json.items || []);
-              } catch (e) {
-                setVehicles([]);
-              }
-          };
-          loadVehicles();
-          const id = setInterval(loadVehicles, 15000);
-          return () => clearInterval(id);
-      }, []);
-
-      useEffect(() => {
-        const handler = setTimeout(() => {
-          if (!query) { setRoutes([]); return; }
-          fetch(`/api/routes/search?q=${encodeURIComponent(query)}`)
-            .then(res => res.ok ? res.json() : [])
-            .then(data => setRoutes(data || []))
-            .catch(() => setRoutes([]));
-        }, 400);
-        return () => clearTimeout(handler);
-      }, [query]);
-
-      const liveCounts = vehicles.reduce((acc, v) => {
-        const label = v.label || '';
-        const routeName = label.split('·')[0].trim();
-        if (routeName) acc[routeName] = (acc[routeName] || 0) + 1;
-        return acc;
-      }, {});
-
-      return (
-        <div className="p-4 space-y-4">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search routes..."
-            className="w-full px-3 py-2 rounded bg-gray-800 text-white placeholder-gray-500 focus:outline-none"
-          />
-          <div className="max-h-72 overflow-y-auto border border-gray-800 rounded divide-y divide-gray-800">
-            {routes.map((r, idx) => {
-              const count = liveCounts[r.route] || 0;
-              return (
-                <div key={idx} className="p-3 flex justify-between items-center cursor-pointer hover:bg-gray-700" onClick={() => onSelect(r)}>
-                  <div>
-                    <span className="font-semibold text-sm text-blue-300">{r.route}</span>
-                  </div>
-                  {count > 0 ? (
-                    <span className="text-green-400 text-xs">Live ({count})</span>
-                  ) : (
-                    <span className="text-gray-500 text-xs">No buses</span>
-                  )}
-                </div>
-              );
-            })}
-            {routes.length === 0 && query && <div className="p-2 text-gray-500">No routes found</div>}
-          </div>
-        </div>
-      );
-    }
-
-    function MapPage({ route }) {
-      const mapRef = useRef(null);
-      const polyRef = useRef(null);
-      const markersRef = useRef([]);
-      useEffect(() => {
-        if (!mapRef.current) {
-          const map = L.map('mapDiv').setView([50.92, -1.40], 12);
-          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: ''
-          }).addTo(map);
-          mapRef.current = map;
-        }
-      }, []);
-      useEffect(() => {
-        if (!route || !mapRef.current) return;
-        const loadRoute = async () => {
+      // Home: search stops
+      const homeSearch = document.getElementById('home-search');
+      const homeResults = document.getElementById('home-results');
+      const homeDeps = document.getElementById('home-departures');
+      let homeTimer = null;
+      homeSearch.addEventListener('input', () => {
+        if (homeTimer) clearTimeout(homeTimer);
+        homeTimer = setTimeout(async () => {
+          const q = homeSearch.value.trim();
+          if (!q) { homeResults.innerHTML = ''; return; }
           try {
-            const shapeRes = await fetch(`/api/route-shape?route=${encodeURIComponent(route.route)}`);
-            const shapeData = await shapeRes.json();
-            if (polyRef.current) {
-              mapRef.current.removeLayer(polyRef.current);
-              polyRef.current = null;
+            const res = await fetch('/api/stops/search?q=' + encodeURIComponent(q));
+            const data = await res.json();
+            homeResults.innerHTML = '';
+            if (data && data.length > 0) {
+              data.forEach(st => {
+                const div = document.createElement('div');
+                div.className = 'p-2 border-b border-gray-800 hover:bg-gray-700 cursor-pointer';
+                div.textContent = st.name;
+                div.onclick = () => selectStop(st);
+                homeResults.appendChild(div);
+              });
+            } else {
+              homeResults.innerHTML = '<div class="p-2 text-gray-500">No stops found</div>';
             }
-            if (shapeData.shape && shapeData.shape.length > 0) {
-              const coords = shapeData.shape.map(([lat, lon]) => [lat, lon]);
-              polyRef.current = L.polyline(coords, { color: '#007bff' }).addTo(mapRef.current);
-              mapRef.current.fitBounds(polyRef.current.getBounds());
-            }
-            const vehiclesRes = await fetch(`/api/vehicles?route=${encodeURIComponent(route.route)}`);
-            const vehiclesData = await vehiclesRes.json();
-            markersRef.current.forEach(m => mapRef.current.removeLayer(m));
-            markersRef.current = [];
-            (vehiclesData.items || []).forEach(item => {
-              if(item.lat && item.lon) {
-                const m = L.marker([item.lat, item.lon]);
-                m.bindPopup(item.label || 'bus');
-                m.addTo(mapRef.current);
-                markersRef.current.push(m);
-              }
-            });
           } catch (e) {
-            console.error(e);
+            homeResults.innerHTML = '<div class="p-2 text-gray-500">Error</div>';
           }
-        };
-        loadRoute();
-        const id = setInterval(loadRoute, 20000);
-        return () => clearInterval(id);
-      }, [route]);
-      return (
-        <div className="p-4">
-          {route ? (
-            <div>
-              <h2 className="text-lg mb-2">Route {route.route}</h2>
-              <div id="mapDiv" className="h-80 rounded overflow-hidden" />
-            </div>
-          ) : (
-            <p className="text-gray-500">Select a route in the Routes tab to view on map.</p>
-          )}
-        </div>
-      );
-    }
+        }, 300);
+      });
+      async function selectStop(stop) {
+        homeResults.innerHTML = '';
+        homeSearch.value = stop.name;
+        homeDeps.innerHTML = '<p class="text-sm text-gray-500">Loading departures...</p>';
+        try {
+          const res = await fetch('/api/departures?stop_id=' + encodeURIComponent(stop.id) + '&window=120');
+          const data = await res.json();
+          const deps = data.departures || [];
+          if (deps.length === 0) {
+            homeDeps.innerHTML = '<p class="text-gray-500 text-sm">No departures in the next 2h.</p>';
+          } else {
+            const list = document.createElement('ul');
+            list.className = 'divide-y divide-gray-800';
+            deps.forEach(d => {
+              const li = document.createElement('li');
+              li.className = 'flex justify-between py-1 text-sm';
+              li.innerHTML = `<span>${d.route} → ${d.destination}</span><span class="${d.is_due ? 'text-red-400' : (d.delay_min && d.delay_min > 0 ? 'text-red-400' : (d.delay_min && d.delay_min < 0 ? 'text-yellow-400' : 'text-green-400'))}">${d.time_display}</span>`;
+              list.appendChild(li);
+            });
+            homeDeps.innerHTML = '';
+            homeDeps.appendChild(list);
+          }
+        } catch (e) {
+          homeDeps.innerHTML = '<p class="text-red-400 text-sm">Error loading departures.</p>';
+        }
+      }
 
-    function Settings({ status }) {
-      return (
-        <div className="p-4 space-y-2">
-          <h2 className="text-lg font-semibold mb-2">Settings</h2>
-          {status ? (
-            <div className="space-y-1 text-sm">
-              <p>Version: {status.version}</p>
-              <p>Build: {status.build}</p>
-              <p>GTFS ready: {status.gtfs_ready ? 'Yes' : 'No'} ({status.gtfs_stops})</p>
-              <p>Live feed configured: {status.live_feed_configured ? 'Yes' : 'No'}</p>
-            </div>
-          ) : (
-            <p className="text-gray-500 text-sm">Loading status...</p>
-          )}
-        </div>
-      );
-    }
+      // Routes: search and list
+      const routesSearch = document.getElementById('routes-search');
+      const routesResults = document.getElementById('routes-results');
+      let routesTimer = null;
+      let vehiclesCache = [];
+      async function loadVehicles() {
+        try {
+          const res = await fetch('/api/vehicles');
+          const data = await res.json();
+          vehiclesCache = data.items || [];
+        } catch (e) {
+          vehiclesCache = [];
+        }
+      }
+      loadVehicles();
+      setInterval(loadVehicles, 15000);
+      routesSearch.addEventListener('input', () => {
+        if (routesTimer) clearTimeout(routesTimer);
+        routesTimer = setTimeout(async () => {
+          const q = routesSearch.value.trim();
+          if (!q) { routesResults.innerHTML = ''; return; }
+          try {
+            const res = await fetch('/api/routes/search?q=' + encodeURIComponent(q));
+            const data = await res.json();
+            routesResults.innerHTML = '';
+            if (data && data.length > 0) {
+              // compute counts
+              const counts = {};
+              vehiclesCache.forEach(v => {
+                const lbl = v.label || '';
+                const r = lbl.split('·')[0].trim();
+                if (r) counts[r] = (counts[r] || 0) + 1;
+              });
+              data.forEach(r => {
+                const div = document.createElement('div');
+                div.className = 'p-3 flex justify-between items-center cursor-pointer hover:bg-gray-700';
+                div.innerHTML = `<span class="font-semibold text-sm text-blue-300">${r.route}</span><span class="${counts[r.route] ? 'text-green-400' : 'text-gray-500'} text-xs">${counts[r.route] ? 'Live (' + counts[r.route] + ')' : 'No buses'}</span>`;
+                div.onclick = () => { selectedRoute = r.route; updateMap(); showTab('map'); };
+                routesResults.appendChild(div);
+              });
+            } else {
+              routesResults.innerHTML = '<div class="p-2 text-gray-500">No routes found</div>';
+            }
+          } catch (e) {
+            routesResults.innerHTML = '<div class="p-2 text-red-400">Error</div>';
+          }
+        }, 300);
+      });
 
-    ReactDOM.render(<App />, document.getElementById('root'));
+      // Map
+      let map = null;
+      let shapeLayer = null;
+      let markers = [];
+      let selectedRoute = null;
+      function initMap() {
+        if (!map) {
+          map = L.map('map').setView([50.92, -1.40], 12);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+        }
+      }
+      async function updateMap() {
+        if (!selectedRoute) return;
+        initMap();
+        document.getElementById('map-title').textContent = 'Route ' + selectedRoute;
+        // shape
+        try {
+          const shapeRes = await fetch('/api/route-shape?route=' + encodeURIComponent(selectedRoute));
+          const shapeData = await shapeRes.json();
+          if (shapeLayer) { map.removeLayer(shapeLayer); shapeLayer = null; }
+          if (shapeData.shape && shapeData.shape.length > 0) {
+            const coords = shapeData.shape.map(([lat, lon]) => [lat, lon]);
+            shapeLayer = L.polyline(coords, { color: '#007bff' }).addTo(map);
+            map.fitBounds(shapeLayer.getBounds());
+          }
+        } catch (e) {}
+        // vehicles
+        try {
+          const vRes = await fetch('/api/vehicles?route=' + encodeURIComponent(selectedRoute));
+          const vData = await vRes.json();
+          markers.forEach(m => map.removeLayer(m));
+          markers = [];
+          (vData.items || []).forEach(it => {
+            if (it.lat && it.lon) {
+              const m = L.marker([it.lat, it.lon]);
+              m.bindPopup(it.label || 'bus');
+              m.addTo(map);
+              markers.push(m);
+            }
+          });
+        } catch (e) {}
+      }
+      setInterval(() => {
+        if (currentTab === 'map' && selectedRoute) updateMap();
+      }, 20000);
+
+      // Settings
+      async function loadSettings() {
+        if (!statusCache) return;
+        const c = statusCache;
+        document.getElementById('settings-content').innerHTML = `
+          <p>Version: ${c.version}</p>
+          <p>Build: ${c.build}</p>
+          <p>GTFS ready: ${c.gtfs_ready ? 'Yes' : 'No'} (${c.gtfs_stops})</p>
+          <p>Live feed configured: ${c.live_feed_configured ? 'Yes' : 'No'}</p>
+        `;
+      }
+
+      // Default tab
+      showTab('home');
+    });
   </script>
 </body>
 </html>
