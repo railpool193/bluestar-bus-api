@@ -67,7 +67,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {
-      // Tabs
+      // Tabkezelés
       const tabs = {
         home: document.getElementById('home-tab'),
         routes: document.getElementById('routes-tab'),
@@ -97,7 +97,8 @@
       navButtons.map.addEventListener('click',     () => showTab('map'));
       navButtons.settings.addEventListener('click',() => showTab('settings'));
 
-      // Status updater
+      // Státusz frissítés
+      let statusCache = null;
       async function fetchStatus() {
         try {
           const res = await fetch('/api/status');
@@ -107,11 +108,10 @@
           statusCache = data;
         } catch (e) {}
       }
-      let statusCache = null;
       fetchStatus();
       setInterval(fetchStatus, 10000);
 
-      // Home tab: search stops and show departures
+      // Home tab: megálló keresés és indulások
       const homeSearch  = document.getElementById('home-search');
       const homeResults = document.getElementById('home-results');
       const homeDeps    = document.getElementById('home-departures');
@@ -178,7 +178,7 @@
         }
       }
 
-      // Routes tab: search and list routes with live bus count
+      // Routes tab: viszonylat keresés
       const routesSearch  = document.getElementById('routes-search');
       const routesResults = document.getElementById('routes-results');
       let routesTimer = null;
@@ -237,7 +237,7 @@
         }, 300);
       });
 
-      // Map tab: show shape and live buses for selected route
+      // Map tab: shape + élő buszok
       let map = null;
       let shapeLayer = null;
       let markers = [];
@@ -293,7 +293,7 @@
         `;
       }
 
-      // Trip tab: show full stop list
+      // Trip tab: teljes megállólista
       async function showTrip(trip_id, depInfo) {
         showTab('trip');
         const title   = document.getElementById('trip-title');
@@ -334,7 +334,7 @@
         }
       }
 
-      // GTFS upload form
+      // GTFS feltöltés (Settings)
       document.getElementById('gtfs-upload').addEventListener('submit', async (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
@@ -346,7 +346,7 @@
           alert('Error uploading GTFS: ' + err);
         }
       });
-      // Live feed save button
+      // Élő feed mentése (Settings)
       document.getElementById('feed-submit').addEventListener('click', async () => {
         const url = document.getElementById('feed-url').value.trim();
         if (!url) { alert('Please enter feed URL'); return; }
@@ -363,7 +363,7 @@
         }
       });
 
-      // Default tab
+      // Kezdőlap
       showTab('home');
     });
   </script>
