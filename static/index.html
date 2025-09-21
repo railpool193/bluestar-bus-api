@@ -111,7 +111,7 @@
       fetchStatus();
       setInterval(fetchStatus, 10000);
 
-      // Home tab
+      // Home tab: search stops and show departures
       const homeSearch  = document.getElementById('home-search');
       const homeResults = document.getElementById('home-results');
       const homeDeps    = document.getElementById('home-departures');
@@ -178,7 +178,7 @@
         }
       }
 
-      // Routes tab
+      // Routes tab: search and list routes with live bus count
       const routesSearch  = document.getElementById('routes-search');
       const routesResults = document.getElementById('routes-results');
       let routesTimer = null;
@@ -237,7 +237,7 @@
         }, 300);
       });
 
-      // Map tab
+      // Map tab: show shape and live buses for selected route
       let map = null;
       let shapeLayer = null;
       let markers = [];
@@ -293,7 +293,7 @@
         `;
       }
 
-      // Trip tab
+      // Trip tab: show full stop list
       async function showTrip(trip_id, depInfo) {
         showTab('trip');
         const title   = document.getElementById('trip-title');
