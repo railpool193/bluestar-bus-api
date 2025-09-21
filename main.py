@@ -1,303 +1,215 @@
-import asyncio
-import io
-import json
-import os
-import time
-import zipfile
-from datetime import datetime, timedelta, date
-from typing import Dict, List, Optional, Any
+# main.py  (v5.3.1) — FastAPI backend GTFS + BODS SIRI-VM
+import io, os, time, zipfile, json, math
+from datetime import datetime, timedelta, date, time as dtime
+from typing import Dict, List, Any, Optional
 
-import httpx
 import pandas as pd
-import pytz
-import uvicorn
-import xmltodict
-from fastapi import FastAPI, File, UploadFile, HTTPException, Body
+import httpx
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
-APP_VERSION = "5.3.0"
+try:
+    from zoneinfo import ZoneInfo
+    LON = ZoneInfo("Europe/London")
+except Exception:
+    import pytz
+    LON = pytz.timezone("Europe/London")
 
-# ---------- Config / State ----------
+APP_VERSION = "5.3.1"
 
-DATA_DIR = os.path.abspath("data")
-GTFS_DIR = os.path.join(DATA_DIR, "gtfs")
-GTFS_ZIP = os.path.join(DATA_DIR, "gtfs.zip")
-FLEET_JSON = os.path.join(DATA_DIR, "fleet.json")
+DATA_DIR   = os.path.abspath("data")
+GTFS_DIR   = os.path.join(DATA_DIR, "gtfs")
+CACHE_DIR  = os.path.join(DATA_DIR, "cache")
+LIVE_JSON  = os.path.join(CACHE_DIR, "siri_vm.json")
+LIVE_CFG   = os.path.join(CACHE_DIR, "live_cfg.json")
 
-os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(GTFS_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs("static", exist_ok=True)
 
-TZ_NAME = os.environ.get("TZ", "Europe/London")
-TZ = pytz.timezone(TZ_NAME)
-
-DEFAULT_LOOKAHEAD_MIN = 60
-LIVE_REFRESH_SEC = 8  # mennyi időnként töltjük le a live feedet
-
-class LiveConfig(BaseModel):
-    feed_url: Optional[str] = None  # BODS SIRI-VM URL
-    refresh_sec: int = LIVE_REFRESH_SEC
-
-STATE = {
-    "live_cfg": LiveConfig(),
-    "gtfs_ready": False,
-    "gtfs_meta": {},  # pl. stops_count
+STATE: Dict[str, Any] = {
     "build": int(time.time()),
-    "vehicles": [],  # legutóbbi letöltés eredménye
+    "gtfs_ready": False,
+    "gtfs_meta": {},
+    "live_cfg": {"feed_url": "", "refresh_sec": 8},
+    "vehicles": [],
     "vehicles_ts": 0.0,
-    "fleet": {},  # rendszám -> meta
 }
 
-# GTFS-táblák (pandas DataFrame-ként)
-GTFS: Dict[str, pd.DataFrame] = {}
-
-
-# ---------- Helpers ----------
+GTFS: Dict[str, pd.DataFrame] = {}  # táblák pandas-szal
 
 def now_utc() -> datetime:
-    return datetime.utcnow().replace(tzinfo=pytz.utc)
+    return datetime.utcnow().replace(tzinfo=ZoneInfo("UTC") if isinstance(LON, ZoneInfo) else None)
 
 def now_local() -> datetime:
-    return now_utc().astimezone(TZ)
+    return now_utc().astimezone(LON)
 
-def parse_hhmmss_to_today(hhmmss: str, local_day: date) -> datetime:
-    # "HH:MM:SS" -> a mai nap adott ideje London időzónával
-    h, m, s = [int(x) for x in hhmmss.split(":")]
-    dt = datetime(local_day.year, local_day.month, local_day.day, 0, 0, 0, tzinfo=TZ)
-    dt += timedelta(hours=h, minutes=m, seconds=s)
-    return dt
+def _safe_json_load(path: str, default):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
 
-def service_is_running(trip_row: pd.Series, dt_local: datetime) -> bool:
-    """
-    Eldönti, hogy a trip (calendar + calendar_dates alapján) fut-e a megadott napon.
-    Minimalista implementáció: kezeli a calendar.txt napjait és a calendar_dates.txt módosításait.
-    """
-    service_id = trip_row["service_id"]
-    day = dt_local.date()
+def _safe_json_dump(path: str, obj: Any):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False)
 
-    cal = GTFS.get("calendar")
-    if cal is not None and not cal.empty:
-        c = cal[cal["service_id"] == service_id]
-        ok_calendar = False
-        if not c.empty:
-            c = c.iloc[0]
-            start = pd.to_datetime(c["start_date"], format="%Y%m%d").date()
-            end = pd.to_datetime(c["end_date"], format="%Y%m%d").date()
-            if start <= day <= end:
-                weekday = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"][day.weekday()]
-                ok_calendar = bool(int(c[weekday]))
-        else:
-            ok_calendar = False
-    else:
-        ok_calendar = True  # ha nincs calendar.txt, akkor engedjük, majd a dates szól bele
-
-    dates = GTFS.get("calendar_dates")
-    if dates is not None and not dates.empty:
-        d = dates[dates["service_id"] == service_id]
-        if not d.empty:
-            d["date"] = pd.to_datetime(d["date"], format="%Y%m%d").dt.date
-            same = d[d["date"] == day]
-            if not same.empty:
-                # exception_type: 1 = hozzáadás, 2 = törlés
-                ex = int(same.iloc[0]["exception_type"])
-                return ex == 1
-    return ok_calendar
-
-
-def ensure_str(v: Any) -> str:
-    return "" if v is None else str(v)
-
-
-# ---------- GTFS betöltés ----------
-
+# ---------------- GTFS betöltés ----------------
 def load_gtfs_from_dir(gtfs_dir: str):
-    required = ["stops", "routes", "trips", "stop_times"]
-    tables = {}
-    for name in ["stops", "routes", "trips", "stop_times", "shapes", "calendar", "calendar_dates"]:
-        path = os.path.join(gtfs_dir, f"{name}.txt")
-        if os.path.exists(path):
-            df = pd.read_csv(path, dtype=str)
+    tables: Dict[str, pd.DataFrame] = {}
+    for name in ["stops","routes","trips","stop_times","shapes","calendar","calendar_dates"]:
+        p = os.path.join(gtfs_dir, f"{name}.txt")
+        if os.path.exists(p):
+            df = pd.read_csv(p, dtype=str)
             tables[name] = df
         else:
             tables[name] = pd.DataFrame()
-
-    missing = [t for t in required if tables[t].empty]
+    missing = [n for n in ["stops","routes","trips","stop_times"] if tables[n].empty]
     if missing:
-        raise RuntimeError(f"Hiányzó GTFS táblák: {', '.join(missing)}")
+        raise HTTPException(400, f"Hiányzó GTFS fájl(ok): {', '.join(missing)}")
 
     GTFS.clear()
     GTFS.update(tables)
     STATE["gtfs_ready"] = True
     STATE["gtfs_meta"] = {
-        "gtfs_stops": len(GTFS["stops"]),
-        "gtfs_routes": len(GTFS["routes"]),
-        "tz": TZ_NAME,
+        "stops": len(GTFS["stops"]),
+        "routes": len(GTFS["routes"]),
     }
-
 
 def extract_and_load_gtfs(zip_bytes: bytes):
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        # ürítsük a GTFS_DIR-t
-        for fname in os.listdir(GTFS_DIR):
-            try:
-                os.remove(os.path.join(GTFS_DIR, fname))
-            except Exception:
-                pass
+        for fn in os.listdir(GTFS_DIR):
+            try: os.remove(os.path.join(GTFS_DIR, fn))
+            except Exception: pass
         zf.extractall(GTFS_DIR)
     load_gtfs_from_dir(GTFS_DIR)
 
+# szolgálati nap egyszerű ellenőrzése
+def service_runs(service_id: str, day: date) -> bool:
+    cal = GTFS.get("calendar")
+    ok_calendar = True
+    if cal is not None and not cal.empty:
+        c = cal[cal["service_id"] == service_id]
+        ok_calendar = False
+        if not c.empty:
+            c = c.iloc[0]
+            start = datetime.strptime(c["start_date"], "%Y%m%d").date()
+            end   = datetime.strptime(c["end_date"], "%Y%m%d").date()
+            if start <= day <= end:
+                weekday = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"][day.weekday()]
+                ok_calendar = bool(int(c[weekday]))
+    dates = GTFS.get("calendar_dates")
+    if dates is not None and not dates.empty:
+        d = dates[dates["service_id"]==service_id]
+        if not d.empty:
+            d = d.copy()
+            d["date"] = pd.to_datetime(d["date"], format="%Y%m%d").dt.date
+            same = d[d["date"] == day]
+            if not same.empty:
+                return int(same.iloc[0]["exception_type"]) == 1
+    return ok_calendar
 
-# ---------- Fleet betöltés ----------
+def hhmm_local(dt_utc: datetime) -> str:
+    if dt_utc.tzinfo is None:
+        dt_utc = dt_utc.replace(tzinfo=ZoneInfo("UTC"))
+    return dt_utc.astimezone(LON).strftime("%H:%M")
 
-def load_fleet_json():
-    if os.path.exists(FLEET_JSON):
-        try:
-            with open(FLEET_JSON, "r", encoding="utf-8") as f:
-                STATE["fleet"] = json.load(f)
-        except Exception:
-            STATE["fleet"] = {}
-    else:
-        STATE["fleet"] = {}
+def to_today_time(hms: str, day_local: date) -> datetime:
+    h, m, s = [int(x) for x in hms.split(":")]
+    base = datetime.combine(day_local, dtime(0,0,0)).replace(tzinfo=LON)
+    return base + timedelta(hours=h, minutes=m, seconds=s)
 
-
-# ---------- Live feed (SIRI-VM) ----------
-
-def parse_siri_vm(xml_text: str) -> List[Dict[str, Any]]:
-    """
-    BODS SIRI-VM feed feldolgozása minimálisan a következő mezőkkel:
-    - vehicle_id / registration
-    - line (LineRef)
-    - direction
-    - lat/lon
-    - bearing
-    - stop_ref (MonitoredCall -> StopPointRef)
-    - aimed_dep, expected_dep (ISO)
-    - delay_sec (+ késés/sietés)
-    """
+# ---------------- Live (SIRI-VM) ----------------
+async def fetch_live() -> List[Dict[str, Any]]:
+    url = (_safe_json_load(LIVE_CFG, {}) or {}).get("feed_url") or STATE["live_cfg"].get("feed_url") or ""
+    if not url:
+        return []
+    # cache 15s
+    if STATE["vehicles"] and (time.time() - STATE["vehicles_ts"] < 15):
+        return STATE["vehicles"]
     try:
-        data = xmltodict.parse(xml_text)
-    except Exception as e:
-        raise RuntimeError(f"SIRI parse error: {e}")
-
-    def _get(d: dict, path: List[str]):
-        cur = d
-        for p in path:
-            if cur is None:
-                return None
-            cur = cur.get(p)
-        return cur
-
-    vehicles = []
-    svc = _get(data, ["Siri", "ServiceDelivery", "VehicleMonitoringDelivery"])
-    if svc is None:
-        return vehicles
-
-    activities = svc.get("VehicleActivity", [])
-    if isinstance(activities, dict):
-        activities = [activities]
-
-    for a in activities:
-        mvj = _get(a, ["MonitoredVehicleJourney"])
-        if not mvj:
-            continue
-        line = ensure_str(mvj.get("LineRef"))
-        direction = ensure_str(mvj.get("DirectionRef"))
-        vehicle_id = ensure_str(mvj.get("VehicleRef")) or ensure_str(mvj.get("FramedVehicleJourneyRef",{}).get("DatedVehicleJourneyRef"))
-        loc = mvj.get("VehicleLocation") or {}
-        lat = loc.get("Latitude")
-        lon = loc.get("Longitude")
-        bearing = mvj.get("Bearing")
-
-        call = mvj.get("MonitoredCall") or {}
-        stop_ref = ensure_str(call.get("StopPointRef"))
-        aimed_dep = ensure_str(call.get("AimedDepartureTime") or call.get("AimedArrivalTime"))
-        expected_dep = ensure_str(call.get("ExpectedDepartureTime") or call.get("ExpectedArrivalTime"))
-
-        delay_sec = None
-        if aimed_dep and expected_dep:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(url)
+            txt = r.text
             try:
-                aimed = pd.to_datetime(aimed_dep).tz_convert(TZ)
-                expected = pd.to_datetime(expected_dep).tz_convert(TZ)
-                delay_sec = int((expected - aimed).total_seconds())
+                payload = r.json()
             except Exception:
-                delay_sec = None
+                # lehet XML → xmltodict nélkül egyszerű text-keresés fallback
+                payload = None
+        items: List[Dict[str, Any]] = []
+        if payload:
+            # BODS JSON (egyes szolgáltatók) – keresünk Siri/ServiceDelivery
+            siri = payload.get("Siri") or payload.get("siri") or {}
+            delivs = ((siri.get("ServiceDelivery") or {}).get("VehicleMonitoringDelivery") or [])
+            for d in delivs:
+                for va in (d.get("VehicleActivity") or []):
+                    mvj = va.get("MonitoredVehicleJourney") or {}
+                    loc = mvj.get("VehicleLocation") or {}
+                    items.append({
+                        "route": str(mvj.get("PublishedLineName") or mvj.get("LineRef") or "").strip(),
+                        "dest": (mvj.get("DestinationName") or "") or "",
+                        "vehicle": str(mvj.get("VehicleRef") or mvj.get("VehicleId") or ""),
+                        "lat": loc.get("Latitude"),
+                        "lon": loc.get("Longitude"),
+                        "bearing": mvj.get("Bearing"),
+                        "ts": va.get("RecordedAtTime") or va.get("ValidUntilTime") or "",
+                        "expected": (mvj.get("MonitoredCall") or {}).get("ExpectedDepartureTime")
+                    })
+        else:
+            # nyers, „lapos” BODS text (mint a böngészőben láttad) – nagyon egyszerű parser
+            # soronként próbáljuk kihalászni: "... 17 inbound ... 50.9 ... -1.4 ..."
+            for line in txt.splitlines():
+                parts = line.strip().split()
+                if len(parts) < 6: 
+                    continue
+                # próbáljuk a route-ot megtalálni (pl "17", "U1", "19a")
+                # heur: ha van olyan token, amiben csak betű/szám van és nem időbélyeg
+                # de hagyjuk: csak koordinátákat és route-ot emeljük ki
+                try:
+                    lngs = [float(x) for x in parts if x.replace('.','',1).replace('-','',1).isdigit()]
+                except Exception:
+                    lngs = []
+                if len(lngs) >= 2:
+                    lon = None; lat = None
+                    # az angliai feedben tipikusan lon (negatív), lat (pozitív 50.x)
+                    for f in lngs:
+                        if f > 49 and f < 59: lat = f
+                        if f < 0 and f > -10: lon = f
+                    if lat is not None and lon is not None:
+                        # route: keressünk egy rövid alfanumerikus tokent (1..4 hossz)
+                        route = ""
+                        for tok in parts:
+                            if 1 <= len(tok) <= 4 and tok.replace("a","").isalnum():
+                                route = tok
+                                break
+                        items.append({"route": route, "lat": lat, "lon": lon, "vehicle":"", "dest":"", "bearing": None, "ts": ""})
+        STATE["vehicles"] = items
+        STATE["vehicles_ts"] = time.time()
+        _safe_json_dump(LIVE_JSON, {"ts": STATE["vehicles_ts"], "items": items})
+        return items
+    except Exception:
+        # utolsó cache
+        cached = _safe_json_load(LIVE_JSON, {"items": []})
+        return cached.get("items", [])
 
-        v = {
-            "vehicle_id": vehicle_id,
-            "line": line,
-            "direction": direction,
-            "lat": float(lat) if lat else None,
-            "lon": float(lon) if lon else None,
-            "bearing": float(bearing) if bearing else None,
-            "stop_ref": stop_ref,
-            "aimed_dep": aimed_dep,
-            "expected_dep": expected_dep,
-            "delay_sec": delay_sec,
-        }
-
-        # flotta meta csatolása (ha a vehicle_id rendszámként szerepel)
-        meta = STATE["fleet"].get(vehicle_id) or STATE["fleet"].get(vehicle_id.replace(" ", ""))
-        if meta:
-            v["fleet"] = meta
-
-        vehicles.append(v)
-
-    return vehicles
-
-
-async def maybe_refresh_live():
-    cfg: LiveConfig = STATE["live_cfg"]
-    now = time.time()
-    if not cfg.feed_url:
-        return
-    if now - STATE["vehicles_ts"] < cfg.refresh_sec:
-        return
-
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(cfg.feed_url)
-            r.raise_for_status()
-            xml_text = r.text
-        vehicles = parse_siri_vm(xml_text)
-        STATE["vehicles"] = vehicles
-        STATE["vehicles_ts"] = now
-    except Exception as e:
-        # Nem dobunk hibát a kliens felé, csak logolunk és megtartjuk a régi adatot
-        print(f"[live] fetch error: {e}")
-
-
-# ---------- FastAPI ----------
-
-app = FastAPI(title="Bluestar Bus — API", version=APP_VERSION)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# statikus fájlok (index.html a következő üzenetben)
+# ---------------- FastAPI app ----------------
+app = FastAPI(title="Bluestar Bus — API", version=APP_VERSION, docs_url="/docs", redoc_url=None)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
 
 @app.get("/")
 def root():
-    return {"detail": "Open /index.html", "docs": "/docs"}
+    # egyetlen fájlból szolgáljuk ki a frontendet is
+    index = os.path.abspath("index.html")
+    if not os.path.exists(index):
+        return JSONResponse({"detail":"Upload index.html next to main.py"})
+    return FileResponse(index)
 
-
-@app.get("/index.html")
-def serve_index():
-    path = os.path.join("static", "index.html")
-    if os.path.exists(path):
-        return FileResponse(path, media_type="text/html")
-    return JSONResponse({"error": "static/index.html not found"}, status_code=404)
-
-
+# ---- status
 @app.get("/api/status")
 def api_status():
     return {
@@ -305,328 +217,218 @@ def api_status():
         "version": APP_VERSION,
         "build": STATE["build"],
         "time": now_local().strftime("%H:%M:%S"),
-        "tz": TZ_NAME,
-        "live_feed_configured": bool(STATE["live_cfg"].feed_url),
+        "tz": "Europe/London",
+        "live_feed_configured": bool((_safe_json_load(LIVE_CFG, {}) or {}).get("feed_url") or STATE["live_cfg"].get("feed_url")),
         "gtfs_dir": "data/gtfs",
         "gtfs_ready": STATE["gtfs_ready"],
-        "gtfs_stops": STATE["gtfs_meta"].get("gtfs_stops", 0),
+        "gtfs_stops": STATE.get("gtfs_meta", {}).get("stops", 0),
     }
 
-
+# ---- live config
 @app.get("/api/live/config")
-def get_live_config():
-    return STATE["live_cfg"].model_dump()
-
+def get_live_cfg():
+    return _safe_json_load(LIVE_CFG, STATE["live_cfg"])
 
 @app.post("/api/live/config")
-def set_live_config(cfg: LiveConfig):
-    STATE["live_cfg"] = cfg
-    return {"ok": True, "live_cfg": cfg.model_dump()}
+def set_live_cfg(cfg: Dict[str, Any]):
+    if not cfg or "feed_url" not in cfg:
+        raise HTTPException(400, "feed_url is required")
+    merged = {**STATE["live_cfg"], **cfg}
+    _safe_json_dump(LIVE_CFG, merged)
+    STATE["live_cfg"] = merged
+    STATE["vehicles"] = []
+    STATE["vehicles_ts"] = 0.0
+    try:
+        os.remove(LIVE_JSON)
+    except Exception:
+        pass
+    return {"ok": True}
 
-
-# ---------- GTFS upload / load-url / reload ----------
-
+# ---- GTFS endpoints
 @app.post("/api/gtfs/upload")
 async def api_gtfs_upload(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".zip"):
-        raise HTTPException(400, "Adj meg egy GTFS zip fájlt.")
-    content = await file.read()
-    try:
-        extract_and_load_gtfs(content)
-    except Exception as e:
-        raise HTTPException(400, f"GTFS hiba: {e}")
-    return {"ok": True, "msg": "GTFS loaded", **STATE["gtfs_meta"]}
-
-
-class GtfsUrlIn(BaseModel):
-    url: str
+    raw = await file.read()
+    extract_and_load_gtfs(raw)
+    return {"ok": True, "stops": STATE["gtfs_meta"]["stops"]}
 
 @app.post("/api/gtfs/load-url")
-async def api_gtfs_load_url(body: GtfsUrlIn):
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.get(body.url)
-            r.raise_for_status()
-            content = r.content
-        with open(GTFS_ZIP, "wb") as f:
-            f.write(content)
-        extract_and_load_gtfs(content)
-    except Exception as e:
-        raise HTTPException(400, f"Letöltés/GTFS hiba: {e}")
-    return {"ok": True, "msg": "GTFS loaded from URL", **STATE["gtfs_meta"]}
-
+async def api_gtfs_load_url(body: Dict[str, str]):
+    url = (body or {}).get("url")
+    if not url:
+        raise HTTPException(422, "JSON body: {\"url\":\"https://.../gtfs.zip\"}")
+    async with httpx.AsyncClient(timeout=None) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        extract_and_load_gtfs(r.content)
+    return {"ok": True, "stops": STATE["gtfs_meta"]["stops"]}
 
 @app.post("/api/reload-gtfs")
 def api_reload_gtfs():
-    if not os.path.exists(GTFS_DIR):
-        raise HTTPException(400, "Nincs GTFS a data/gtfs mappában.")
-    try:
-        load_gtfs_from_dir(GTFS_DIR)
-    except Exception as e:
-        raise HTTPException(400, f"GTFS hiba: {e}")
-    return {"ok": True, "msg": "GTFS reloaded", **STATE["gtfs_meta"]}
+    load_gtfs_from_dir(GTFS_DIR)
+    return {"ok": True, "stops": STATE["gtfs_meta"]["stops"]}
 
-
-# ---------- Keresők ----------
-
+# ---- keresés (UI által használt query-s útvonalak)
 @app.get("/api/stops/search")
 def api_stops_search(q: str):
     if not STATE["gtfs_ready"]:
-        raise HTTPException(400, "GTFS nincs betöltve.")
-    s = GTFS["stops"]
-    ql = q.strip().lower()
-    res = s[s["stop_name"].str.lower().str.contains(ql, na=False)].copy()
-    res = res.head(25)
-    # Minimal szükséges mezők
+        raise HTTPException(503, "GTFS not loaded")
+    ql = q.strip().casefold()
+    df = GTFS["stops"].fillna("")
     out = []
-    for _, r in res.iterrows():
-        out.append({
-            "stop_id": r["stop_id"],
-            "name": r["stop_name"],
-            "code": r.get("stop_code"),
-            "lat": float(r["stop_lat"]) if "stop_lat" in r and pd.notna(r["stop_lat"]) else None,
-            "lon": float(r["stop_lon"]) if "stop_lon" in r and pd.notna(r["stop_lon"]) else None,
-        })
-    return {"items": out}
-
+    for _, r in df.iterrows():
+        name = str(r.get("stop_name",""))
+        if ql in name.casefold():
+            out.append({"id": r.get("stop_id"), "name": name})
+            if len(out) >= 50: break
+    return out
 
 @app.get("/api/routes/search")
 def api_routes_search(q: str):
     if not STATE["gtfs_ready"]:
-        raise HTTPException(400, "GTFS nincs betöltve.")
-    routes = GTFS["routes"].copy()
-    ql = q.strip().lower()
-    mask = (
-        routes.get("route_short_name","").str.lower().str.contains(ql, na=False) |
-        routes.get("route_long_name","").str.lower().str.contains(ql, na=False)
-    )
-    res = routes[mask].head(20)
+        raise HTTPException(503, "GTFS not loaded")
+    ql = q.strip().casefold()
+    df = GTFS["routes"].fillna("")
     out = []
-    for _, r in res.iterrows():
-        out.append({
-            "route_id": r["route_id"],
-            "short_name": r.get("route_short_name"),
-            "long_name": r.get("route_long_name"),
-            "type": r.get("route_type"),
-        })
-    return {"items": out}
+    for _, r in df.iterrows():
+        short = str(r.get("route_short_name","")).strip()
+        longn = str(r.get("route_long_name","")).strip()
+        lab = short or longn
+        if ql in lab.casefold():
+            out.append({"route": lab})
+            if len(out) >= 50: break
+    return out
 
-
-# ---------- Indulások (csak indulások + Due/On time/Late/Early) ----------
-
+# indulások (csak indulási idő — live késés, ha van)
 @app.get("/api/departures")
-async def api_departures(stop_id: str, lookahead_min: int = DEFAULT_LOOKAHEAD_MIN):
+async def api_departures(stop_id: str, window: int = 90):
     if not STATE["gtfs_ready"]:
-        raise HTTPException(400, "GTFS nincs betöltve.")
-
-    await maybe_refresh_live()
-    live = STATE["vehicles"]
-
-    stops = GTFS["stops"]
-    stop_times = GTFS["stop_times"]
-    trips = GTFS["trips"]
-    routes = GTFS["routes"]
-
-    # stop_id vagy stop_code egyezés
-    st_mask = (stop_times["stop_id"] == stop_id)
-    # ha van stop_code a GTFS-ben, próbáljuk azzal is egyeztetni
-    scode = None
-    srow = stops[st_mask]
-    if srow.empty:
-        # keressük ki a stop_code-ot
-        s2 = stops[stops.get("stop_id","") == stop_id]
-        if not s2.empty:
-            scode = s2.iloc[0].get("stop_code")
-    if scode:
-        st_mask = (stop_times.get("stop_id") == stop_id) | (stop_times.get("stop_id") == scode)
-
+        raise HTTPException(503, "GTFS not loaded")
     today = now_local().date()
-    now_dt = now_local()
-    until = now_dt + timedelta(minutes=lookahead_min)
-
-    # Az aznapi futó trip-ek adott megállói
-    merged = stop_times.merge(trips, on="trip_id", how="left", suffixes=("","_t"))
-    merged = merged.merge(routes, on="route_id", how="left", suffixes=("","_r"))
-    merged = merged[st_mask].copy()
-
-    items = []
-    for _, row in merged.iterrows():
+    st   = GTFS["stop_times"].fillna("")
+    trips= GTFS["trips"].fillna("")
+    routes=GTFS["routes"].fillna("")
+    # join: stop_times -> trips -> routes (route_short_name/headsign)
+    j = st[st["stop_id"] == stop_id].copy()
+    if j.empty:
+        return {"departures":[]}
+    j = j.merge(trips[["trip_id","route_id","service_id","trip_headsign"]], on="trip_id", how="left")
+    j = j.merge(routes[["route_id","route_short_name","route_long_name"]], on="route_id", how="left")
+    # időpont számítás
+    nowu = now_utc()
+    endu = nowu + timedelta(minutes=max(1, min(window, 480)))
+    rows: List[Dict[str, Any]] = []
+    # live by route (gyorsított)
+    live = await fetch_live()
+    live_by_route: Dict[str, Dict[str, Any]] = {}
+    for r in live:
+        rt = (r.get("route") or "").strip()
+        if not rt: continue
+        live_by_route[rt] = r
+    for _, r in j.iterrows():
         try:
-            if not service_is_running(row, now_dt):
+            if not service_runs(str(r.get("service_id","")), today):
                 continue
-
-            dep_time = row.get("departure_time") or row.get("arrival_time")
-            if not isinstance(dep_time, str) or ":" not in dep_time:
+            dep_local = to_today_time(str(r.get("departure_time","00:00:00")), today)
+            dep_utc   = dep_local.astimezone(ZoneInfo("UTC") if isinstance(LON, ZoneInfo) else None)
+            if dep_utc < nowu - timedelta(minutes=1):  # már elment
                 continue
-            sched_dt = parse_hhmmss_to_today(dep_time, today)
-            if sched_dt < now_dt - timedelta(minutes=1):
+            if dep_utc > endu:
                 continue
-            if sched_dt > until:
-                continue
-
-            route_short = ensure_str(row.get("route_short_name"))
-            trip_id = ensure_str(row.get("trip_id"))
-
-            # élő adatok hozzárendelése: azonos vonalszám + köv. megálló egyezés alapján (best effort)
-            live_match = None
-            for v in live:
-                if route_short and v.get("line") == route_short:
-                    # Ha StopPointRef van és egyezik a stop_id (vagy stop_code)
-                    stop_ref = v.get("stop_ref")
-                    if stop_ref and (stop_ref == stop_id or (scode and stop_ref == scode)):
-                        live_match = v
-                        break
-
-            delay_sec = None
-            status = "scheduled"
-            is_live = False
-            expected_dt = sched_dt
-
-            if live_match:
-                is_live = True
-                # ha ExpectedDepartureTime van, azt használjuk
-                if live_match.get("expected_dep"):
-                    try:
-                        expected_dt = pd.to_datetime(live_match["expected_dep"]).tz_convert(TZ).to_pydatetime()
-                    except Exception:
-                        expected_dt = sched_dt
-                delay_sec = live_match.get("delay_sec")
-                if delay_sec is None and live_match.get("aimed_dep") and live_match.get("expected_dep"):
-                    try:
-                        aimed = pd.to_datetime(live_match["aimed_dep"]).tz_convert(TZ)
-                        exp = pd.to_datetime(live_match["expected_dep"]).tz_convert(TZ)
-                        delay_sec = int((exp - aimed).total_seconds())
-                    except Exception:
-                        delay_sec = 0
-
-                # státusz
-                if expected_dt <= now_dt + timedelta(seconds=30):
-                    status = "due"
-                elif delay_sec and delay_sec > 60:
-                    status = "late"
-                elif delay_sec and delay_sec < -60:
-                    status = "early"
-                else:
-                    status = "on_time"
-
-            items.append({
-                "route": route_short,
-                "trip_id": trip_id,
-                "scheduled_time": sched_dt.isoformat(),
-                "expected_time": expected_dt.isoformat(),
-                "in_min": int((expected_dt - now_dt).total_seconds() // 60),
-                "is_live": is_live,
-                "status": status,         # scheduled / due / on_time / late / early
-                "delay_sec": delay_sec,   # + késés, - sietés (másodperc)
+            route_label = (str(r.get("route_short_name","")).strip() or str(r.get("route_long_name","")).strip() or str(r.get("route_id","")).strip())
+            headsign = str(r.get("trip_headsign","")).strip()
+            # live várható indulás csak ha van és ésszerű
+            use = dep_utc
+            delay = None
+            li = live_by_route.get(route_label)
+            if li and li.get("ts"):
+                # ExpectedDepartureTime nincs biztosan – hagyjuk meg a menetrendit; később bővíthető
+                pass
+            mins = int((use - nowu).total_seconds() // 60)
+            rows.append({
+                "route": route_label or "–",
+                "destination": headsign or (li or {}).get("dest") or "–",
+                "time_iso": use.isoformat(),
+                "time_display": "Due" if (-1 <= mins <= 0) else hhmm_local(use),
+                "is_live": False,
+                "is_due": (-1 <= mins <= 0),
+                "delay_min": delay,
+                "trip_id": r.get("trip_id")
             })
         except Exception:
             continue
-
-    # idő szerint rendezzük
-    items.sort(key=lambda x: x["expected_time"])
-    return {"stop_id": stop_id, "items": items}
-
-
-# ---------- Trip modul ----------
+    # deduplikálás + rendezés
+    seen = set()
+    uniq = []
+    for r in rows:
+        key = (r["route"], r["destination"], r["time_iso"])
+        if key in seen: continue
+        seen.add(key); uniq.append(r)
+    uniq.sort(key=lambda x: (not x["is_due"], x["time_iso"]))
+    return {"departures": uniq}
 
 @app.get("/api/trip")
-async def api_trip(trip_id: str):
+def api_trip(trip_id: str):
     if not STATE["gtfs_ready"]:
-        raise HTTPException(400, "GTFS nincs betöltve.")
-
-    await maybe_refresh_live()
-
-    trips = GTFS["trips"]
-    st = GTFS["stop_times"]
-    stops = GTFS["stops"]
-    shapes = GTFS.get("shapes", pd.DataFrame())
-
-    t = trips[trips["trip_id"] == trip_id]
-    if t.empty:
-        raise HTTPException(404, "Ismeretlen trip_id")
-
-    t = t.iloc[0]
-    route_short = t.get("route_short_name")
-    shape_id = t.get("shape_id")
-
-    # megállók listája időkkel
-    tt = st[st["trip_id"] == trip_id].copy()
-    tt = tt.sort_values(by="stop_sequence")
-    tt = tt.merge(stops, on="stop_id", how="left", suffixes=("","_s"))
-
-    stops_out = []
-    for _, r in tt.iterrows():
-        stops_out.append({
-            "stop_id": r["stop_id"],
-            "name": r.get("stop_name"),
-            "lat": float(r.get("stop_lat")) if pd.notna(r.get("stop_lat")) else None,
-            "lon": float(r.get("stop_lon")) if pd.notna(r.get("stop_lon")) else None,
-            "arr": r.get("arrival_time"),
-            "dep": r.get("departure_time"),
+        raise HTTPException(503, "GTFS not loaded")
+    trips = GTFS["trips"].fillna("")
+    st    = GTFS["stop_times"].fillna("")
+    stops = GTFS["stops"].fillna("")
+    meta = trips[trips["trip_id"]==trip_id]
+    if meta.empty:
+        raise HTTPException(404, "Trip not found")
+    meta = meta.iloc[0]
+    today = now_local().date()
+    j = st[st["trip_id"]==trip_id].merge(stops[["stop_id","stop_name"]], on="stop_id", how="left")
+    out=[]
+    for _, r in j.sort_values("stop_sequence").iterrows():
+        dep_local = to_today_time(str(r.get("departure_time","00:00:00")), today)
+        dep_utc   = dep_local.astimezone(ZoneInfo("UTC") if isinstance(LON, ZoneInfo) else None)
+        out.append({
+            "stop_id": r.get("stop_id"),
+            "stop_name": r.get("stop_name"),
+            "time_iso": dep_utc.isoformat(),
+            "time_display": hhmm_local(dep_utc),
         })
-
-    # shape poliline
-    polyline = []
-    if not shapes.empty and pd.notna(shape_id):
-        sh = shapes[shapes["shape_id"] == shape_id].copy()
-        if not sh.empty:
-            sh["seq"] = sh.get("shape_pt_sequence").astype(int)
-            sh = sh.sort_values("seq")
-            for _, r in sh.iterrows():
-                try:
-                    lat = float(r["shape_pt_lat"])
-                    lon = float(r["shape_pt_lon"])
-                    polyline.append([lat, lon])
-                except Exception:
-                    pass
-
-    # élő jármű hozzárendelése a vonalszám alapján (best effort)
-    live_bus = None
-    for v in STATE["vehicles"]:
-        if route_short and v.get("line") == route_short:
-            live_bus = v
-            break
-
-    # Késés/sietés félperces pontossággal (ha van live)
-    delay_min_05 = None
-    if live_bus and live_bus.get("delay_sec") is not None:
-        delay_min_05 = round(live_bus["delay_sec"] / 60.0 * 2) / 2.0
-
-    return {
-        "trip_id": trip_id,
-        "route": route_short,
-        "stops": stops_out,
-        "shape": polyline,
-        "live": {
-            "vehicle": live_bus,
-            "delay_min": delay_min_05
-        }
-    }
-
-
-# ---------- Élő járművek ----------
+    return {"route": str(meta.get("route_id","")), "headsign": str(meta.get("trip_headsign","")), "stops": out}
 
 @app.get("/api/vehicles")
 async def api_vehicles(route: Optional[str] = None):
-    await maybe_refresh_live()
-    items = STATE["vehicles"]
+    items = await fetch_live()
     if route:
-        items = [v for v in items if ensure_str(v.get("line")).lower() == route.lower()]
-    return {"items": items, "ts": STATE["vehicles_ts"]}
+        items = [i for i in items if str(i.get("route","")).strip() == str(route).strip()]
+    # csak friss és koordinátás
+    out=[]
+    for i in items:
+        if not i.get("lat") or not i.get("lon"): continue
+        out.append({
+            "vehicle_ref": i.get("vehicle") or "",
+            "lat": i["lat"], "lon": i["lon"], "bearing": i.get("bearing"),
+            "timestamp": i.get("ts") or "",
+            "label": f'{i.get("route","")} · {i.get("dest","")}'.strip()
+        })
+    return {"items": out, "ts": STATE.get("vehicles_ts", 0.0)}
 
-
-# ---------- Indításkor: flotta + GTFS (ha van) ----------
-
-@app.on_event("startup")
-async def on_startup():
-    load_fleet_json()
-    # ha már van kicsomagolt GTFS, töltsük be
-    try:
-        load_gtfs_from_dir(GTFS_DIR)
-    except Exception:
-        pass
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8000"))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+# --- opcionális: route shape (ha van shapes.txt)
+@app.get("/api/route-shape")
+def api_route_shape(route: str):
+    if not STATE["gtfs_ready"]:
+        raise HTTPException(503, "GTFS not loaded")
+    trips = GTFS["trips"].fillna("")
+    shapes= GTFS["shapes"].fillna("")
+    routes= GTFS["routes"].fillna("")
+    # route label → route_id
+    rids = routes[(routes["route_short_name"]==route) | (routes["route_long_name"]==route)]["route_id"].unique().tolist()
+    if not rids:
+        return {"shape":[]}
+    t = trips[trips["route_id"].isin(rids)]
+    if "shape_id" not in t.columns or t["shape_id"].isna().all():
+        return {"shape":[]}
+    sid = str(t.iloc[0]["shape_id"])
+    if not sid or shapes.empty:
+        return {"shape":[]}
+    seg = shapes[shapes["shape_id"]==sid].copy()
+    if "shape_pt_sequence" in seg.columns:
+        seg["shape_pt_sequence"] = seg["shape_pt_sequence"].astype(int)
+        seg = seg.sort_values("shape_pt_sequence")
+    pts = [[float(seg.iloc[i]["shape_pt_lat"]), float(seg.iloc[i]["shape_pt_lon"])] for i in range(len(seg))]
+    return {"shape": pts}
