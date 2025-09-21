@@ -1,28 +1,15 @@
 """
-Simple bus timetable and live vehicle API using FastAPI.
+Bluestar – Egyszerű menetrend és élő jármű API FastAPI-vel.
 
-This application serves as a drop‑in replacement for the original
-Bluestar bus API. It exposes JSON endpoints for searching stops and routes,
-returning upcoming departures for a stop, retrieving a single trip's
-stop list, reporting on live vehicle positions, managing GTFS uploads
-and downloads, and configuring a BODS SIRI‑VM live feed.  A small
-web frontend is served from the ``static`` directory.
+Ez az alkalmazás leváltja az eredeti Bluestar busz API-t.  JSON végpontokon
+keresztül elérhető a megálló- és viszonylatkeresés, a közelgő indulások
+lekérdezése, egy adott járat teljes megállólistája, az élő járműpozíciók,
+a GTFS feltöltés/betöltés, valamint a BODS SIRI‑VM élő feed konfigurációja.
+A frontend a `static` mappából származó index.html-t szolgálja ki.
 
-The focus of this implementation is clarity and robustness.  It
-validates incoming data, handles missing GTFS tables gracefully and
-performs minimal calendar/date logic to decide when a trip is running.
-Live data is fetched lazily and cached for a short period to avoid
-excess network usage.  All timestamps are normalised to UTC and
-presented in the configured time zone.
-
-To run the application locally:
-
-    pip install -r requirements.txt
-    uvicorn main:app --reload --port 8000
-
-The default time zone is Europe/London.  This can be overridden by
-setting the ``TZ`` environment variable.  See the accompanying
-``index.html`` for a basic user interface.
+A cél az áttekinthetőség és a robusztus működés: minden bemenet validálódik,
+a hiányzó GTFS-táblák kezelése kegyes, a menetrendi logika minimális, az
+élő adatok rövid ideig cache-elődnek, és minden időpont normalizált.
 """
 
 import io
@@ -36,51 +23,42 @@ import pandas as pd
 import pytz
 import httpx
 import xmltodict
-from fastapi import FastAPI, File, UploadFile, HTTPException, Body
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
-# Configuration and state
+# Konfiguráció és állapot
 
 APP_VERSION = "1.0.0"
 
-# Directories for storing GTFS and uploaded files.  These are created
-# relative to the current working directory.  You can mount a volume on
-# ``data`` to persist uploads across restarts.
+# Mappák létrehozása a GTFS és egyéb fájlok tárolásához.
 DATA_DIR = os.path.abspath("data")
 GTFS_DIR = os.path.join(DATA_DIR, "gtfs")
 GTFS_ZIP = os.path.join(DATA_DIR, "gtfs.zip")
-
-# Create directories if they don't exist.
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(GTFS_DIR, exist_ok=True)
 os.makedirs("static", exist_ok=True)
 
-# Time zone configuration.  Defaults to Europe/London.  You can override
-# this by exporting ``TZ`` in your environment.
+# Időzóna beállítás. Alapértelmezés: Europe/London.
 TZ_NAME = os.environ.get("TZ", "Europe/London")
 try:
     TZ = pytz.timezone(TZ_NAME)
 except Exception:
     TZ = pytz.timezone("Europe/London")
 
-# Live feed refresh interval default (seconds).
+# Élő feed frissítési intervallum (mp)
 DEFAULT_REFRESH_SEC = 30
 
-
 class LiveConfig(BaseModel):
-    """Configuration for the live SIRI‑VM feed."""
-
-    feed_url: Optional[str] = None  # BODS SIRI‑VM URL
+    """Élő feed konfiguráció."""
+    feed_url: Optional[str] = None
     refresh_sec: int = DEFAULT_REFRESH_SEC
 
-
 class AppState:
-    """Container for all mutable application state."""
-
+    """Alkalmazás állapot."""
     def __init__(self):
         self.build: int = int(time.time())
         self.live_cfg: LiveConfig = LiveConfig()
@@ -90,23 +68,22 @@ class AppState:
         self.vehicles: List[Dict[str, Any]] = []
         self.vehicles_ts: float = 0.0
 
-
 STATE = AppState()
 
 # ---------------------------------------------------------------------------
-# Utility functions
+# Segédfüggvények
 
 def now_utc() -> datetime:
+    """UTC idő (tzinfo-val)."""
     return datetime.utcnow().replace(tzinfo=pytz.utc)
 
 def now_local() -> datetime:
+    """Lokális idő a beállított időzónában."""
     return now_utc().astimezone(TZ)
 
 def parse_hhmmss_to_today(hhmmss: str, local_day: date) -> datetime:
-    parts = hhmmss.split(":")
-    if len(parts) != 3:
-        raise ValueError(f"Invalid HH:MM:SS value: {hhmmss}")
-    h, m, s = map(int, parts)
+    """HH:MM:SS formátum konvertálása a mai nap időpontjára (TZ időzónában)."""
+    h, m, s = map(int, hhmmss.split(":"))
     day_offset = h // 24
     h = h % 24
     dt = datetime(local_day.year, local_day.month, local_day.day, h, m, s, tzinfo=TZ)
@@ -114,6 +91,7 @@ def parse_hhmmss_to_today(hhmmss: str, local_day: date) -> datetime:
     return dt
 
 def service_is_running(trip_row: pd.Series, dt_local: datetime) -> bool:
+    """Eldönti, hogy a járat indul-e adott napon (calendar.txt + calendar_dates.txt szerint)."""
     service_id = trip_row.get("service_id")
     day = dt_local.date()
     cal = STATE.gtfs_tables.get("calendar")
@@ -127,8 +105,8 @@ def service_is_running(trip_row: pd.Series, dt_local: datetime) -> bool:
             end = pd.to_datetime(c["end_date"], format="%Y%m%d").date()
             if start <= day <= end:
                 weekday = [
-                    "monday", "tuesday", "wednesday", "thursday", "friday",
-                    "saturday", "sunday"
+                    "monday", "tuesday", "wednesday", "thursday",
+                    "friday", "saturday", "sunday"
                 ][day.weekday()]
                 ok_calendar = bool(int(c[weekday]))
     dates = STATE.gtfs_tables.get("calendar_dates")
@@ -144,6 +122,7 @@ def service_is_running(trip_row: pd.Series, dt_local: datetime) -> bool:
     return ok_calendar
 
 async def fetch_live_if_needed() -> None:
+    """Élő adatok letöltése ha lejárt a cache."""
     cfg = STATE.live_cfg
     if not cfg.feed_url:
         return
@@ -178,7 +157,9 @@ async def fetch_live_if_needed() -> None:
                 mvj = act.get("MonitoredVehicleJourney", {}) or {}
                 when_str = act.get("RecordedAtTime") or act.get("ValidUntilTime")
                 try:
-                    ts = datetime.fromisoformat(when_str.replace("Z", "+00:00")).astimezone(pytz.utc)
+                    ts = datetime.fromisoformat(
+                        when_str.replace("Z", "+00:00")
+                    ).astimezone(pytz.utc)
                 except Exception:
                     ts = now_utc()
                 mc = mvj.get("MonitoredCall") or {}
@@ -195,7 +176,9 @@ async def fetch_live_if_needed() -> None:
                     if not s:
                         return None
                     try:
-                        return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(pytz.utc)
+                        return datetime.fromisoformat(
+                            s.replace("Z", "+00:00")
+                        ).astimezone(pytz.utc)
                     except Exception:
                         return None
                 vehicles.append({
@@ -227,6 +210,7 @@ async def fetch_live_if_needed() -> None:
     STATE.vehicles_ts = now_ts
 
 def load_gtfs_from_dir(gtfs_dir: str) -> None:
+    """GTFS betöltése egy mappából."""
     required = ["stops", "routes", "trips", "stop_times"]
     tables: Dict[str, pd.DataFrame] = {}
     for name in required + ["shapes", "calendar", "calendar_dates"]:
@@ -238,7 +222,7 @@ def load_gtfs_from_dir(gtfs_dir: str) -> None:
             tables[name] = pd.DataFrame()
     missing = [t for t in required if tables[t].empty]
     if missing:
-        raise RuntimeError(f"Missing GTFS tables: {', '.join(missing)}")
+        raise RuntimeError(f"Hiányzó GTFS táblák: {', '.join(missing)}")
     STATE.gtfs_tables.clear()
     STATE.gtfs_tables.update(tables)
     STATE.gtfs_ready = True
@@ -249,6 +233,7 @@ def load_gtfs_from_dir(gtfs_dir: str) -> None:
     }
 
 def extract_and_load_gtfs(zip_bytes: bytes) -> None:
+    """GTFS ZIP kicsomagolása és betöltése."""
     for fname in os.listdir(GTFS_DIR):
         try:
             os.remove(os.path.join(GTFS_DIR, fname))
@@ -259,10 +244,12 @@ def extract_and_load_gtfs(zip_bytes: bytes) -> None:
     load_gtfs_from_dir(GTFS_DIR)
 
 def ensure_gtfs_loaded() -> None:
+    """GTFS betöltés ellenőrzése."""
     if not STATE.gtfs_ready:
-        raise HTTPException(status_code=503, detail="GTFS data not loaded")
+        raise HTTPException(status_code=503, detail="GTFS nincs betöltve")
 
 def build_live_by_route() -> Dict[str, Dict[str, Any]]:
+    """Élő adatok route szerinti kiválasztása (legfrissebb pozíció)."""
     best: Dict[str, Dict[str, Any]] = {}
     now = now_utc()
     for v in STATE.vehicles:
@@ -287,6 +274,7 @@ def build_live_by_route() -> Dict[str, Dict[str, Any]]:
     return best
 
 def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any]]:
+    """Közelgő indulások lekérdezése egy megállóból."""
     trips_df = STATE.gtfs_tables.get("trips")
     stop_times_df = STATE.gtfs_tables.get("stop_times")
     routes_df = STATE.gtfs_tables.get("routes")
@@ -312,8 +300,9 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
             dep_local = parse_hhmmss_to_today(dep_str, now_local_dt.date())
         except Exception:
             continue
+        # Csak jövőbeli indulások
         if dep_local <= now_local_dt:
-            continue  # skip past departures
+            continue
         dep_utc = dep_local.astimezone(pytz.utc)
         if dep_local > end_local_dt:
             continue
@@ -367,10 +356,9 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
     return uniq
 
 # ---------------------------------------------------------------------------
-# FastAPI app and endpoints
+# FastAPI alkalmazás és végpontok
 
 app = FastAPI(title="Bluestar Replacement API", version=APP_VERSION, docs_url=None, redoc_url=None)
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -380,6 +368,7 @@ app.add_middleware(
 
 @app.get("/api/status")
 async def api_status() -> Dict[str, Any]:
+    """Státusz információk (verzió, build, idő, konfiguráció)."""
     return {
         "ok": True,
         "version": APP_VERSION,
@@ -393,10 +382,12 @@ async def api_status() -> Dict[str, Any]:
 
 @app.get("/api/live/config")
 async def api_get_live_config() -> Dict[str, Any]:
+    """Élő feed konfiguráció lekérdezése."""
     return STATE.live_cfg.dict()
 
 @app.post("/api/live/config")
 async def api_set_live_config(cfg: LiveConfig) -> Dict[str, Any]:
+    """Élő feed URL és frissítési idő beállítása."""
     if not cfg.feed_url:
         raise HTTPException(status_code=400, detail="feed_url is required")
     if cfg.refresh_sec < 5 or cfg.refresh_sec > 3600:
@@ -407,6 +398,7 @@ async def api_set_live_config(cfg: LiveConfig) -> Dict[str, Any]:
 
 @app.post("/api/gtfs/upload")
 async def api_gtfs_upload(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """GTFS zip feltöltése."""
     data = await file.read()
     try:
         extract_and_load_gtfs(data)
@@ -424,6 +416,7 @@ class GtfsUrlIn(BaseModel):
 
 @app.post("/api/gtfs/load-url")
 async def api_gtfs_load_url(body: GtfsUrlIn) -> Dict[str, Any]:
+    """GTFS letöltése URL-ről és betöltése."""
     if not body.url:
         raise HTTPException(status_code=400, detail="url is required")
     try:
@@ -446,6 +439,7 @@ async def api_gtfs_load_url(body: GtfsUrlIn) -> Dict[str, Any]:
 
 @app.post("/api/reload-gtfs")
 async def api_reload_gtfs() -> Dict[str, Any]:
+    """Betöltött GTFS újratöltése (zip vagy txt fájlokból)."""
     if os.path.exists(GTFS_ZIP):
         try:
             with open(GTFS_ZIP, "rb") as f:
@@ -464,6 +458,7 @@ async def api_reload_gtfs() -> Dict[str, Any]:
 
 @app.get("/api/stops/search")
 async def api_stops_search(q: str = "") -> List[Dict[str, str]]:
+    """Megállók keresése név alapján (max. 50 találat)."""
     ensure_gtfs_loaded()
     ql = (q or "").strip().lower()
     stops = STATE.gtfs_tables.get("stops")
@@ -482,6 +477,7 @@ async def api_stops_search(q: str = "") -> List[Dict[str, str]]:
 
 @app.get("/api/routes/search")
 async def api_routes_search(q: str = "") -> List[Dict[str, str]]:
+    """Viszonylatok keresése (max. 50 találat)."""
     ensure_gtfs_loaded()
     ql = (q or "").strip().lower()
     routes = STATE.gtfs_tables.get("routes")
@@ -503,6 +499,7 @@ async def api_routes_search(q: str = "") -> List[Dict[str, str]]:
 
 @app.get("/api/departures")
 async def api_departures(stop_id: str, window: int = 90) -> Dict[str, Any]:
+    """Közelgő indulások lekérdezése megállónként."""
     ensure_gtfs_loaded()
     window = max(1, min(window, 480))
     await fetch_live_if_needed()
@@ -511,6 +508,7 @@ async def api_departures(stop_id: str, window: int = 90) -> Dict[str, Any]:
 
 @app.get("/api/trip")
 async def api_trip(trip_id: str) -> Dict[str, Any]:
+    """Egy járat teljes megállólistája és időpontjai."""
     ensure_gtfs_loaded()
     trips = STATE.gtfs_tables.get("trips")
     stop_times = STATE.gtfs_tables.get("stop_times")
@@ -537,7 +535,6 @@ async def api_trip(trip_id: str) -> Dict[str, Any]:
         except Exception:
             continue
         stop_id_row = st_row.get("stop_id")
-        stop_name = ""
         try:
             stop_name = (
                 stops[stops["stop_id"] == stop_id_row].iloc[0].get("stop_name") or ""
@@ -558,6 +555,7 @@ async def api_trip(trip_id: str) -> Dict[str, Any]:
 
 @app.get("/api/vehicles")
 async def api_vehicles(route: Optional[str] = None) -> Dict[str, Any]:
+    """Élő járművek lekérdezése (viszonylattal szűrhető)."""
     await fetch_live_if_needed()
     now_dt = now_utc()
     items: Dict[str, Dict[str, Any]] = {}
@@ -591,6 +589,7 @@ async def api_vehicles(route: Optional[str] = None) -> Dict[str, Any]:
 
 @app.get("/api/route-shape")
 def api_route_shape(route: str) -> Dict[str, Any]:
+    """Egy adott viszonylat útvonalának alakja (shapes.txt alapján)."""
     ensure_gtfs_loaded()
     shapes_df = STATE.gtfs_tables.get("shapes")
     trips_df = STATE.gtfs_tables.get("trips")
@@ -638,10 +637,12 @@ def api_route_shape(route: str) -> Dict[str, Any]:
             continue
     return {"shape": coords}
 
-# ---------- Static files and root route ----------
+# ---------------------------------------------------------------------------
+# Statikus fájlok és root
 
 @app.get("/")
 def serve_root():
+    """Az index.html kiszolgálása a gyökéren."""
     return FileResponse(os.path.join("static", "index.html"))
 
 app.mount("/static", StaticFiles(directory="static", html=True), name="static")
