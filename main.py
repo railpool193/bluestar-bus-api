@@ -80,14 +80,7 @@ class LiveConfig(BaseModel):
 
 
 class AppState:
-    """Container for all mutable application state.
-
-    This object is mutated from within request handlers and helper
-    functions.  It keeps the loaded GTFS tables, summary metadata,
-    previously fetched live vehicle data and the current live feed
-    configuration.  All timestamps in this state are expressed as
-    seconds since the epoch (UTC).
-    """
+    """Container for all mutable application state."""
 
     def __init__(self):
         self.build: int = int(time.time())
@@ -96,29 +89,21 @@ class AppState:
         self.gtfs_meta: Dict[str, Any] = {}
         self.gtfs_tables: Dict[str, pd.DataFrame] = {}
         self.vehicles: List[Dict[str, Any]] = []
-        self.vehicles_ts: float = 0.0  # epoch seconds of last fetch
+        self.vehicles_ts: float = 0.0
 
 
-# Instantiate global state
 STATE = AppState()
 
 # ---------------------------------------------------------------------------
 # Utility functions
 
 def now_utc() -> datetime:
-    """Return current time in UTC with tzinfo attached."""
     return datetime.utcnow().replace(tzinfo=pytz.utc)
 
 def now_local() -> datetime:
-    """Return current time in the configured time zone."""
     return now_utc().astimezone(TZ)
 
 def parse_hhmmss_to_today(hhmmss: str, local_day: date) -> datetime:
-    """Convert an HH:MM:SS string to a datetime on the given day in TZ.
-
-    If the hour component is >=24, it is rolled over into the next day.
-    This handles GTFS times that extend past midnight.
-    """
     parts = hhmmss.split(":")
     if len(parts) != 3:
         raise ValueError(f"Invalid HH:MM:SS value: {hhmmss}")
@@ -130,7 +115,6 @@ def parse_hhmmss_to_today(hhmmss: str, local_day: date) -> datetime:
     return dt
 
 def service_is_running(trip_row: pd.Series, dt_local: datetime) -> bool:
-    """Determine if a trip is operating on the given day."""
     service_id = trip_row.get("service_id")
     day = dt_local.date()
 
@@ -168,7 +152,6 @@ def service_is_running(trip_row: pd.Series, dt_local: datetime) -> bool:
     return ok_calendar
 
 async def fetch_live_if_needed() -> None:
-    """Fetch SIRI‑VM live vehicle data if the cache is stale."""
     cfg = STATE.live_cfg
     if not cfg.feed_url:
         return
@@ -252,7 +235,6 @@ async def fetch_live_if_needed() -> None:
     STATE.vehicles_ts = now_ts
 
 def load_gtfs_from_dir(gtfs_dir: str) -> None:
-    """Load GTFS tables from a directory into dataframes and update state."""
     required = ["stops", "routes", "trips", "stop_times"]
     tables: Dict[str, pd.DataFrame] = {}
     for name in required + ["shapes", "calendar", "calendar_dates"]:
@@ -275,7 +257,6 @@ def load_gtfs_from_dir(gtfs_dir: str) -> None:
     }
 
 def extract_and_load_gtfs(zip_bytes: bytes) -> None:
-    """Extract a GTFS zip file into ``GTFS_DIR`` and load the tables."""
     for fname in os.listdir(GTFS_DIR):
         try:
             os.remove(os.path.join(GTFS_DIR, fname))
@@ -286,12 +267,10 @@ def extract_and_load_gtfs(zip_bytes: bytes) -> None:
     load_gtfs_from_dir(GTFS_DIR)
 
 def ensure_gtfs_loaded() -> None:
-    """Ensure that GTFS tables are loaded, else raise a 503 error."""
     if not STATE.gtfs_ready:
         raise HTTPException(status_code=503, detail="GTFS data not loaded")
 
 def build_live_by_route() -> Dict[str, Dict[str, Any]]:
-    """Return a mapping of route -> freshest live record."""
     best: Dict[str, Dict[str, Any]] = {}
     now = now_utc()
     for v in STATE.vehicles:
@@ -316,7 +295,6 @@ def build_live_by_route() -> Dict[str, Dict[str, Any]]:
     return best
 
 def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any]]:
-    """Compute upcoming departures for a stop."""
     trips_df = STATE.gtfs_tables.get("trips")
     stop_times_df = STATE.gtfs_tables.get("stop_times")
     routes_df = STATE.gtfs_tables.get("routes")
@@ -328,8 +306,8 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
     if routes_df is not None and not routes_df.empty:
         for _, row in routes_df.iterrows():
             rid = row.get("route_id") or ""
-            short = (row.get("route_short_name") or "").strip()
-            longn = (row.get("route_long_name") or "").strip()
+            short = str(row.get("route_short_name") or "").strip()
+            longn = str(row.get("route_long_name") or "").strip()
             route_names[rid] = short or longn or rid
     live = build_live_by_route()
     rows: List[Dict[str, Any]] = []
@@ -358,7 +336,7 @@ def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any
             continue
         route_id = trip_meta.get("route_id") or ""
         route = route_names.get(route_id, route_id)
-        headsign = (trip_meta.get("trip_headsign") or "").strip()
+        headsign = str(trip_meta.get("trip_headsign") or "").strip()
         li = live.get(route)
         dep_use = dep_utc
         is_live = False
@@ -409,7 +387,6 @@ app.add_middleware(
 
 @app.get("/api/status")
 async def api_status() -> Dict[str, Any]:
-    """Return basic status information about the service."""
     return {
         "ok": True,
         "version": APP_VERSION,
@@ -423,12 +400,10 @@ async def api_status() -> Dict[str, Any]:
 
 @app.get("/api/live/config")
 async def api_get_live_config() -> Dict[str, Any]:
-    """Get the current live feed configuration."""
     return STATE.live_cfg.dict()
 
 @app.post("/api/live/config")
 async def api_set_live_config(cfg: LiveConfig) -> Dict[str, Any]:
-    """Set the live feed URL and refresh interval."""
     if not cfg.feed_url:
         raise HTTPException(status_code=400, detail="feed_url is required")
     if cfg.refresh_sec < 5 or cfg.refresh_sec > 3600:
@@ -439,7 +414,6 @@ async def api_set_live_config(cfg: LiveConfig) -> Dict[str, Any]:
 
 @app.post("/api/gtfs/upload")
 async def api_gtfs_upload(file: UploadFile = File(...)) -> Dict[str, Any]:
-    """Upload a GTFS zip file."""
     data = await file.read()
     try:
         extract_and_load_gtfs(data)
@@ -457,7 +431,6 @@ class GtfsUrlIn(BaseModel):
 
 @app.post("/api/gtfs/load-url")
 async def api_gtfs_load_url(body: GtfsUrlIn) -> Dict[str, Any]:
-    """Download a GTFS zip from a URL and load it."""
     if not body.url:
         raise HTTPException(status_code=400, detail="url is required")
     try:
@@ -480,7 +453,6 @@ async def api_gtfs_load_url(body: GtfsUrlIn) -> Dict[str, Any]:
 
 @app.post("/api/reload-gtfs")
 async def api_reload_gtfs() -> Dict[str, Any]:
-    """Reload the previously uploaded GTFS file or directory."""
     if os.path.exists(GTFS_ZIP):
         try:
             with open(GTFS_ZIP, "rb") as f:
@@ -499,7 +471,6 @@ async def api_reload_gtfs() -> Dict[str, Any]:
 
 @app.get("/api/stops/search")
 async def api_stops_search(q: str = "") -> List[Dict[str, str]]:
-    """Search for stops by name.  Returns at most 50 matches."""
     ensure_gtfs_loaded()
     ql = (q or "").strip().lower()
     stops = STATE.gtfs_tables.get("stops")
@@ -509,7 +480,7 @@ async def api_stops_search(q: str = "") -> List[Dict[str, str]]:
     if not ql:
         return res
     for _, row in stops.iterrows():
-        name = (row.get("stop_name") or "").strip()
+        name = str(row.get("stop_name") or "").strip()
         if ql in name.lower():
             res.append({"id": row.get("stop_id"), "name": name})
             if len(res) >= 50:
@@ -518,7 +489,6 @@ async def api_stops_search(q: str = "") -> List[Dict[str, str]]:
 
 @app.get("/api/routes/search")
 async def api_routes_search(q: str = "") -> List[Dict[str, str]]:
-    """Search for routes by short or long name.  Returns at most 50."""
     ensure_gtfs_loaded()
     ql = (q or "").strip().lower()
     routes = STATE.gtfs_tables.get("routes")
@@ -528,8 +498,8 @@ async def api_routes_search(q: str = "") -> List[Dict[str, str]]:
     if not ql:
         return res
     for _, row in routes.iterrows():
-        short = (row.get("route_short_name") or "").strip()
-        longn = (row.get("route_long_name") or "").strip()
+        short = str(row.get("route_short_name") or "").strip()
+        longn = str(row.get("route_long_name") or "").strip()
         rid = row.get("route_id") or ""
         display = short or longn or rid
         if ql in display.lower():
@@ -540,7 +510,6 @@ async def api_routes_search(q: str = "") -> List[Dict[str, str]]:
 
 @app.get("/api/departures")
 async def api_departures(stop_id: str, window: int = 90) -> Dict[str, Any]:
-    """Get upcoming departures from a stop."""
     ensure_gtfs_loaded()
     window = max(1, min(window, 480))
     await fetch_live_if_needed()
@@ -549,7 +518,6 @@ async def api_departures(stop_id: str, window: int = 90) -> Dict[str, Any]:
 
 @app.get("/api/trip")
 async def api_trip(trip_id: str) -> Dict[str, Any]:
-    """Get full stop list and times for a trip."""
     ensure_gtfs_loaded()
     trips = STATE.gtfs_tables.get("trips")
     stop_times = STATE.gtfs_tables.get("stop_times")
@@ -562,11 +530,11 @@ async def api_trip(trip_id: str) -> Dict[str, Any]:
     meta = trip_row.iloc[0]
     route_id = meta.get("route_id") or ""
     route_display = (
-        (meta.get("route_short_name") or "").strip()
-        or (meta.get("route_long_name") or "").strip()
+        str(meta.get("route_short_name") or "").strip()
+        or str(meta.get("route_long_name") or "").strip()
         or route_id
     )
-    headsign = (meta.get("trip_headsign") or "").strip()
+    headsign = str(meta.get("trip_headsign") or "").strip()
     rows: List[Dict[str, Any]] = []
     now_dt = now_local()
     for _, st_row in stop_times[stop_times["trip_id"] == trip_id].iterrows():
@@ -579,11 +547,10 @@ async def api_trip(trip_id: str) -> Dict[str, Any]:
         stop_name = ""
         try:
             stop_name = (
-                stops[stops["stop_id"] == stop_id_row].iloc[0].get("stop_name")
-                or ""
+                stops[stops["stop_id"] == stop_id_row].iloc[0].get("stop_name") or ""
             ).strip()
         except Exception:
-            stop_name = stop_id_row or ""
+            stop_name = str(stop_id_row or "")
         rows.append({
             "stop_id": stop_id_row,
             "stop_name": stop_name,
@@ -598,7 +565,6 @@ async def api_trip(trip_id: str) -> Dict[str, Any]:
 
 @app.get("/api/vehicles")
 async def api_vehicles(route: Optional[str] = None) -> Dict[str, Any]:
-    """Get current live vehicles.  Optionally filter by route."""
     await fetch_live_if_needed()
     now_dt = now_utc()
     items: Dict[str, Dict[str, Any]] = {}
@@ -632,7 +598,6 @@ async def api_vehicles(route: Optional[str] = None) -> Dict[str, Any]:
 
 @app.get("/api/route-shape")
 def api_route_shape(route: str) -> Dict[str, Any]:
-    """Return the shape (list of [lat, lon]) for the given route."""
     ensure_gtfs_loaded()
     shapes_df = STATE.gtfs_tables.get("shapes")
     trips_df = STATE.gtfs_tables.get("trips")
@@ -643,8 +608,8 @@ def api_route_shape(route: str) -> Dict[str, Any]:
     route_id = None
     if routes_df is not None and not routes_df.empty:
         for _, row in routes_df.iterrows():
-            short = (row.get("route_short_name") or "").strip()
-            longn = (row.get("route_long_name") or "").strip()
+            short = str(row.get("route_short_name") or "").strip()
+            longn = str(row.get("route_long_name") or "").strip()
             rid = row.get("route_id") or ""
             if rparam == short or rparam == longn:
                 route_id = rid
@@ -654,7 +619,7 @@ def api_route_shape(route: str) -> Dict[str, Any]:
     shape_id = None
     if trips_df is not None and not trips_df.empty:
         for _, row in trips_df.iterrows():
-            if (row.get("route_id") or "") == route_id:
+            if str(row.get("route_id") or "") == route_id:
                 shape_id = row.get("shape_id")
                 if shape_id:
                     break
@@ -684,8 +649,6 @@ def api_route_shape(route: str) -> Dict[str, Any]:
 
 @app.get("/")
 def serve_root():
-    """Serve the index.html at the root path."""
     return FileResponse(os.path.join("static", "index.html"))
 
-# Mount static assets under /static so they don't intercept /api routes
 app.mount("/static", StaticFiles(directory="static", html=True), name="static")
