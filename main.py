@@ -74,15 +74,12 @@ STATE = AppState()
 # Segédfüggvények
 
 def now_utc() -> datetime:
-    """UTC idő (tzinfo-val)."""
     return datetime.utcnow().replace(tzinfo=pytz.utc)
 
 def now_local() -> datetime:
-    """Lokális idő a beállított időzónában."""
     return now_utc().astimezone(TZ)
 
 def parse_hhmmss_to_today(hhmmss: str, local_day: date) -> datetime:
-    """HH:MM:SS formátum konvertálása a mai nap időpontjára (TZ időzónában)."""
     h, m, s = map(int, hhmmss.split(":"))
     day_offset = h // 24
     h = h % 24
