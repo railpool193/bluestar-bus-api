@@ -62,7 +62,7 @@
     <button id="nav-routes"   class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">🚌</span><span>Routes</span></button>
     <button id="nav-map"      class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">🗺️</span><span>Map</span></button>
     <button id="nav-settings" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">⚙️</span><span>Settings</span></button>
-    <button id="nav-trip" class="flex flex-col items-center px-2 text-xs text-gray-400 hidden"><span class="text-lg leading-one">🚏</span><span>Trip</span></button>
+    <button id="nav-trip" class="flex flex-col items-center px-2 text-xs text-gray-400 hidden"><span class="text-lg leading-none">🚏</span><span>Trip</span></button>
   </nav>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
@@ -97,7 +97,7 @@
       navButtons.map.addEventListener('click',     () => showTab('map'));
       navButtons.settings.addEventListener('click',() => showTab('settings'));
 
-      // Státusz frissítés
+      // Státusz frissítése
       let statusCache = null;
       async function fetchStatus() {
         try {
@@ -111,7 +111,7 @@
       fetchStatus();
       setInterval(fetchStatus, 10000);
 
-      // Home tab: megálló keresés és indulások
+      // Home: search stops & departures
       const homeSearch  = document.getElementById('home-search');
       const homeResults = document.getElementById('home-results');
       const homeDeps    = document.getElementById('home-departures');
@@ -141,6 +141,7 @@
           }
         }, 300);
       });
+
       async function selectStop(stop) {
         homeResults.innerHTML = '';
         homeSearch.value = stop.name;
@@ -178,7 +179,7 @@
         }
       }
 
-      // Routes tab: viszonylat keresés
+      // Routes: search & list routes with live bus info
       const routesSearch  = document.getElementById('routes-search');
       const routesResults = document.getElementById('routes-results');
       let routesTimer = null;
@@ -237,7 +238,7 @@
         }, 300);
       });
 
-      // Map tab: shape + élő buszok
+      // Map: shape + live vehicles
       let map = null;
       let shapeLayer = null;
       let markers = [];
@@ -281,7 +282,7 @@
         if (currentTab === 'map' && selectedRoute) updateMap();
       }, 20000);
 
-      // Settings tab
+      // Settings: load status info
       async function loadSettings() {
         if (!statusCache) return;
         const c = statusCache;
@@ -293,7 +294,7 @@
         `;
       }
 
-      // Trip tab: teljes megállólista
+      // Trip view: show full stops
       async function showTrip(trip_id, depInfo) {
         showTab('trip');
         const title   = document.getElementById('trip-title');
@@ -334,7 +335,7 @@
         }
       }
 
-      // GTFS feltöltés (Settings)
+      // GTFS upload form (Settings)
       document.getElementById('gtfs-upload').addEventListener('submit', async (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
@@ -346,7 +347,7 @@
           alert('Error uploading GTFS: ' + err);
         }
       });
-      // Élő feed mentése (Settings)
+      // Live feed save button (Settings)
       document.getElementById('feed-submit').addEventListener('click', async () => {
         const url = document.getElementById('feed-url').value.trim();
         if (!url) { alert('Please enter feed URL'); return; }
@@ -363,7 +364,7 @@
         }
       });
 
-      // Kezdőlap
+      // Default tab
       showTab('home');
     });
   </script>
