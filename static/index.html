@@ -1,372 +1,352 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="hu">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bluestar</title>
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>bluestar</title>
+
+  <!-- Leaflet (térkép a triphez – opcionális, ha nincs koordináta, nem rajzol) -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
   <style>
-    body { background-color: #0d1220; color: #e7ecff; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-thumb { background: #2a354d; border-radius: 3px; }
-    ::-webkit-scrollbar-track { background: #0d1220; }
+    :root{
+      --bg:#0d1117; --card:#0f172a; --border:#1f2937; --text:#e5e7eb; --sub:#94a3b8;
+      --brand:#60a5fa; --live:#34d399; --sched:#e5e7eb;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    .wrap{max-width:960px;margin:0 auto;padding:0 12px}
+    header{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid var(--border);background:#0b1220}
+    header .brand{display:flex;align-items:center;gap:8px;color:#7dd3fc;font-weight:600;font-size:22px}
+    header .brand .star{filter:saturate(1.4)}
+    header .clock{color:var(--sub);font-size:12px}
+    h1{margin:14px 0 8px 0;font-size:22px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+    .section{margin:18px 0}
+    .row{display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border)}
+    .row:last-child{border-bottom:none}
+    .left{width:82px;text-align:right;padding-right:8px;font-variant-numeric:tabular-nums}
+    .middle{flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .right{width:96px;text-align:right;padding-left:8px;color:#cbd5e1;font-variant-numeric:tabular-nums}
+    .time-live{color:var(--live)}
+    .time-sched{color:var(--sched)}
+    .muted{color:var(--sub)}
+    .grid{display:grid;grid-template-columns:1fr;gap:14px}
+    #map{height:300px;border-radius:12px;overflow:hidden}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid var(--border);border-radius:999px;color:var(--sub);font-size:12px}
+    .hint{font-size:12px;color:var(--sub);margin-top:6px}
+    .titlebar{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+    .titlebar .sub{color:var(--sub);font-size:14px}
+    a{color:#93c5fd;text-decoration:none}
+    a:hover{text-decoration:underline}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px}
+    .toolbar input{background:#0b1220;border:1px solid var(--border);color:var(--text);border-radius:10px;padding:8px 10px;min-width:180px}
+    .toolbar button{background:#1d4ed8;border:none;color:white;border-radius:10px;padding:8px 12px;cursor:pointer}
+    .toolbar button.secondary{background:#374151}
+    .toolbar button:disabled{opacity:.6;cursor:not-allowed}
   </style>
 </head>
-<body class="flex flex-col min-h-screen">
-  <header class="px-4 py-3 flex items-center justify-between border-b border-gray-800">
-    <div class="flex items-center space-x-2">
-      <span class="text-blue-400 text-2xl">★</span>
-      <h1 class="text-lg font-bold">bluestar</h1>
-    </div>
-    <span id="status-time" class="text-sm text-gray-400"></span>
+<body>
+  <header>
+    <div class="brand"><span class="star">★</span><span>bluestar</span></div>
+    <div class="clock" id="clock">UK: --:--:--</div>
   </header>
-  <main id="main" class="flex-1 overflow-auto">
-    <!-- Home Tab -->
-    <div id="home-tab" class="p-4 space-y-4">
-      <input id="home-search" type="text" placeholder="Search stops..." class="w-full px-3 py-2 rounded bg-gray-800 text-white placeholder-gray-500 focus:outline-none" />
-      <div id="home-results" class="max-h-40 overflow-y-auto border border-gray-800 rounded"></div>
-      <div id="home-departures"></div>
-    </div>
-    <!-- Routes Tab -->
-    <div id="routes-tab" class="p-4 space-y-4 hidden">
-      <input id="routes-search" type="text" placeholder="Search routes..." class="w-full px-3 py-2 rounded bg-gray-800 text-white placeholder-gray-500 focus:outline-none" />
-      <div id="routes-results" class="max-h-72 overflow-y-auto border border-gray-800 rounded divide-y divide-gray-800"></div>
-    </div>
-    <!-- Map Tab -->
-    <div id="map-tab" class="p-4 hidden">
-      <h2 id="map-title" class="text-lg mb-2"></h2>
-      <div id="map" class="h-80 rounded overflow-hidden"></div>
-    </div>
-    <!-- Trip Tab -->
-    <div id="trip-tab" class="p-4 hidden">
-      <h2 id="trip-title" class="text-lg mb-2"></h2>
-      <div id="trip-content" class="space-y-2"></div>
-    </div>
-    <!-- Settings Tab -->
-    <div id="settings-tab" class="p-4 space-y-4 hidden">
-      <h2 class="text-lg font-semibold mb-2">Settings</h2>
-      <div id="settings-content" class="space-y-1 text-sm"></div>
-      <hr class="my-4 border-gray-700">
-      <h3 class="text-md font-semibold">GTFS &amp; Live feed</h3>
-      <form id="gtfs-upload" enctype="multipart/form-data" class="space-y-2">
-        <input type="file" name="file" accept=".zip" class="block w-full text-sm bg-gray-800 text-white p-2 rounded" />
-        <button type="submit" class="px-3 py-1 bg-blue-600 rounded">Upload GTFS</button>
-      </form>
-      <input id="feed-url" type="text" placeholder="Feed URL..." class="w-full px-3 py-2 bg-gray-800 text-white placeholder-gray-500 rounded" />
-      <button id="feed-submit" class="mt-2 px-3 py-1 bg-blue-600 rounded">Save feed</button>
-    </div>
+
+  <main class="wrap">
+    <!-- TRIP NÉZET -->
+    <section class="section" id="tripSection" hidden>
+      <div class="titlebar">
+        <h1 id="tripTitle">Trip</h1>
+        <span class="sub" id="tripSub"></span>
+      </div>
+
+      <div class="toolbar">
+        <input id="tripIdInput" placeholder="tripId…" />
+        <input id="vehicleIdInput" placeholder="vehicleId (opcionális)…" />
+        <button id="tripLoadBtn">Betölt</button>
+        <span class="pill" id="tripAgencyPill">—</span>
+      </div>
+
+      <div class="card" id="tripList"></div>
+      <div class="hint">A bal oldali idő <span class="time-live">zöld</span> ha *LIVE*, egyébként fehér (menetrend). A jobb oldalon visszaszámláló látható az érkezésig.</div>
+
+      <div class="section">
+        <div id="map" class="card"></div>
+      </div>
+    </section>
+
+    <!-- MEGÁLLÓ NÉZET -->
+    <section class="section" id="stopSection" hidden>
+      <div class="titlebar">
+        <h1 id="stopTitle">Megálló</h1>
+        <span class="sub" id="stopRole"></span>
+      </div>
+
+      <div class="toolbar">
+        <input id="stopIdInput" placeholder="stopId…" />
+        <button id="stopLoadBtn">Betölt</button>
+        <span class="pill" id="stopAgencyPill">Bluestar/Unilink szűrés aktív</span>
+      </div>
+
+      <div class="card" id="stopList"></div>
+      <div class="hint">Ha a megálló **végállomás**, csak indulások látszanak (érkezők elrejtve).</div>
+    </section>
   </main>
-  <nav class="border-t border-gray-800 bg-gray-900 flex justify-around py-2">
-    <button id="nav-home"     class="flex flex-col items-center px-2 text-xs text-blue-400"><span class="text-lg leading-none">🏠</span><span>Home</span></button>
-    <button id="nav-routes"   class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">🚌</span><span>Routes</span></button>
-    <button id="nav-map"      class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">🗺️</span><span>Map</span></button>
-    <button id="nav-settings" class="flex flex-col items-center px-2 text-xs text-gray-400 hover:text-blue-400"><span class="text-lg leading-none">⚙️</span><span>Settings</span></button>
-    <button id="nav-trip" class="flex flex-col items-center px-2 text-xs text-gray-400 hidden"><span class="text-lg leading-none">🚏</span><span>Trip</span></button>
-  </nav>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
   <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      // Tabkezelés
-      const tabs = {
-        home: document.getElementById('home-tab'),
-        routes: document.getElementById('routes-tab'),
-        map: document.getElementById('map-tab'),
-        settings: document.getElementById('settings-tab'),
-        trip: document.getElementById('trip-tab')
-      };
-      const navButtons = {
-        home: document.getElementById('nav-home'),
-        routes: document.getElementById('nav-routes'),
-        map: document.getElementById('nav-map'),
-        settings: document.getElementById('nav-settings'),
-        trip: document.getElementById('nav-trip')
-      };
-      let currentTab = 'home';
-      function showTab(name) {
-        Object.keys(tabs).forEach(key => {
-          tabs[key].classList.toggle('hidden', key !== name);
-          navButtons[key].classList.toggle('text-blue-400', key === name);
-          navButtons[key].classList.toggle('text-gray-400', key !== name);
-        });
-        currentTab = name;
-        if (name === 'settings') loadSettings();
-      }
-      navButtons.home.addEventListener('click',    () => showTab('home'));
-      navButtons.routes.addEventListener('click',  () => showTab('routes'));
-      navButtons.map.addEventListener('click',     () => showTab('map'));
-      navButtons.settings.addEventListener('click',() => showTab('settings'));
+    /* ======== KONFIG ======== */
+    const CONFIG = {
+      // API útvonalak: ha nálad más, itt állítsd
+      api: {
+        trip: (tripId) => `/api/trip/${encodeURIComponent(tripId)}`,
+        vehiclesByTrip: (tripId) => `/api/vehicles?tripId=${encodeURIComponent(tripId)}`,
+        stopBoard: (stopId) => `/api/stop/${encodeURIComponent(stopId)}/board`,
+      },
+      allowedAgencies: ["bluestar", "unilink", "uni-link", "uni link"],
+    };
 
-      // Státusz frissítése
-      let statusCache = null;
-      async function fetchStatus() {
-        try {
-          const res = await fetch('/api/status');
-          if (!res.ok) return;
-          const data = await res.json();
-          document.getElementById('status-time').textContent = 'UK: ' + data.time;
-          statusCache = data;
-        } catch (e) {}
-      }
-      fetchStatus();
-      setInterval(fetchStatus, 10000);
+    /* ======== HASZNOS FÜGGVÉNYEK ======== */
+    const $ = (sel) => document.querySelector(sel);
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const hhmm = (ts) => {
+      if (!ts) return "—";
+      const d = new Date(ts);
+      return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    };
+    const msUntil = (ts) => ts - Date.now();
+    const fmtCountdown = (ms) => {
+      if (ms <= 0) return "0:00";
+      const sec = Math.floor(ms / 1000);
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      return h > 0 ? `${h}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
+    };
+    const agencyAllowed = (a) => {
+      if (!a) return false;
+      const name = (a.name || a || "").toString().toLowerCase();
+      return CONFIG.allowedAgencies.some(x => name.includes(x));
+    };
 
-      // Home: search stops & departures
-      const homeSearch  = document.getElementById('home-search');
-      const homeResults = document.getElementById('home-results');
-      const homeDeps    = document.getElementById('home-departures');
-      let homeTimer = null;
-      homeSearch.addEventListener('input', () => {
-        if (homeTimer) clearTimeout(homeTimer);
-        homeTimer = setTimeout(async () => {
-          const q = homeSearch.value.trim();
-          if (!q) { homeResults.innerHTML = ''; return; }
-          try {
-            const res = await fetch('/api/stops/search?q=' + encodeURIComponent(q));
-            const data = await res.json();
-            homeResults.innerHTML = '';
-            if (data && data.length > 0) {
-              data.forEach(st => {
-                const div = document.createElement('div');
-                div.className = 'p-2 border-b border-gray-800 hover:bg-gray-700 cursor-pointer';
-                div.textContent = st.name;
-                div.onclick = () => selectStop(st);
-                homeResults.appendChild(div);
-              });
-            } else {
-              homeResults.innerHTML = '<div class="p-2 text-gray-500">No stops found</div>';
-            }
-          } catch (e) {
-            homeResults.innerHTML = '<div class="p-2 text-gray-500">Error</div>';
-          }
-        }, 300);
+    function setClock() {
+      const d = new Date();
+      $("#clock").textContent = `UK: ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+    }
+    setClock(); setInterval(setClock, 1000);
+
+    /* ======== TRIP NÉZET ======== */
+    const tripSection = $("#tripSection");
+    const tripList = $("#tripList");
+    const tripTitle = $("#tripTitle");
+    const tripSub = $("#tripSub");
+    const tripAgencyPill = $("#tripAgencyPill");
+    const tripIdInput = $("#tripIdInput");
+    const vehicleIdInput = $("#vehicleIdInput");
+    const tripLoadBtn = $("#tripLoadBtn");
+
+    let map, vehicleMarker, routeLine;
+    function ensureMap() {
+      if (map) return map;
+      map = L.map("map");
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap contributors",
+      }).addTo(map);
+      map.setView([50.9097, -1.4044], 11); // Southampton környék alap nézet
+      return map;
+    }
+
+    function renderStopRow(container, stopName, schedTs, liveTs) {
+      const row = document.createElement("div"); row.className = "row";
+      const left = document.createElement("div"); left.className = "left " + (liveTs ? "time-live" : "time-sched");
+      left.textContent = hhmm(liveTs ?? schedTs);
+      const mid = document.createElement("div"); mid.className = "middle"; mid.textContent = stopName;
+      const right = document.createElement("div"); right.className = "right";
+      row.append(left, mid, right);
+      container.appendChild(row);
+
+      function tick() {
+        const ts = (liveTs ?? schedTs);
+        right.textContent = ts ? fmtCountdown(msUntil(ts)) : "";
+      }
+      tick(); const t = setInterval(tick, 1000);
+      row._timer = t;
+    }
+
+    async function loadTrip(tripId, vehicleId) {
+      tripList.innerHTML = `<div class="row"><div class="middle muted">Betöltés…</div></div>`;
+
+      const trip = await fetch(CONFIG.api.trip(tripId)).then(r => r.json());
+      // Ügynökség szűrés
+      if (trip?.agency && !agencyAllowed(trip.agency)) {
+        tripList.innerHTML = `<div class="row"><div class="middle muted">Ez a trip nem Bluestar/Unilink ügynökséghez tartozik.</div></div>`;
+        tripTitle.textContent = "Trip";
+        tripSub.textContent = "";
+        tripAgencyPill.textContent = trip?.agency?.name ?? "—";
+        return;
+      }
+
+      // Járművek (csak a triphez tartozó + opcionális vehicleId)
+      const vehicles = await fetch(CONFIG.api.vehiclesByTrip(tripId)).then(r => r.json());
+      const allowedVehicles = (vehicles || [])
+        .filter(v => agencyAllowed(v.agency))
+        .filter(v => v.tripId === tripId);
+      const filtered = vehicleId
+        ? allowedVehicles.filter(v => (v.id === vehicleId) || (v.label === vehicleId))
+        : allowedVehicles;
+      filtered.sort((a,b) => (b.lastUpdate||0)-(a.lastUpdate||0));
+      const vehicle = filtered[0] || null;
+
+      // Fejléc
+      const titleLeft = (trip.routeShortName ? trip.routeShortName + " " : "");
+      tripTitle.textContent = `${titleLeft}${trip.headsign ? "→ " + trip.headsign : ""}`.trim() || "Trip";
+      tripSub.textContent = vehicle ? `Jármű: ${vehicle.label || vehicle.id}` : "Nincs bejelentkezett jármű ehhez a triphez";
+      tripAgencyPill.textContent = trip?.agency?.name || "—";
+
+      // Lista kirajzolása
+      tripList.innerHTML = "";
+      (trip.stopTimes || []).forEach(st => {
+        renderStopRow(tripList, st.stopName, st.schedTs, st.liveTs);
       });
 
-      async function selectStop(stop) {
-        homeResults.innerHTML = '';
-        homeSearch.value = stop.name;
-        homeDeps.innerHTML = '<p class="text-sm text-gray-500">Loading departures...</p>';
-        try {
-          const res = await fetch('/api/departures?stop_id=' + encodeURIComponent(stop.id) + '&window=120');
-          const data = await res.json();
-          const deps = data.departures || [];
-          if (deps.length === 0) {
-            homeDeps.innerHTML = '<p class="text-gray-500 text-sm">No departures in the next 2h.</p>';
-          } else {
-            const list = document.createElement('ul');
-            list.className = 'divide-y divide-gray-800';
-            deps.forEach(d => {
-              const li = document.createElement('li');
-              li.className = 'flex justify-between py-1 text-sm cursor-pointer';
-              let timeClass;
-              if (d.is_live) {
-                if (d.is_due)                timeClass = 'text-green-400 animate-pulse';
-                else if (d.delay_min > 0)    timeClass = 'text-red-400';
-                else if (d.delay_min < 0)    timeClass = 'text-yellow-400';
-                else                          timeClass = 'text-green-400';
-              } else {
-                timeClass = 'text-white';
-              }
-              li.innerHTML = `<span>${d.route} → ${d.destination}</span><span class="${timeClass}">${d.time_display}</span>`;
-              li.onclick = () => showTrip(d.trip_id, d);
-              list.appendChild(li);
-            });
-            homeDeps.innerHTML = '';
-            homeDeps.appendChild(list);
-          }
-        } catch (e) {
-          homeDeps.innerHTML = '<p class="text-red-400 text-sm">Error loading departures.</p>';
+      // TÉRKÉP (ha van koordináta a stopTimes sorokban)
+      try {
+        ensureMap();
+        const pts = (trip.stopTimes || [])
+          .filter(st => typeof st.lat === "number" && typeof st.lon === "number")
+          .map(st => [st.lat, st.lon]);
+        if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+        if (pts.length >= 2) {
+          routeLine = L.polyline(pts, { weight: 4 }).addTo(map);
+          map.fitBounds(routeLine.getBounds(), { padding: [20, 20] });
         }
-      }
-
-      // Routes: search & list routes with live bus info
-      const routesSearch  = document.getElementById('routes-search');
-      const routesResults = document.getElementById('routes-results');
-      let routesTimer = null;
-      let vehiclesCache = [];
-      async function loadVehicles() {
-        try {
-          const res = await fetch('/api/vehicles');
-          const data = await res.json();
-          vehiclesCache = data.items || [];
-        } catch (e) {
-          vehiclesCache = [];
+        if (vehicleMarker) { map.removeLayer(vehicleMarker); vehicleMarker = null; }
+        if (vehicle && typeof vehicle.lat === "number" && typeof vehicle.lon === "number") {
+          vehicleMarker = L.marker([vehicle.lat, vehicle.lon]).addTo(map);
         }
+      } catch (e) {
+        console.warn("Map render skipped:", e);
       }
-      loadVehicles();
-      setInterval(loadVehicles, 15000);
-      routesSearch.addEventListener('input', () => {
-        if (routesTimer) clearTimeout(routesTimer);
-        routesTimer = setTimeout(async () => {
-          const q = routesSearch.value.trim();
-          if (!q) { routesResults.innerHTML = ''; return; }
-          try {
-            const res = await fetch('/api/routes/search?q=' + encodeURIComponent(q));
-            const data = await res.json();
-            routesResults.innerHTML = '';
-            if (data && data.length > 0) {
-              const counts = {};
-              vehiclesCache.forEach(v => {
-                const lbl = v.label || '';
-                const routeName = lbl.split('·')[0].trim();
-                if (routeName) counts[routeName] = (counts[routeName] || 0) + 1;
-              });
-              data.forEach(r => {
-                const div = document.createElement('div');
-                div.className = 'p-3 flex justify-between items-center cursor-pointer hover:bg-gray-700';
-                const count = counts[r.route] || 0;
-                const busList = vehiclesCache.filter(v => {
-                  const routeName = (v.label || '').split('·')[0].trim();
-                  return routeName === r.route;
-                }).map(v => v.vehicle_ref || '').filter(x => x);
-                let sub;
-                if (count > 0) {
-                  sub = `Live (${count}): ${busList.join(', ')}`;
-                } else {
-                  sub = 'No buses';
-                }
-                div.innerHTML = `<span class="font-semibold text-sm text-blue-300">${r.route}</span><span class="${count ? 'text-green-400' : 'text-gray-500'} text-xs">${sub}</span>`;
-                div.onclick = () => { selectedRoute = r.route; updateMap(); showTab('map'); };
-                routesResults.appendChild(div);
-              });
-            } else {
-              routesResults.innerHTML = '<div class="p-2 text-gray-500">No routes found</div>';
-            }
-          } catch (e) {
-            routesResults.innerHTML = '<div class="p-2 text-red-400">Error</div>';
-          }
-        }, 300);
-      });
+    }
 
-      // Map: shape + live vehicles
-      let map = null;
-      let shapeLayer = null;
-      let markers = [];
-      let selectedRoute = null;
-      function initMap() {
-        if (!map) {
-          map = L.map('map').setView([50.92, -1.40], 12);
-          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
-        }
-      }
-      async function updateMap() {
-        if (!selectedRoute) return;
-        initMap();
-        document.getElementById('map-title').textContent = 'Route ' + selectedRoute;
-        try {
-          const shapeRes = await fetch('/api/route-shape?route=' + encodeURIComponent(selectedRoute));
-          const shapeData = await shapeRes.json();
-          if (shapeLayer) { map.removeLayer(shapeLayer); shapeLayer = null; }
-          if (shapeData.shape && shapeData.shape.length > 0) {
-            const coords = shapeData.shape.map(([lat, lon]) => [lat, lon]);
-            shapeLayer = L.polyline(coords, { color: '#007bff' }).addTo(map);
-            map.fitBounds(shapeLayer.getBounds());
-          }
-        } catch (e) {}
-        try {
-          const vRes = await fetch('/api/vehicles?route=' + encodeURIComponent(selectedRoute));
-          const vData = await vRes.json();
-          markers.forEach(m => map.removeLayer(m));
-          markers = [];
-          (vData.items || []).forEach(it => {
-            if (it.lat && it.lon) {
-              const m = L.marker([it.lat, it.lon]);
-              m.bindPopup(it.label || 'bus');
-              m.addTo(map);
-              markers.push(m);
-            }
-          });
-        } catch (e) {}
-      }
-      setInterval(() => {
-        if (currentTab === 'map' && selectedRoute) updateMap();
-      }, 20000);
-
-      // Settings: load status info
-      async function loadSettings() {
-        if (!statusCache) return;
-        const c = statusCache;
-        document.getElementById('settings-content').innerHTML = `
-          <p>Version: ${c.version}</p>
-          <p>Build: ${c.build}</p>
-          <p>GTFS ready: ${c.gtfs_ready ? 'Yes' : 'No'} (${c.gtfs_stops})</p>
-          <p>Live feed configured: ${c.live_feed_configured ? 'Yes' : 'No'}</p>
-        `;
-      }
-
-      // Trip view: show full stops
-      async function showTrip(trip_id, depInfo) {
-        showTab('trip');
-        const title   = document.getElementById('trip-title');
-        const content = document.getElementById('trip-content');
-        content.innerHTML = '<p class="text-sm text-gray-500">Loading trip…</p>';
-        try {
-          const [tripRes, vehRes] = await Promise.all([
-            fetch('/api/trip?trip_id=' + encodeURIComponent(trip_id)),
-            fetch('/api/vehicles?route=' + encodeURIComponent(depInfo.route))
-          ]);
-          const tripData = await tripRes.json();
-          const vehData  = await vehRes.json();
-          const stops    = (tripData && tripData.stops) ? tripData.stops : [];
-          const fleets   = (vehData && vehData.items) ? vehData.items.map(v => v.vehicle_ref || '').filter(x => x) : [];
-          title.textContent = `${depInfo.route} → ${depInfo.destination}${fleets.length ? ' (Fleet: ' + fleets.join(', ') + ')' : ''}`;
-          if (!stops || stops.length === 0) {
-            content.innerHTML = '<p class="text-gray-500 text-sm">No trip data.</p>';
-            return;
-          }
-          const currentIndex = stops.findIndex(s => !s.is_past);
-          const list = document.createElement('ul');
-          list.className = 'divide-y divide-gray-800';
-          stops.forEach((s, idx) => {
-            const li = document.createElement('li');
-            li.className = 'flex justify-between py-1 text-sm';
-            let css;
-            if (s.is_past)       css = 'text-gray-500';
-            else if (idx === currentIndex) css = 'text-green-400 font-bold';
-            else                css = '';
-            li.innerHTML = `<span class="${css}">${s.stop_name}</span><span class="${css}">${s.time_display}</span>`;
-            list.appendChild(li);
-          });
-          content.innerHTML = '';
-          content.appendChild(list);
-        } catch (e) {
-          title.textContent = `${depInfo.route} → ${depInfo.destination}`;
-          content.innerHTML = '<p class="text-red-400 text-sm">Error loading trip.</p>';
-        }
-      }
-
-      // GTFS upload form (Settings)
-      document.getElementById('gtfs-upload').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const formData = new FormData(e.target);
-        try {
-          const res = await fetch('/api/gtfs/upload', { method: 'POST', body: formData });
-          const data = await res.json();
-          alert('GTFS uploaded: ' + JSON.stringify(data));
-        } catch (err) {
-          alert('Error uploading GTFS: ' + err);
-        }
-      });
-      // Live feed save button (Settings)
-      document.getElementById('feed-submit').addEventListener('click', async () => {
-        const url = document.getElementById('feed-url').value.trim();
-        if (!url) { alert('Please enter feed URL'); return; }
-        try {
-          const res = await fetch('/api/live/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ feed_url: url, refresh_sec: 30 })
-          });
-          const data = await res.json();
-          alert('Live feed saved: ' + JSON.stringify(data));
-        } catch (err) {
-          alert('Error saving feed: ' + err);
-        }
-      });
-
-      // Default tab
-      showTab('home');
+    tripLoadBtn.addEventListener("click", () => {
+      const t = tripIdInput.value.trim();
+      if (!t) return;
+      const v = vehicleIdInput.value.trim() || undefined;
+      const url = new URL(location.href);
+      url.searchParams.set("tripId", t);
+      v ? url.searchParams.set("vehicleId", v) : url.searchParams.delete("vehicleId");
+      history.replaceState({}, "", url);
+      loadTrip(t, v);
+      // stop kontextushoz is jól jön a trip – alább a stopnál felhasználjuk
+      window.__CTX_TRIPID__ = t;
     });
+
+    /* ======== MEGÁLLÓ NÉZET ======== */
+    const stopSection = $("#stopSection");
+    const stopList = $("#stopList");
+    const stopTitle = $("#stopTitle");
+    const stopRole = $("#stopRole");
+    const stopIdInput = $("#stopIdInput");
+    const stopLoadBtn = $("#stopLoadBtn");
+    const stopAgencyPill = $("#stopAgencyPill");
+
+    async function loadStop(stopId, ctxTripId) {
+      stopList.innerHTML = `<div class="row"><div class="middle muted">Betöltés…</div></div>`;
+
+      // Board lekérés + Bluestar/Unilink szűrés
+      const sb = await fetch(CONFIG.api.stopBoard(stopId)).then(r => r.json());
+      sb.rows = (sb.rows || []).filter(r => agencyAllowed(r.agency));
+
+      stopTitle.textContent = sb?.stop?.name || "Megálló";
+
+      // Ha kapunk context trip-et, eldöntjük: induló / végállomás / normál
+      let role = "NO";
+      try {
+        if (ctxTripId) {
+          const t = await fetch(CONFIG.api.trip(ctxTripId)).then(r => r.json());
+          const sts = t.stopTimes || [];
+          const first = sts[0]?.stopId, last = sts[sts.length-1]?.stopId;
+          if (stopId === last) role = "END";
+          else if (stopId === first) role = "START";
+        }
+      } catch(e){/* ignore */ }
+
+      stopRole.textContent = role === "END"
+        ? "Végállomás – csak indulások jelennek meg"
+        : role === "START"
+          ? "Induló megálló"
+          : "";
+
+      // Sorok – VÉGÁLLOMÁSNÁL CSAK INDULÁSOK
+      const rows = (sb.rows || []).filter(r => {
+        if (role === "END") {
+          const hasDeparture = !!(r.depLiveTs ?? r.depTs);
+          const canBoard = (r.canBoard !== false);
+          return hasDeparture && canBoard;
+        }
+        return true;
+      });
+
+      stopList.innerHTML = "";
+      if (!rows.length) {
+        stopList.innerHTML = `<div class="row"><div class="middle muted">Nincs megjeleníthető indulás.</div></div>`;
+        return;
+      }
+
+      rows.forEach(r => {
+        const name = `${r.routeShortName || ""} → ${r.headsign || ""}`.trim();
+        const sched = r.depTs ?? r.arrTs;
+        const live  = r.depLiveTs ?? r.arrLiveTs;
+        renderStopRow(stopList, name, sched, live);
+      });
+    }
+
+    stopLoadBtn.addEventListener("click", () => {
+      const s = stopIdInput.value.trim();
+      if (!s) return;
+      const url = new URL(location.href);
+      url.searchParams.set("stopId", s);
+      history.replaceState({}, "", url);
+      loadStop(s, window.__CTX_TRIPID__);
+    });
+
+    /* ======== INDULÁSKORI PARAMÉTEREK ======== */
+    (function initFromQuery() {
+      const q = new URLSearchParams(location.search);
+      const tripId = q.get("tripId");
+      const vehicleId = q.get("vehicleId") || undefined;
+      const stopId = q.get("stopId");
+
+      // mely szekciók látszanak
+      tripSection.hidden = !tripId;
+      stopSection.hidden = !stopId;
+
+      if (tripId) {
+        tripIdInput.value = tripId;
+        if (vehicleId) vehicleIdInput.value = vehicleId;
+        loadTrip(tripId, vehicleId);
+        window.__CTX_TRIPID__ = tripId;
+      }
+      if (stopId) {
+        stopIdInput.value = stopId;
+        loadStop(stopId, window.__CTX_TRIPID__);
+      }
+
+      // ha egyik sincs, legalább az egyik panel legyen látható
+      if (!tripId && !stopId) tripSection.hidden = false;
+    })();
   </script>
 </body>
 </html>
