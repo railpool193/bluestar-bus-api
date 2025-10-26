@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>bluestar</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+  <link rel="icon" href="/static/bus.png">
+</head>
+<body>
+  <header class="appbar">
+    <a class="brand" href="/">★ bluestar</a>
+    <div class="clock" id="ukClock">UK: --:--:--</div>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
