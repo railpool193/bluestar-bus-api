@@ -21,21 +21,25 @@
   {% if live|length > 0 %}
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    const points = [
-      {% for v in live %}[{{ v.lat }}, {{ v.lon }}]{% if not loop.last %},{% endif %}{% endfor %}
-    ];
+    const live = {{ live|tojson }};
     const map = L.map('map', { scrollWheelZoom: true });
-    const tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, attribution: '&copy; OpenStreetMap'
-    }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
 
-    const group = [];
-    points.forEach(p => {
-      group.push(L.marker(p).addTo(map));
+    const markers = [];
+    live.forEach(v => {
+      const m = L.marker([v.lat, v.lon], {
+        icon: L.divIcon({
+          className: 'live-pin',
+          html: `<div style="background:#0c0f14;border:2px solid #21c17a;color:#21c17a;border-radius:10px;padding:.1rem .3rem;font-weight:700">${v.line}</div>`
+        })
+      }).addTo(map);
+      const fleet = v.fleet || v.vehicle_ref || 'ismeretlen';
+      m.bindPopup(`<b>${v.line}</b> – ${v.dest || ''}<br/>Fleet: ${fleet}`);
+      markers.push(m);
     });
-    if (group.length) {
-      const g = L.featureGroup(group);
-      map.fitBounds(g.getBounds().pad(0.2));
+    if (markers.length){
+      const g = L.featureGroup(markers);
+      map.fitBounds(g.getBounds().pad(0.25));
     } else {
       map.setView([50.9,-1.4], 12);
     }
