@@ -1,20 +1,23 @@
 <!doctype html>
 <html lang="hu">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>bluestar</title>
-  <link rel="stylesheet" href="/static/styles.css"/>
-  <link rel="icon" href="/static/bus.png">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>{% block title %}bluestar{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpolygon points='50,3 61,35 97,35 68,56 79,90 50,70 21,90 32,56 3,35 39,35' fill='%235db0ff'/%3E%3C/svg%3E">
+  {% block head %}{% endblock %}
 </head>
 <body>
-  <header class="appbar">
-    <a class="brand" href="/">★ bluestar</a>
-    <div class="clock" id="ukClock">UK: --:--:--</div>
-  </header>
-  <main class="container">
-    {% block content %}{% endblock %}
-  </main>
+  <div class="container">
+    <div class="header">
+      <span class="star"></span>
+      <a href="/" class="h1" style="color:inherit">bluestar</a>
+      <div class="clock">UK: <span id="ukclock">{{ now_uk }}</span></div>
+    </div>
+    {% block body %}{% endblock %}
+  </div>
   <script src="/static/app.js"></script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>
