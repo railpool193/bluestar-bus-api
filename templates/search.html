@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Keresés: "{{ q }}"</h1>
+
+<h3>Járatok</h3>
+<ul class="list">
+  {% for r in routes %}
+    <li class="list-row">
+      <div class="strong">{{ r.route_short_name or r.route_id }}</div>
+      <div class="muted">{{ r.route_long_name or r.agency_name }}</div>
+      <a href="/route/{{ r.route_id }}">Megnyitás</a>
+    </li>
+  {% else %}
+    <li class="muted">Nincs találat.</li>
+  {% endfor %}
+</ul>
+
+<h3>Megállók</h3>
+<ul class="list">
+  {% for s in stops %}
+    <li class="list-row">
+      <div class="strong">{{ s.stop_name }}</div>
+      <a href="/stop/{{ s.stop_id }}">Megnyitás</a>
+    </li>
+  {% else %}
+    <li class="muted">Nincs találat.</li>
+  {% endfor %}
+</ul>
+{% endblock %}
