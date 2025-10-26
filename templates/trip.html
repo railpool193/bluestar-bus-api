@@ -1,38 +1,212 @@
-{% extends "base.html" %}
-{% block content %}
-<h1>Trip {{ trip_id }}</h1>
-<div class="muted">Route {{ route_id }} – {{ headsign }}</div>
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>
+    Trip {{ trip.route_short_name if trip is defined else "" }}
+    {% if trip and trip.headsign %} → {{ trip.headsign }}{% endif %}
+  </title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <style>
+    :root{
+      --bg:#0f1115; --panel:#171a21; --muted:#8b95a7; --text:#e6e9ef;
+      --pill:#232936; --pill-live:#1f5f3b; --accent:#5aa3ff; --card:#1a1f2b;
+      --shadow:0 6px 18px rgba(0,0,0,.25); --radius:16px;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif}
+    a{color:inherit;text-decoration:none}
+    .wrap{max-width:980px;margin:0 auto;padding:16px}
+    .topbar{display:flex;align-items:center;gap:12px}
+    .brand{display:flex;align-items:center;font-weight:700}
+    .brand .star{color:#7ab0ff;margin-right:6px}
+    .spacer{flex:1}
+    .clock{color:var(--muted);font-variant-numeric:tabular-nums}
 
-{% if vehicle %}
-  <div class="pill">Bejelentkezett jármű: {{ vehicle.fleet or vehicle.vehicle_ref }} · {{ vehicle.label }}</div>
-{% endif %}
+    h1{font-size:28px;margin:10px 0}
+    .sub{color:var(--muted)}
 
-<ul class="stops">
-  {% for s in stops %}
-    <li class="stop-row">
-      <div class="time {% if s.live_time %}live{% else %}sched{% endif %}">
-        {{ s.live_time or s.sched_time }}
+    #map{height:280px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow);margin:10px 0 18px}
+
+    .legend{display:flex;gap:12px;align-items:center;color:var(--muted);margin:6px 2px 16px}
+    .dot{width:10px;height:10px;border-radius:999px;background:#6aa6ff}
+    .live-dot{background:#46c27a}
+
+    .stop-list{display:flex;flex-direction:column;gap:10px}
+    .stop{display:flex;align-items:center;gap:10px;background:var(--card);box-shadow:var(--shadow);border-radius:var(--radius);padding:12px 14px}
+    .stop .time-pill{min-width:68px;text-align:center;border-radius:999px;padding:8px 10px;background:var(--pill);font-variant-numeric:tabular-nums;font-weight:800}
+    .stop .time-pill.live{background:var(--pill-live)}
+    .stop .name{flex:1;text-align:center;font-weight:800}
+    .stop .eta{min-width:84px;text-align:right;font-variant-numeric:tabular-nums;color:#cfd6e6}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <a class="brand" href="/"><span class="star">★</span>bluestar</a>
+      <div class="spacer"></div>
+      <div id="ukClock" class="clock">UK: --:--:--</div>
+    </div>
+
+    <h1>
+      {% if trip is defined %}
+        {{ trip.route_short_name }} → {{ trip.headsign }}
+        <span class="sub">({{ trip.trip_id }})</span>
+      {% else %}Járat{% endif %}
+    </h1>
+
+    {# Élő jármű – csak Bluestar / Unilink mutatása (ha a backend átadja) #}
+    {% set v = vehicle if vehicle is defined else (live_vehicle if live_vehicle is defined else None) %}
+    {% if v and (('BLUS' in (v.operator or v.operatorRef|string)) or ('UNIL' in (v.operator or v.operatorRef|string))) %}
+      <div class="legend">
+        <span class="live-dot dot"></span> Élő jármű:
+        <strong>
+          {% if v.fleet_no %}{{ v.fleet_no }}{% elif v.vehicleRef %}{{ v.vehicleRef }}{% else %}ismeretlen{% endif %}
+        </strong>
+        <span class="sub">• frissítve:
+          {% if v.recordedAtTime %}{{ v.recordedAtTime }}{% elif v.ts %}{{ v.ts }}{% else %}—{% endif %}
+        </span>
       </div>
-      <div class="stop-name">{{ s.stop_name }}</div>
-      <div class="countdown" data-eta="{{ s.eta_epoch or s.sched_epoch }}">--:--</div>
-    </li>
-  {% endfor %}
-</ul>
+    {% else %}
+      <div class="legend"><span class="dot"></span> Nincs élő jármű ezen a tripen (vagy nem Bluestar/Unilink).</div>
+    {% endif %}
 
-<script>
-function tick() {
-  const now = Date.now();
-  document.querySelectorAll(".countdown").forEach(el => {
-    const eta = parseInt(el.dataset.eta || "0");
-    if (!eta) { el.textContent = "—"; return; }
-    let diff = Math.max(0, Math.floor((eta - now) / 1000)); // sec
-    const h = Math.floor(diff/3600);
-    diff -= h*3600;
-    const m = Math.floor(diff/60);
-    const s = diff - m*60;
-    el.textContent = (h? (h+":" + String(m).padStart(2,"0")) : m) + ":" + String(s).padStart(2,"0");
-  });
-}
-tick(); setInterval(tick, 1000);
-</script>
-{% endblock %}
+    <div id="map"></div>
+
+    {# Megállók táblázata – középen a név, balra idő (fehér / zöld), jobbra visszaszámláló #}
+    {% set rows = stops if stops is defined else (stop_times if stop_times is defined else []) %}
+    <div id="stops" class="stop-list">
+      {% for s in rows %}
+        {# várható mezők: stop_name, time_str (HH:MM), iso_time (RFC3339), is_live (bool) #}
+        <div class="stop"
+             data-iso="{{ s.iso_time if s.iso_time is defined else '' }}"
+             data-hhmm="{{ s.time_str if s.time_str is defined else '' }}">
+          <div class="time-pill {% if s.is_live %}live{% endif %}">
+            {{ s.time_str }}
+          </div>
+          <div class="name">{{ s.stop_name }}</div>
+          <div class="eta" data-eta>--:--</div>
+        </div>
+      {% else %}
+        <div class="muted">Nincs menetrendi adat ehhez a triphez.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script>
+    // UK clock
+    function tickClock(){
+      const now = new Date();
+      document.getElementById('ukClock').textContent =
+        'UK: ' + now.toLocaleTimeString('en-GB',{hour12:false});
+    }
+    setInterval(tickClock, 1000); tickClock();
+
+    // Leaflet térkép – útvonal + jármű (ha van)
+    (function(){
+      const mapEl = document.getElementById('map');
+      if (!mapEl) return;
+
+      const map = L.map(mapEl, { zoomControl:true, attributionControl:true });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+        maxZoom:19, attribution:'© OpenStreetMap'
+      }).addTo(map);
+
+      // shape koordináták – a backend adhat "shape" (list of [lat,lon]) vagy "shape_json"
+      let shape = [];
+      {% if shape is defined and shape %}
+        shape = {{ shape|tojson }};
+      {% elif shape_json is defined and shape_json %}
+        shape = {{ shape_json|safe }};
+      {% endif %}
+
+      let bounds = null;
+      if (shape && shape.length){
+        const poly = L.polyline(shape, {weight:4});
+        poly.addTo(map);
+        bounds = poly.getBounds();
+      }
+
+      // megállók – ha átadod "stops" listában lat/lon-nal, kitesszük pontként
+      const stopMarkers = [];
+      {% if rows and rows[0] is defined and rows[0]['lat'] is defined %}
+        const _stops = {{ rows|tojson }};
+        _stops.forEach(s=>{
+          if (s.lat && s.lon){
+            const m = L.circleMarker([s.lat, s.lon], {radius:4});
+            m.addTo(map).bindTooltip(s.stop_name);
+            stopMarkers.push(m);
+          }
+        });
+        if (!bounds && stopMarkers.length){
+          bounds = L.featureGroup(stopMarkers).getBounds();
+        }
+      {% endif %}
+
+      // élő jármű marker (csak BLUS/UNIL – a backend már szűrje; itt csak kirakjuk, ha megvan)
+      {% if v and (('BLUS' in (v.operator or v.operatorRef|string)) or ('UNIL' in (v.operator or v.operatorRef|string))) and (v.lat is defined and v.lon is defined) %}
+        const busIcon = L.divIcon({className:'', html:'🚌', iconSize:[24,24], iconAnchor:[12,12]});
+        const bus = L.marker([{{ v.lat }}, {{ v.lon }}], {icon:busIcon}).addTo(map);
+        {% if v.bearing is defined %} bus.setRotationAngle && bus.setRotationAngle({{ v.bearing }}); {% endif %}
+        bus.bindTooltip('Jármű{% if v.fleet_no %}: {{ v.fleet_no }}{% endif %}');
+        if (!bounds){ bounds = bus.getLatLng().toBounds(1500); }
+      {% endif %}
+
+      if (bounds){ map.fitBounds(bounds, {padding:[20,20]}); } else { map.setView([50.9097,-1.4044], 11); } // fallback: Southampton
+    })();
+
+    // Visszaszámláló az érkezésig (live -> zöld, egyébként fehér)
+    (function(){
+      const rows = Array.from(document.querySelectorAll('.stop'));
+      if(!rows.length) return;
+
+      const today = new Date();
+      const Y = today.getFullYear(), M = today.getMonth(), D = today.getDate();
+
+      function toWhen(el){
+        const iso = el.getAttribute('data-iso');
+        if (iso){
+          const d = new Date(iso);
+          if (!isNaN(d)) return d;
+        }
+        const hhmm = el.getAttribute('data-hhmm');
+        if (hhmm && /^\d{2}:\d{2}$/.test(hhmm)){
+          const [h,m] = hhmm.split(':').map(Number);
+          return new Date(Y, M, D, h, m, 0, 0);
+        }
+        return null;
+      }
+
+      function fmtDur(ms){
+        if (ms <= 0) return 'most';
+        const s = Math.floor(ms/1000);
+        const h = Math.floor(s/3600);
+        const m = Math.floor((s%3600)/60);
+        const sec = s%60;
+        if (h) return `${h}h ${m.toString().padStart(2,'0')}m`;
+        if (m >= 1) return `${m} perc`;
+        return `${sec} mp`;
+      }
+
+      function refresh(){
+        const now = new Date().getTime();
+        rows.forEach(el=>{
+          const when = toWhen(el);
+          const out = el.querySelector('[data-eta]');
+          if (!out) return;
+          if (!when){ out.textContent = '—'; return; }
+          out.textContent = fmtDur(when.getTime() - now);
+        });
+      }
+
+      refresh();
+      setInterval(refresh, 1000);
+    })();
+  </script>
+</body>
+</html>
