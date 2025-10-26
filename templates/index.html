@@ -1,37 +1,13 @@
-<!doctype html>
-<html lang="hu">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>bluestar – Járatok</title>
-  <link rel="stylesheet" href="/static/app.css" />
-</head>
-<body class="bg-neutral-900 text-neutral-100">
-  <header class="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
-    <a href="/" class="font-semibold text-lg">★ bluestar</a>
-    <form action="/search" method="get" class="w-[60%] max-w-xl">
-      <input name="q" placeholder="Keresés: járat vagy megálló"
-             class="w-full bg-neutral-800 rounded px-3 py-2 outline-none" />
-    </form>
-    <div class="opacity-70">UK: {{ now.strftime("%H:%M:%S") }}</div>
-  </header>
-
-  <main class="px-4 py-6 max-w-6xl mx-auto">
-    <h1 class="text-3xl font-bold mb-6">Járatok</h1>
-
-    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-      {% for r in routes %}
-      <a href="/r/{{ r.route_id }}"
-         class="block rounded-xl border border-neutral-800 hover:border-neutral-600 bg-neutral-850 px-4 py-6">
-        <div class="text-2xl font-bold text-blue-300">
-          {{ r.route_short_name or r.route_id }}
-        </div>
-        <div class="mt-1 text-sm opacity-70">
-          {{ r.agency or '' }}
-        </div>
+{% extends "base.html" %}
+{% block title %}Járatok • bluestar{% endblock %}
+{% block content %}
+  <h1 class="h1">Járatok</h1>
+  <div class="grid">
+    {% for r in routes %}
+      <a class="chip" href="/r/{{ r.route_id }}">
+        <span class="chip-main">{{ r.display }}</span>
+        <span class="chip-sub">{{ r.agency }}</span>
       </a>
-      {% endfor %}
-    </div>
-  </main>
-</body>
-</html>
+    {% endfor %}
+  </div>
+{% endblock %}
