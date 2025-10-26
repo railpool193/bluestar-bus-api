@@ -1,11 +1,12 @@
 # main.py
 from __future__ import annotations
 
-import csv
 import os
+import csv
 from collections import defaultdict
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, PlainTextResponse
@@ -13,77 +14,67 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import TemplateNotFound
 
-from datetime import datetime, timedelta, timezone
-
+# ---- Időzóna
 try:
     from zoneinfo import ZoneInfo
     UK = ZoneInfo("Europe/London")
 except Exception:
     UK = timezone.utc
 
-# --- Beállítások
-DATA_DIR = os.environ.get("DATA_DIR", "gtfs")
+# ---- Könyvtárak
+DATA_DIR      = os.environ.get("DATA_DIR", "gtfs")
 TEMPLATES_DIR = os.environ.get("TEMPLATES_DIR", "templates")
-STATIC_DIR = os.environ.get("STATIC_DIR", "static")
+STATIC_DIR    = os.environ.get("STATIC_DIR", "static")
 
-# Csak Bluestar / Unilink élő járművek
+# ---- Operátor fehérlista (élő adatokra)
 OP_WHITELIST = {
     "bluestar", "bluestarbus", "go south coast (bluestar)",
     "unilink", "uni-link", "southampton unilink"
 }
 
-# --- Live (SIRI) – opcionális wrap
-def _resolve_siri():
+# ====== Segédek
+
+def now_uk_str() -> str:
+    return datetime.now(tz=UK).strftime("%H:%M:%S")
+
+def norm(s: Optional[str]) -> str:
+    return (s or "").strip().lower()
+
+def like(hay: str, needle: str) -> bool:
+    return norm(needle) in norm(hay)
+
+# GTFS idő → epoch ms (nap+24h feletti idők támogatása)
+def _parse_gtfs_hhmm(hhmmss: str) -> Optional[Tuple[int,int,int,int]]:
+    if not hhmmss: return None
+    p = (hhmmss.split(":") + ["0","0"])[:3]
     try:
-        import siri_live as m
+        h = int(p[0]); m = int(p[1]); s = int(p[2])
     except Exception:
-        return None, None
-    rf = None
-    for n in ("fetch_live_on_route", "get_live_on_route", "live_on_route"):
-        if hasattr(m, n):
-            rf = getattr(m, n)
-            break
-    tf = None
-    for n in ("fetch_live_for_trip", "get_live_for_trip", "live_for_trip"):
-        if hasattr(m, n):
-            tf = getattr(m, n)
-            break
-    return rf, tf
+        return None
+    day_off = h // 24
+    h = h % 24
+    return (day_off, h, m, s)
 
-_SIRI_ROUTE_FN, _SIRI_TRIP_FN = _resolve_siri()
+def to_epoch_ms_today(hhmmss: str) -> Optional[int]:
+    p = _parse_gtfs_hhmm(hhmmss)
+    if not p: return None
+    day_off, h, m, s = p
+    base = datetime.now(tz=UK).date()
+    dt = datetime(base.year, base.month, base.day, h, m, s, tzinfo=UK) + timedelta(days=day_off)
+    return int(dt.timestamp() * 1000)
 
-def fetch_live_on_route(route_id: str) -> List[Dict[str, Any]]:
-    if _SIRI_ROUTE_FN:
-        try:
-            return _SIRI_ROUTE_FN(route_id) or []
-        except Exception:
-            return []
-    return []
+def hhmm(hhmmss: str) -> str:
+    p = _parse_gtfs_hhmm(hhmmss)
+    if not p: return ""
+    _, h, m, _ = p
+    return f"{h:02d}:{m:02d}"
 
-def fetch_live_for_trip(trip_id: str) -> List[Dict[str, Any]]:
-    if _SIRI_TRIP_FN:
-        try:
-            return _SIRI_TRIP_FN(trip_id) or []
-        except Exception:
-            return []
-    return []
+# ====== Adatbetöltés
 
-def is_allowed_operator(op_name: Optional[str], op_ref: Optional[str] = None) -> bool:
-    cands = []
-    if op_name: cands.append(op_name.lower())
-    if op_ref:  cands.append(op_ref.lower())
-    for c in cands:
-        for w in OP_WHITELIST:
-            if w in c:
-                return True
-    return False
-
-# --- CSV/GTFS betöltés
 @lru_cache(maxsize=1)
 def _load_csv(path: str) -> List[Dict[str, str]]:
     rows: List[Dict[str, str]] = []
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
-        import csv
         reader = csv.DictReader(f)
         for r in reader:
             rows.append({k: (v or "").strip() for k, v in r.items()})
@@ -103,7 +94,9 @@ def routes() -> List[Dict[str, str]]:
     out = []
     for r in _load_csv(p):
         rr = dict(r)
-        rr["agency_name"] = ag.get(r.get("agency_id",""), {}).get("agency_name","")
+        a = ag.get(r.get("agency_id",""), {})
+        rr["agency_name"] = a.get("agency_name","")
+        rr["agency_url"]  = a.get("agency_url","")
         out.append(rr)
     return out
 
@@ -112,19 +105,19 @@ def routes_by_id() -> Dict[str, Dict[str, str]]:
     return {r.get("route_id",""): r for r in routes()}
 
 @lru_cache(maxsize=1)
-def trips() -> Dict[str, Dict[str,str]]:
+def trips() -> Dict[str, Dict[str, str]]:
     p = os.path.join(DATA_DIR, "trips.txt")
     if not os.path.exists(p): return {}
     return {r.get("trip_id",""): r for r in _load_csv(p)}
 
 @lru_cache(maxsize=1)
-def stops() -> Dict[str, Dict[str,str]]:
+def stops() -> Dict[str, Dict[str, str]]:
     p = os.path.join(DATA_DIR, "stops.txt")
     if not os.path.exists(p): return {}
     return {r.get("stop_id",""): r for r in _load_csv(p)}
 
 @lru_cache(maxsize=1)
-def stop_times_all() -> List[Dict[str,str]]:
+def stop_times_all() -> List[Dict[str, str]]:
     p = os.path.join(DATA_DIR, "stop_times.txt")
     if not os.path.exists(p): return []
     rows = _load_csv(p)
@@ -136,8 +129,8 @@ def stop_times_all() -> List[Dict[str,str]]:
     return rows
 
 @lru_cache(maxsize=1)
-def stop_times_by_trip() -> Dict[str, List[Dict[str,str]]]:
-    d: Dict[str, List[Dict[str,str]]] = defaultdict(list)
+def stop_times_by_trip() -> Dict[str, List[Dict[str, str]]]:
+    d: Dict[str, List[Dict[str, str]]] = defaultdict(list)
     for r in stop_times_all():
         d[r.get("trip_id","")].append(r)
     for k in d:
@@ -148,15 +141,15 @@ def stop_times_by_trip() -> Dict[str, List[Dict[str,str]]]:
 def trip_minmax_seq() -> Dict[str, Tuple[int,int]]:
     d: Dict[str, Tuple[int,int]] = {}
     for tid, arr in stop_times_by_trip().items():
-        if arr:
-            mn = min(x["stop_sequence"] for x in arr)
-            mx = max(x["stop_sequence"] for x in arr)
-            d[tid] = (mn, mx)
+        if not arr: continue
+        mn = min(x["stop_sequence"] for x in arr)
+        mx = max(x["stop_sequence"] for x in arr)
+        d[tid] = (mn, mx)
     return d
 
 @lru_cache(maxsize=1)
-def stop_index() -> Dict[str, List[Dict[str,str]]]:
-    idx: Dict[str, List[Dict[str,str]]] = defaultdict(list)
+def stop_index() -> Dict[str, List[Dict[str, str]]]:
+    idx: Dict[str, List[Dict[str, str]]] = defaultdict(list)
     stbt = stop_times_by_trip()
     tr = trips(); rt = routes_by_id(); st = stops()
     for tid, arr in stbt.items():
@@ -180,47 +173,42 @@ def stop_index() -> Dict[str, List[Dict[str,str]]]:
         idx[sid].sort(key=lambda x: (x["route_short_name"], x["stop_sequence"]))
     return idx
 
-# --- Idő segédek
-def now_uk_str() -> str:
-    return datetime.now(tz=UK).strftime("%H:%M:%S")
+# ====== Bluestar/Unilink szűrés (rugalmas)
 
-def _parse_gtfs_hhmm(hhmmss: str) -> Optional[Tuple[int,int,int,int]]:
-    if not hhmmss: return None
-    parts = (hhmmss.split(":") + ["0","0"])[:3]
-    try:
-        h = int(parts[0]); m = int(parts[1]); s = int(parts[2])
-    except Exception:
-        return None
-    day_off = h // 24
-    h = h % 24
-    return (day_off, h, m, s)
+def _is_bluestar_unilink_route(r: Dict[str,str]) -> bool:
+    an  = norm(r.get("agency_name"))
+    au  = norm(r.get("agency_url"))
+    rsn = norm(r.get("route_short_name"))
+    rln = norm(r.get("route_long_name"))
 
-def to_epoch_ms_today(hhmmss: str) -> Optional[int]:
-    p = _parse_gtfs_hhmm(hhmmss)
-    if not p: return None
-    day_off, h, m, s = p
-    base = datetime.now(tz=UK).date()
-    dt = datetime(base.year, base.month, base.day, h, m, s, tzinfo=UK) + timedelta(days=day_off)
-    return int(dt.timestamp() * 1000)
+    # 1) agency URL/név alapján
+    if "bluestar" in an or "bluestar" in au: return True
+    if "unilink" in an or "unilink" in au:   return True
 
-def hhmm(hhmmss: str) -> str:
-    p = _parse_gtfs_hhmm(hhmmss)
-    if not p: return ""
-    _, h, m, _ = p
-    return f"{h:02d}:{m:02d}"
+    # 2) minták a járatszámra: teljes szám (pl. 1..19, 607 stb.) vagy U-prefix (U1, U2C…)
+    if rsn.startswith("u") and len(rsn) >= 2 and rsn[1].isdigit():
+        return True
+    if rsn.isdigit():
+        return True
 
-# --- Lekérdezések
+    # 3) route_long_name említi
+    if "bluestar" in rln or "unilink" in rln:
+        return True
+
+    return False
+
 def load_routes_filtered() -> List[Dict[str,str]]:
-    lst = []
-    for r in routes():
-        ag = (r.get("agency_name","") or r.get("agency_id","")).lower()
-        if "blue" in ag or "uni" in ag:
-            lst.append(r)
-    # duplikációk kiszűrése
-    uniq = {r.get("route_id",""): r for r in lst}
+    allr = routes()
+    flt  = [r for r in allr if _is_bluestar_unilink_route(r)]
+    # ha valamiért semmit sem talál, ne legyen üres a főoldal
+    base = flt if flt else allr
+    # egyedisítés + rendezés
+    uniq = {r.get("route_id",""): r for r in base}
     out = list(uniq.values())
     out.sort(key=lambda x: (x.get("route_short_name",""), x.get("route_id","")))
     return out
+
+# ====== Trip/Stop segédek
 
 def trip_stops_with_times(trip_id: str) -> List[Dict[str, Any]]:
     stbt = stop_times_by_trip().get(trip_id, [])
@@ -234,7 +222,8 @@ def trip_stops_with_times(trip_id: str) -> List[Dict[str, Any]]:
             "stop_name": st.get(sid,{}).get("stop_name", sid),
             "sched_time": hhmm(sched),
             "sched_epoch": to_epoch_ms_today(sched),
-            "eta_epoch": to_epoch_ms_today(sched),  # default: menetrend
+            "eta_epoch": to_epoch_ms_today(sched),  # default menetrend
+            "live_time": None,
         })
     return out
 
@@ -285,10 +274,55 @@ def departures_arrivals_for_stop(stop_id: str):
     arrs.sort(key=lambda x: (x["eta_epoch"] or 0))
     return deps, arrs
 
-# --- FastAPI
-app = FastAPI(title="bluestar")
+# ====== Opcionális SIRI wrap (ha van siri_live.py)
+def _resolve_siri():
+    try:
+        import siri_live as m
+    except Exception:
+        return None, None
+    rf = None
+    for n in ("fetch_live_on_route", "get_live_on_route", "live_on_route"):
+        if hasattr(m, n):
+            rf = getattr(m, n)
+            break
+    tf = None
+    for n in ("fetch_live_for_trip", "get_live_for_trip", "live_for_trip"):
+        if hasattr(m, n):
+            tf = getattr(m, n)
+            break
+    return rf, tf
 
-# Ne omoljon össze, ha nincs mappa: check_dir=False
+_SIRI_ROUTE_FN, _SIRI_TRIP_FN = _resolve_siri()
+
+def fetch_live_on_route(route_id: str) -> List[Dict[str, Any]]:
+    if _SIRI_ROUTE_FN:
+        try:
+            return _SIRI_ROUTE_FN(route_id) or []
+        except Exception:
+            return []
+    return []
+
+def fetch_live_for_trip(trip_id: str) -> List[Dict[str, Any]]:
+    if _SIRI_TRIP_FN:
+        try:
+            return _SIRI_TRIP_FN(trip_id) or []
+        except Exception:
+            return []
+    return []
+
+def is_allowed_operator(op_name: Optional[str], op_ref: Optional[str] = None) -> bool:
+    cands = []
+    if op_name: cands.append(op_name.lower())
+    if op_ref:  cands.append(op_ref.lower())
+    for c in cands:
+        for w in OP_WHITELIST:
+            if w in c:
+                return True
+    return False
+
+# ====== FastAPI app
+
+app = FastAPI(title="bluestar")
 app.mount("/static", StaticFiles(directory=STATIC_DIR, check_dir=False), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
@@ -296,24 +330,57 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 def healthz():
     return PlainTextResponse("ok")
 
+# --- Főoldal
 @app.get("/")
 def index(request: Request):
     rts = load_routes_filtered()
     try:
-        return templates.TemplateResponse("index.html", {"request": request, "routes": rts, "now_uk": now_uk_str()})
+        return templates.TemplateResponse("index.html", {
+            "request": request, "routes": rts, "now_uk": now_uk_str()
+        })
     except TemplateNotFound:
-        # minimal fallback, ha nincs sablon
         items = "".join(f'<li><a href="/route/{r.get("route_id")}">{r.get("route_short_name") or r.get("route_id")}</a></li>' for r in rts)
-        html = f"""<html><body><h1>Járatok</h1><ul>{items}</ul></body></html>"""
-        return HTMLResponse(html)
+        return HTMLResponse(f"<h1>Járatok</h1><ul>{items}</ul>")
 
+# --- Kereső (járat + megálló)
+@app.get("/search")
+def search(request: Request, q: str = ""):
+    qn = norm(q)
+    all_routes = load_routes_filtered()
+    rt_hits = []
+    st_hits = []
+    if qn:
+        # járatok: short_name / long_name tartalmazza
+        for r in all_routes:
+            if like(r.get("route_short_name",""), q) or like(r.get("route_long_name",""), q):
+                rt_hits.append(r)
+
+        # megállók: stop_name tartalmazza
+        for sid, s in stops().items():
+            if like(s.get("stop_name",""), q):
+                st_hits.append({"stop_id": sid, "stop_name": s.get("stop_name","")})
+
+    # limitálás, hogy gyors maradjon
+    rt_hits = rt_hits[:100]
+    st_hits = st_hits[:100]
+
+    try:
+        return templates.TemplateResponse("search.html", {
+            "request": request, "q": q, "routes": rt_hits, "stops": st_hits, "now_uk": now_uk_str()
+        })
+    except TemplateNotFound:
+        rhtml = "".join(f'<li><a href="/route/{r.get("route_id")}">{r.get("route_short_name")}</a></li>' for r in rt_hits)
+        shtml = "".join(f'<li><a href="/stop/{s["stop_id"]}">{s["stop_name"]}</a></li>' for s in st_hits)
+        return HTMLResponse(f"<h1>Keresés: {q}</h1><h3>Járatok</h3><ul>{rhtml}</ul><h3>Megállók</h3><ul>{shtml}</ul>")
+
+# --- Járatnézet
 @app.get("/route/{route_id}")
 def route_view(request: Request, route_id: str):
     live_raw = fetch_live_on_route(route_id)
     vehicles = []
     for v in live_raw:
-        opn = (v.get("operator_name") or v.get("OperatorName") or v.get("ProducerRef") or "")
-        opr = (v.get("operator_ref") or v.get("OperatorRef") or "")
+        opn = v.get("operator_name") or v.get("OperatorName") or v.get("ProducerRef") or ""
+        opr = v.get("operator_ref")  or v.get("OperatorRef")  or ""
         if not is_allowed_operator(opn, opr):
             continue
         vehicles.append({
@@ -329,9 +396,9 @@ def route_view(request: Request, route_id: str):
             "request": request, "route_id": route_id, "vehicles": vehicles, "now_uk": now_uk_str()
         })
     except TemplateNotFound:
-        html = f"<h1>Route {route_id}</h1><p>Élő járművek: {len(vehicles)}</p>"
-        return HTMLResponse(html)
+        return HTMLResponse(f"<h1>Route {route_id}</h1><p>Élő járművek: {len(vehicles)}</p>")
 
+# --- Tripnézet (csak a bejelentkezett jármű)
 @app.get("/trip/{trip_id}")
 def trip_view(request: Request, trip_id: str):
     t_all = trips()
@@ -347,10 +414,10 @@ def trip_view(request: Request, trip_id: str):
     if live:
         v = live[0]
         etas = v.get("etas_by_stop") or v.get("EtAsByStop") or {}
-        norm = {}
+        norm_etas = {}
         for sid, val in etas.items():
             try:
-                norm[sid] = int(val) if isinstance(val, (int,float)) else to_epoch_ms_today(str(val))
+                norm_etas[sid] = int(val) if isinstance(val, (int,float)) else to_epoch_ms_today(str(val))
             except Exception:
                 pass
         vehicle = {
@@ -358,15 +425,14 @@ def trip_view(request: Request, trip_id: str):
             "fleet": v.get("fleet") or v.get("FleetNumber"),
             "label": v.get("destination") or v.get("DestinationName") or "Bejelentkezett jármű",
             "updated": v.get("recorded_at_time") or v.get("RecordedAtTime"),
-            "etas_by_stop": norm,
+            "etas_by_stop": norm_etas,
         }
         for s in stops_list:
             sid = s["stop_id"]
-            if sid in norm:
-                s["eta_epoch"] = norm[sid]
+            if sid in norm_etas:
+                s["eta_epoch"] = norm_etas[sid]
                 try:
-                    from datetime import datetime as _dt
-                    s["live_time"] = _dt.fromtimestamp(norm[sid]/1000, tz=UK).strftime("%H:%M")
+                    s["live_time"] = datetime.fromtimestamp(norm_etas[sid]/1000, tz=UK).strftime("%H:%M")
                 except Exception:
                     s["live_time"] = None
 
@@ -381,9 +447,10 @@ def trip_view(request: Request, trip_id: str):
             "now_uk": now_uk_str(),
         })
     except TemplateNotFound:
-        rows = "".join(f"<li>{s['stop_name']} — {s['sched_time']}</li>" for s in stops_list)
+        rows = "".join(f"<li>{s['stop_name']} — {s['live_time'] or s['sched_time']}</li>" for s in stops_list)
         return HTMLResponse(f"<h1>Trip {trip_id}</h1><ul>{rows}</ul>")
 
+# --- Megállónézet (végállomás: csak indulás)
 @app.get("/stop/{stop_id}")
 def stop_view(request: Request, stop_id: str):
     dep, arr = departures_arrivals_for_stop(stop_id)
