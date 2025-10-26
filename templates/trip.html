@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ route.route_short_name }} → {{ trip.trip_headsign }}</h1>
+<div class="muted">Trip: {{ trip.trip_id }}</div>
+
+<div id="map" class="map"></div>
+<div id="stopList" class="list tight"></div>
+
+<script>
+let Lloaded=false;
+async function Lensure(){
+  if(Lloaded) return; Lloaded=true;
+  const Lcss = document.createElement('link'); Lcss.rel='stylesheet';
+  Lcss.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'; document.head.appendChild(Lcss);
+  await new Promise(r=>setTimeout(r,50));
+  const s = document.createElement('script'); s.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+  document.body.appendChild(s); await new Promise(r=>s.onload? s.onload=r : setTimeout(r,500));
+}
+
+function toSec(hms){ const [h,m,s]=hms.split(':').map(x=>+x); return h*3600+m*60+s; }
+function pad(n){ return (n<10?'0':'')+n; }
+function nowSecUK(){
+  const d = new Date(); // feltételezzük: szerver oldalon UK idő, kliensen visszaszámlálunk relatívan
+  return d.getHours()*3600 + d.getMinutes()*60 + d.getSeconds();
+}
+
+(async function(){
+  const data = await (await fetch('/api/trip/{{ trip.trip_id }}')).json();
+
+  // --- MAP + csak a triphez tartozó jármű ---
+  await Lensure();
+  const map = L.map('map'); 
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+  map.setView([50.9,-1.4], 12);
+
+  // polyline (gyors megoldás a stopokból)
+  const latlngs = [];
+  const listRoot = document.getElementById('stopList'); listRoot.innerHTML = '';
+  const ukNow = nowSecUK();
+
+  for(const r of data.rows){
+    // középen: megálló neve; bal: idő (LIVE zöld / TT fehér); jobb: ETA visszaszámláló
+    const row = document.createElement('div'); row.className='row threecol';
+    const left = document.createElement('div'); left.className='left mono';
+    const center = document.createElement('div'); center.className='center ellips';
+    const right = document.createElement('div'); right.className='right mono';
+
+    const sched = r.scheduled || '';
+    const isLive = !!r.live;
+    left.textContent = (r.live || sched || '--:--');
+    if(isLive){ left.classList.add('live'); }
+
+    center.textContent = r.stop_name || r.stop_id;
+
+    // ETA – ha van live, azt használjuk, különben menetrend
+    const etaBase = r.live || sched;
+    if(etaBase){
+      const target = toSec(etaBase);
+      const update = ()=>{
+        const now = nowSecUK();
+        let diff = target - now;
+        if (diff < -3600) diff += 24*3600; // átnyúlás kezelése
+        const min = Math.floor(diff/60), sec = Math.max(0, diff%60);
+        right.textContent = (min>=0? `${min}m ${pad(sec)}s` : '---');
+      };
+      update(); setInterval(update, 1000);
+    } else {
+      right.textContent = '---';
+    }
+
+    row.append(left, center, right);
+    listRoot.append(row);
+  }
+
+  // marker a trip járművének (EXKLUZÍVAN csak ez jelenik meg)
+  if(data.vehicle){
+    const v = data.vehicle;
+    const m = L.marker([v.lat, v.lon], {rotationAngle: v.bearing||0}).addTo(map)
+      .bindTooltip(`${v.line_name} • ${v.fleet||v.vehicle_ref||''}`);
+    map.setView([v.lat, v.lon], 13);
+    setInterval(async ()=>{
+      const vi = await (await fetch('/api/vehicles?for_trip={{ trip.trip_id }}')).json();
+      if(vi && vi[0]){
+        m.setLatLng([vi[0].lat, vi[0].lon]).setRotationAngle?.(vi[0].bearing||0)
+         .bindTooltip(`${vi[0].line_name} • ${vi[0].fleet||vi[0].vehicle_ref||''}`);
+      }
+    }, 15000);
+  }
+})();
+</script>
+{% endblock %}
