@@ -9,15 +9,29 @@
     <div class="muted">Nincs közelgő indulás.</div>
   {% else %}
     <div class="list">
+      {# A backend most úgy adja, hogy DUPLIKÁTUMOK már ki vannak szűrve.
+         Emellett minden elemhez érkezik:
+         kind: "live"|"sched"
+         is_due: bool      (<=1 perc)
+         time_str, headsign, route_display, minutes
+      #}
       {% for d in departures %}
         <a class="card row" href="/t/{{ d.trip_id }}">
-          <div class="pill">{{ d.time_str }}</div>
+          <div class="pill {% if d.kind=='live' %}pill-live{% else %}pill-sched{% endif %} {% if d.kind=='live' and d.is_due %}blink{% endif %}">
+            {{ d.time_str }}
+          </div>
           <div class="row-main">
-            <div class="row-title">{{ d.headsign or '&nbsp;' }}</div>
+            <div class="row-title" {% if d.kind=='live' %}style="color:var(--live)"{% endif %}>
+              {{ d.headsign or '&nbsp;' }}
+            </div>
             <div class="row-sub">{{ d.route_display }}</div>
           </div>
           <div class="row-tail muted">
-            {% if d.minutes is not none %}{{ d.minutes }} perc{% else %}&nbsp;{% endif %}
+            {% if d.minutes is not none %}
+              {% if d.kind=='live' %}<span style="color:var(--live)"> {% endif %}
+              {{ d.minutes }} perc
+              {% if d.kind=='live' %}</span>{% endif %}
+            {% else %}&nbsp;{% endif %}
           </div>
         </a>
       {% endfor %}
