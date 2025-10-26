@@ -1,18 +1,44 @@
 {% extends "base.html" %}
+{% block title %}Járat • {{ route.display_name }} • bluestar{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+{% endblock %}
+
 {% block content %}
-<h1>Route {{ route_id }}</h1>
-<h3>Élő járművek (Bluestar/Unilink)</h3>
-<ul class="list">
-  {% for v in vehicles %}
-    <li class="list-row">
-      <div>
-        <div class="strong">{{ v.fleet or v.vehicle_ref }}</div>
-        <div class="muted">{{ v.destination }}</div>
-      </div>
-      <div class="muted">{{ v.updated }}</div>
-    </li>
+  <h1 class="h1">Route <span class="badge">{{ route.display_name }}</span></h1>
+
+  <h2 class="h3">Élő járművek (Bluestar/Unilink)</h2>
+  {% if live|length == 0 %}
+    <div class="muted">Jelenleg nincs élő jármű.</div>
   {% else %}
-    <li class="muted">Jelenleg nincs élő jármű.</li>
-  {% endfor %}
-</ul>
+    <div id="map" class="map"></div>
+    <div class="muted" style="margin-top:.5rem">Járművek: {{ live|length }} db</div>
+  {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+  {% if live|length > 0 %}
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+    const points = [
+      {% for v in live %}[{{ v.lat }}, {{ v.lon }}]{% if not loop.last %},{% endif %}{% endfor %}
+    ];
+    const map = L.map('map', { scrollWheelZoom: true });
+    const tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+
+    const group = [];
+    points.forEach(p => {
+      group.push(L.marker(p).addTo(map));
+    });
+    if (group.length) {
+      const g = L.featureGroup(group);
+      map.fitBounds(g.getBounds().pad(0.2));
+    } else {
+      map.setView([50.9,-1.4], 12);
+    }
+  </script>
+  {% endif %}
 {% endblock %}
