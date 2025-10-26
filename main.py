@@ -1,8 +1,7 @@
 # main.py
 from __future__ import annotations
 
-import os
-import csv
+import os, csv, unicodedata
 from collections import defaultdict
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
@@ -14,36 +13,64 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import TemplateNotFound
 
-# ---- Időzóna
+# ---------------- Timezone
 try:
     from zoneinfo import ZoneInfo
     UK = ZoneInfo("Europe/London")
 except Exception:
     UK = timezone.utc
 
-# ---- Könyvtárak
-DATA_DIR      = os.environ.get("DATA_DIR", "gtfs")
+def now_uk_str() -> str:
+    return datetime.now(tz=UK).strftime("%H:%M:%S")
+
+# ---------------- GTFS mappa autodetect
+def detect_data_dir() -> str:
+    # 1) ENV ha érvényes
+    env = os.environ.get("DATA_DIR")
+    candidates: List[str] = []
+    if env:
+        candidates.append(env)
+        # gyakori elgépelések / relatív útvonalak
+        candidates += [os.path.join(".", env), os.path.join("/app", env)]
+
+    # 2) Tipikus mappanevek
+    candidates += ["gtfs", "data", "/app/gtfs", "/app/data"]
+
+    # 3) Aktuális dir
+    candidates.append(".")
+
+    checked = set()
+    for base in candidates:
+        if not base or base in checked:
+            continue
+        checked.add(base)
+        if all(os.path.exists(os.path.join(base, fn)) for fn in ("routes.txt", "stops.txt", "trips.txt", "stop_times.txt")):
+            return base
+    # ha semmi sem jó, marad a "gtfs" default (hátha később kerül fájl a helyére)
+    return "gtfs"
+
+DATA_DIR = detect_data_dir()
 TEMPLATES_DIR = os.environ.get("TEMPLATES_DIR", "templates")
 STATIC_DIR    = os.environ.get("STATIC_DIR", "static")
 
-# ---- Operátor fehérlista (élő adatokra)
+# ---------------- Operátor whitelist (élő adathoz)
 OP_WHITELIST = {
     "bluestar", "bluestarbus", "go south coast (bluestar)",
     "unilink", "uni-link", "southampton unilink"
 }
 
-# ====== Segédek
-
-def now_uk_str() -> str:
-    return datetime.now(tz=UK).strftime("%H:%M:%S")
+# ---------------- Normalizálás / keresés
+def _strip_accents(s: str) -> str:
+    if not s: return ""
+    return "".join(ch for ch in unicodedata.normalize("NFKD", s) if not unicodedata.combining(ch))
 
 def norm(s: Optional[str]) -> str:
-    return (s or "").strip().lower()
+    return _strip_accents((s or "").strip().lower())
 
 def like(hay: str, needle: str) -> bool:
     return norm(needle) in norm(hay)
 
-# GTFS idő → epoch ms (nap+24h feletti idők támogatása)
+# ---------------- GTFS idő parsolás (24+ óra támogatás)
 def _parse_gtfs_hhmm(hhmmss: str) -> Optional[Tuple[int,int,int,int]]:
     if not hhmmss: return None
     p = (hhmmss.split(":") + ["0","0"])[:3]
@@ -69,22 +96,26 @@ def hhmm(hhmmss: str) -> str:
     _, h, m, _ = p
     return f"{h:02d}:{m:02d}"
 
-# ====== Adatbetöltés
-
+# ---------------- CSV betöltők
 @lru_cache(maxsize=1)
 def _load_csv(path: str) -> List[Dict[str, str]]:
     rows: List[Dict[str, str]] = []
+    if not os.path.exists(path):
+        return rows
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        for r in reader:
-            rows.append({k: (v or "").strip() for k, v in r.items()})
+        r = csv.DictReader(f)
+        for row in r:
+            rows.append({k: (v or "").strip() for k, v in row.items()})
     return rows
 
 @lru_cache(maxsize=1)
 def agencies() -> Dict[str, Dict[str, str]]:
     p = os.path.join(DATA_DIR, "agency.txt")
-    if not os.path.exists(p): return {}
-    return {r.get("agency_id",""): r for r in _load_csv(p)}
+    m: Dict[str, Dict[str, str]] = {}
+    if not os.path.exists(p): return m
+    for r in _load_csv(p):
+        m[r.get("agency_id","")] = r
+    return m
 
 @lru_cache(maxsize=1)
 def routes() -> List[Dict[str, str]]:
@@ -173,25 +204,21 @@ def stop_index() -> Dict[str, List[Dict[str, str]]]:
         idx[sid].sort(key=lambda x: (x["route_short_name"], x["stop_sequence"]))
     return idx
 
-# ====== Bluestar/Unilink szűrés (rugalmas)
-
+# ---------------- Bluestar/Unilink szűrés (rugalmas)
 def _is_bluestar_unilink_route(r: Dict[str,str]) -> bool:
     an  = norm(r.get("agency_name"))
     au  = norm(r.get("agency_url"))
     rsn = norm(r.get("route_short_name"))
     rln = norm(r.get("route_long_name"))
 
-    # 1) agency URL/név alapján
     if "bluestar" in an or "bluestar" in au: return True
-    if "unilink" in an or "unilink" in au:   return True
+    if "unilink"  in an or "unilink"  in au: return True
 
-    # 2) minták a járatszámra: teljes szám (pl. 1..19, 607 stb.) vagy U-prefix (U1, U2C…)
     if rsn.startswith("u") and len(rsn) >= 2 and rsn[1].isdigit():
         return True
     if rsn.isdigit():
         return True
 
-    # 3) route_long_name említi
     if "bluestar" in rln or "unilink" in rln:
         return True
 
@@ -200,16 +227,13 @@ def _is_bluestar_unilink_route(r: Dict[str,str]) -> bool:
 def load_routes_filtered() -> List[Dict[str,str]]:
     allr = routes()
     flt  = [r for r in allr if _is_bluestar_unilink_route(r)]
-    # ha valamiért semmit sem talál, ne legyen üres a főoldal
-    base = flt if flt else allr
-    # egyedisítés + rendezés
+    base = flt if flt else allr  # fallback, hogy ne legyen üres
     uniq = {r.get("route_id",""): r for r in base}
     out = list(uniq.values())
     out.sort(key=lambda x: (x.get("route_short_name",""), x.get("route_id","")))
     return out
 
-# ====== Trip/Stop segédek
-
+# ---------------- Trip/Stop segédek
 def trip_stops_with_times(trip_id: str) -> List[Dict[str, Any]]:
     stbt = stop_times_by_trip().get(trip_id, [])
     st = stops()
@@ -274,7 +298,7 @@ def departures_arrivals_for_stop(stop_id: str):
     arrs.sort(key=lambda x: (x["eta_epoch"] or 0))
     return deps, arrs
 
-# ====== Opcionális SIRI wrap (ha van siri_live.py)
+# ---------------- Opcionális SIRI (ha van siri_live.py)
 def _resolve_siri():
     try:
         import siri_live as m
@@ -320,8 +344,7 @@ def is_allowed_operator(op_name: Optional[str], op_ref: Optional[str] = None) ->
                 return True
     return False
 
-# ====== FastAPI app
-
+# ---------------- FastAPI
 app = FastAPI(title="bluestar")
 app.mount("/static", StaticFiles(directory=STATIC_DIR, check_dir=False), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
@@ -330,7 +353,22 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 def healthz():
     return PlainTextResponse("ok")
 
-# --- Főoldal
+# Hasznos debug: lássuk, mit talált a detektor
+@app.get("/debug/detect")
+def debug_detect():
+    info = {
+        "DATA_DIR": DATA_DIR,
+        "routes.txt": os.path.exists(os.path.join(DATA_DIR, "routes.txt")),
+        "stops.txt": os.path.exists(os.path.join(DATA_DIR, "stops.txt")),
+        "trips.txt": os.path.exists(os.path.join(DATA_DIR, "trips.txt")),
+        "stop_times.txt": os.path.exists(os.path.join(DATA_DIR, "stop_times.txt")),
+        "routes_count": len(routes()),
+        "stops_count": len(stops()),
+    }
+    return info
+
+# --------- Oldalak
+
 @app.get("/")
 def index(request: Request):
     rts = load_routes_filtered()
@@ -342,38 +380,37 @@ def index(request: Request):
         items = "".join(f'<li><a href="/route/{r.get("route_id")}">{r.get("route_short_name") or r.get("route_id")}</a></li>' for r in rts)
         return HTMLResponse(f"<h1>Járatok</h1><ul>{items}</ul>")
 
-# --- Kereső (járat + megálló)
 @app.get("/search")
 def search(request: Request, q: str = ""):
     qn = norm(q)
+    # ha nincs adat betöltve, legyen üres lista helyett üzenet a sablonban
     all_routes = load_routes_filtered()
-    rt_hits = []
-    st_hits = []
+    rt_hits: List[Dict[str,str]] = []
+    st_hits: List[Dict[str,str]] = []
     if qn:
-        # járatok: short_name / long_name tartalmazza
-        for r in all_routes:
+        # járatok
+        # ha a filtered túl agresszív lenne, essünk vissza az összesre egy második körben
+        base = all_routes or routes()
+        for r in base:
             if like(r.get("route_short_name",""), q) or like(r.get("route_long_name",""), q):
                 rt_hits.append(r)
-
-        # megállók: stop_name tartalmazza
+        # megállók
         for sid, s in stops().items():
             if like(s.get("stop_name",""), q):
                 st_hits.append({"stop_id": sid, "stop_name": s.get("stop_name","")})
 
-    # limitálás, hogy gyors maradjon
-    rt_hits = rt_hits[:100]
-    st_hits = st_hits[:100]
+    rt_hits = rt_hits[:200]
+    st_hits = st_hits[:200]
 
     try:
         return templates.TemplateResponse("search.html", {
-            "request": request, "q": q, "routes": rt_hits, "stops": st_hits, "now_uk": now_uk_str()
+            "request": request, "q": q, "routes": rt_hits, "stops": st_hits, "now_uk": now_uk_str(),
         })
     except TemplateNotFound:
         rhtml = "".join(f'<li><a href="/route/{r.get("route_id")}">{r.get("route_short_name")}</a></li>' for r in rt_hits)
         shtml = "".join(f'<li><a href="/stop/{s["stop_id"]}">{s["stop_name"]}</a></li>' for s in st_hits)
         return HTMLResponse(f"<h1>Keresés: {q}</h1><h3>Járatok</h3><ul>{rhtml}</ul><h3>Megállók</h3><ul>{shtml}</ul>")
 
-# --- Járatnézet
 @app.get("/route/{route_id}")
 def route_view(request: Request, route_id: str):
     live_raw = fetch_live_on_route(route_id)
@@ -398,7 +435,6 @@ def route_view(request: Request, route_id: str):
     except TemplateNotFound:
         return HTMLResponse(f"<h1>Route {route_id}</h1><p>Élő járművek: {len(vehicles)}</p>")
 
-# --- Tripnézet (csak a bejelentkezett jármű)
 @app.get("/trip/{trip_id}")
 def trip_view(request: Request, trip_id: str):
     t_all = trips()
@@ -450,7 +486,6 @@ def trip_view(request: Request, trip_id: str):
         rows = "".join(f"<li>{s['stop_name']} — {s['live_time'] or s['sched_time']}</li>" for s in stops_list)
         return HTMLResponse(f"<h1>Trip {trip_id}</h1><ul>{rows}</ul>")
 
-# --- Megállónézet (végállomás: csak indulás)
 @app.get("/stop/{stop_id}")
 def stop_view(request: Request, stop_id: str):
     dep, arr = departures_arrivals_for_stop(stop_id)
