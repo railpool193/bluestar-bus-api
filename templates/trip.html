@@ -1,37 +1,38 @@
-{% extends "_base.html" %}
-{% block title %}Trip {{ trip_id }} · bluestar{% endblock %}
-{% block body %}
-  <div class="card section">
-    <h2>Trip {{ route_id }} → {{ headsign }}</h2>
-    <div class="kicker">
-      <span class="pill"><span class="dot live"></span> live</span>
-      &nbsp;
-      <span class="pill"><span class="dot sched"></span> menetrend</span>
-    </div>
+{% extends "base.html" %}
+{% block content %}
+<h1>Trip {{ trip_id }}</h1>
+<div class="muted">Route {{ route_id }} – {{ headsign }}</div>
 
-    <div class="section list">
-      {% for s in stops %}
-        <div class="row">
-          {% if s.live_time %}
-            <div class="badge live">{{ s.live_time }}</div>
-          {% else %}
-            <div class="badge sched">{{ s.sched_time }}</div>
-          {% endif %}
-          <div class="stopname">{{ s.stop_name }}</div>
-          <div class="count" data-eta="{{ s.eta_epoch or 0 }}"></div>
-        </div>
-      {% endfor %}
-    </div>
-  </div>
+{% if vehicle %}
+  <div class="pill">Bejelentkezett jármű: {{ vehicle.fleet or vehicle.vehicle_ref }} · {{ vehicle.label }}</div>
+{% endif %}
 
-  {% if vehicle %}
-  <div class="card section">
-    <h2>Jármű</h2>
-    <div class="row">
-      <div class="badge live">{{ vehicle.vehicle_ref or vehicle.fleet }}</div>
-      <div class="stopname">{{ vehicle.label or 'Bejelentkezett jármű' }}</div>
-      <div class="count">{{ vehicle.updated }}</div>
-    </div>
-  </div>
-  {% endif %}
+<ul class="stops">
+  {% for s in stops %}
+    <li class="stop-row">
+      <div class="time {% if s.live_time %}live{% else %}sched{% endif %}">
+        {{ s.live_time or s.sched_time }}
+      </div>
+      <div class="stop-name">{{ s.stop_name }}</div>
+      <div class="countdown" data-eta="{{ s.eta_epoch or s.sched_epoch }}">--:--</div>
+    </li>
+  {% endfor %}
+</ul>
+
+<script>
+function tick() {
+  const now = Date.now();
+  document.querySelectorAll(".countdown").forEach(el => {
+    const eta = parseInt(el.dataset.eta || "0");
+    if (!eta) { el.textContent = "—"; return; }
+    let diff = Math.max(0, Math.floor((eta - now) / 1000)); // sec
+    const h = Math.floor(diff/3600);
+    diff -= h*3600;
+    const m = Math.floor(diff/60);
+    const s = diff - m*60;
+    el.textContent = (h? (h+":" + String(m).padStart(2,"0")) : m) + ":" + String(s).padStart(2,"0");
+  });
+}
+tick(); setInterval(tick, 1000);
+</script>
 {% endblock %}
