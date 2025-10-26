@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Route {{ route.route_short_name }}</h1>
+
+<div id="map" class="map"></div>
+<div class="legend">Élő járművek (Bluestar/Unilink)</div>
+
+<script>
+let leafletLoaded=false;
+async function ensureLeaflet(){
+  if(leafletLoaded) return;
+  leafletLoaded=true;
+  const Lcss = document.createElement('link');
+  Lcss.rel='stylesheet'; Lcss.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+  document.head.appendChild(Lcss);
+  await new Promise(r=>setTimeout(r,50));
+  const s = document.createElement('script');
+  s.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+  document.body.appendChild(s);
+  await new Promise(r=>s.onload? s.onload=r : setTimeout(r,500));
+}
+
+(async function(){
+  await ensureLeaflet();
+  const map = L.map('map');
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+
+  // shape
+  const shp = await (await fetch('/api/route/{{ route.route_id }}/shape')).json();
+  if(shp.coords && shp.coords.length){
+    const latlngs = shp.coords.map(c=>[c[0], c[1]]);
+    const poly = L.polyline(latlngs).addTo(map);
+    map.fitBounds(poly.getBounds(), {padding:[10,10]});
+  } else {
+    map.setView([50.9,-1.4], 11);
+  }
+
+  const markers = new Map();
+  async function refresh(){
+    const vs = await (await fetch('/api/vehicles?route_short_name={{ route.route_short_name }}')).json();
+    for(const v of vs){
+      const key = v.vehicle_ref || v.fleet || Math.random();
+      const pos = [v.lat, v.lon];
+      const label = `${v.line_name} • ${v.fleet || v.vehicle_ref || ''}`;
+      if(markers.has(key)){
+        markers.get(key).setLatLng(pos).setRotationAngle?.(v.bearing||0).bindTooltip(label);
+      } else {
+        const m = L.marker(pos, {rotationAngle: v.bearing||0}).addTo(map).bindTooltip(label);
+        markers.set(key, m);
+      }
+    }
+    // takarítás – ami nincs friss listában
+    for(const [k,m] of [...markers]){
+      if(!vs.find(v=> (v.vehicle_ref||v.fleet)==k )) { map.removeLayer(m); markers.delete(k); }
+    }
+  }
+  await refresh();
+  setInterval(refresh, 15000);
+})();
+</script>
+{% endblock %}
