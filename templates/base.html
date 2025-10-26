@@ -1,21 +1,35 @@
 <!doctype html>
 <html lang="hu">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>bluestar</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{% block title %}bluestar{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  {% block extra_head %}{% endblock %}
 </head>
-<body>
-<header class="topbar">
-  <a class="brand" href="/">★ bluestar</a>
-  <form action="/search" method="get" class="search">
-    <input name="q" placeholder="Keresés: járat vagy megálló…" />
-  </form>
-  <span class="clock">UK: {{ now_uk }}</span>
-</header>
-<main class="container">
-  {% block content %}{% endblock %}
-</main>
+<body class="app">
+  <header class="topbar">
+    <a class="brand" href="/">★ bluestar</a>
+    <form class="search" action="/search" method="get" role="search">
+      <input name="q" placeholder="Keresés: járat vagy megálló" value="{{ request.query_params.get('q','') }}" />
+    </form>
+    <div class="clock">UK: <span id="ukclock">--:--:--</span></div>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script>
+    // egyszerű UK óra
+    function tickUK() {
+      try {
+        const s = new Date().toLocaleTimeString('hu-HU', { timeZone: 'Europe/London', hour12: false });
+        document.getElementById('ukclock').textContent = s;
+      } catch(e) {}
+    }
+    tickUK(); setInterval(tickUK, 1000);
+  </script>
+  {% block extra_js %}{% endblock %}
 </body>
 </html>
