@@ -1,38 +1,44 @@
-{% extends "base.html" %}
-{% block content %}
-<h1>{{ stop.stop_name }} <span class="muted">[{{ stop.stop_code }}]</span></h1>
-<div id="depList" class="list"></div>
+{% extends "_base.html" %}
+{% block title %}{{ stop_name }} · bluestar{% endblock %}
+{% block body %}
+  <div class="card section">
+    <h2>{{ stop_name }}</h2>
+    {% if is_terminal %}
+      <div class="kicker">Végállomás – csak indulások</div>
+    {% else %}
+      <div class="kicker">Érkezések és indulások</div>
+    {% endif %}
 
-<script>
-(async function(){
-  const params = new URLSearchParams(location.search);
-  const onlyDepartures = params.get("only_departures") !== "false"; // default: igaz
-  const res = await fetch(`/api/stop/{{ stop.stop_id }}/departures?only_departures=${onlyDepartures}`);
-  const rows = await res.json();
-  const root = document.getElementById('depList');
-  root.innerHTML = '';
-  for (const r of rows){
-    // csak Bluestar/Unilink – backend már szűrte
-    const href = `/trip/${r.trip_id}`;
-    const row = document.createElement('a');
-    row.className = 'row';
-    row.href = href;
+    <div class="section">
+      <h3 style="margin:0 0 8px 0">Indulások</h3>
+      <div class="list">
+        {% for d in departures %}
+          <div class="row">
+            <div class="badge {{ 'live' if d.live_time else 'sched' }}">
+              {{ d.live_time or d.sched_time }}
+            </div>
+            <div class="stopname">{{ d.route }} → {{ d.headsign }}</div>
+            <div class="count" data-eta="{{ d.eta_epoch or 0 }}"></div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
 
-    const left = document.createElement('div');
-    left.className = 'left';
-    left.textContent = r.route_short_name;
-
-    const center = document.createElement('div');
-    center.className = 'center ellips';
-    center.textContent = r.headsign;
-
-    const right = document.createElement('div');
-    right.className = 'right mono';
-    right.textContent = r.dep_time;
-
-    row.append(left, center, right);
-    root.append(row);
-  }
-})();
-</script>
+    {% if not is_terminal %}
+    <div class="section">
+      <h3 style="margin:0 0 8px 0">Érkezések</h3>
+      <div class="list">
+        {% for a in arrivals %}
+          <div class="row">
+            <div class="badge {{ 'live' if a.live_time else 'sched' }}">
+              {{ a.live_time or a.sched_time }}
+            </div>
+            <div class="stopname">{{ a.route }} ← {{ a.origin }}</div>
+            <div class="count" data-eta="{{ a.eta_epoch or 0 }}"></div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
 {% endblock %}
