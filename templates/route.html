@@ -1,48 +1,18 @@
-{% extends "_base.html" %}
-{% block title %}Route {{ route_id }} · bluestar{% endblock %}
-{% block body %}
-  <div class="card section">
-    <h2>Route {{ route_id }}</h2>
-    <div class="kicker">Élő járművek (Bluestar/Unilink)</div>
-    <div class="section list">
-      {% if vehicles|length == 0 %}
-        <div class="kicker">Nincs élő jármű most.</div>
-      {% else %}
-        {% for v in vehicles %}
-          <div class="row">
-            <div class="badge live">{{ v.vehicle_ref or v.fleet or '—' }}</div>
-            <div class="stopname">{{ v.trip_headsign or v.destination or v.block_id or '·' }}</div>
-            <div class="count">{{ v.updated|default('-', true) }}</div>
-          </div>
-        {% endfor %}
-      {% endif %}
-    </div>
-  </div>
-
-  {% if map_points %}
-  <div class="card section mapwrap">
-    <h2>Térkép</h2>
-    <div id="map" style="height:340px;"></div>
-  </div>
-  {% endif %}
-{% endblock %}
-
-{% block scripts %}
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-  {% if map_points %}
-  const map = L.map('map');
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-    attribution:'&copy; OpenStreetMap'
-  }).addTo(map);
-  const pts = {{ map_points|tojson }};
-  const latlngs = pts.map(p=>[p.lat,p.lon]);
-  if(latlngs.length){ map.fitBounds(L.latLngBounds(latlngs),{padding:[20,20]}); }
-  latlngs.forEach((ll,i)=>{
-    const m=L.marker(ll).addTo(map);
-    m.bindPopup(pts[i].label || '');
-  });
-  {% endif %}
-</script>
+{% extends "base.html" %}
+{% block content %}
+<h1>Route {{ route_id }}</h1>
+<h3>Élő járművek (Bluestar/Unilink)</h3>
+<ul class="list">
+  {% for v in vehicles %}
+    <li class="list-row">
+      <div>
+        <div class="strong">{{ v.fleet or v.vehicle_ref }}</div>
+        <div class="muted">{{ v.destination }}</div>
+      </div>
+      <div class="muted">{{ v.updated }}</div>
+    </li>
+  {% else %}
+    <li class="muted">Jelenleg nincs élő jármű.</li>
+  {% endfor %}
+</ul>
 {% endblock %}
