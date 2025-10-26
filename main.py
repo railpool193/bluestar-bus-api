@@ -1,30 +1,30 @@
 import os
 import csv
-import json
-from datetime import datetime, timedelta
 from collections import defaultdict
+from datetime import datetime, timedelta
 
 import pytz
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 
-# httpx opcionális – ha nincs telepítve, a live rész egyszerűen üres lesz
+# httpx opcionális – ha nincs, a live részek egyszerűen üresen maradnak
 try:
     import httpx
 except Exception:
     httpx = None
 
-# ------------------ Alapok / időzóna ------------------
-UK_TZ = pytz.timezone("Europe/London")
+# ------------------------- Beállítások -------------------------
 DATA_DIR = os.getenv("DATA_DIR", "gtfs")
-ALLOWED_OPERATORS = {"blus", "unil"}  # csak Bluestar / Unilink
+UK_TZ = pytz.timezone("Europe/London")
+ALLOWED_OPERATORS = {"blus", "unil"}  # Bluestar / Unilink
 
 def now_uk():
     return datetime.now(UK_TZ)
 
 def midnight_uk(dt=None):
     dt = dt or now_uk()
+    # mindig naiv datetime-ból készítünk aware UK-t
     return UK_TZ.localize(datetime(dt.year, dt.month, dt.day, 0, 0, 0))
 
 def gtfs_sec(hhmmss: str) -> int:
@@ -44,9 +44,12 @@ def fmt_hhmm(dt: datetime) -> str:
     return dt.strftime("%H:%M")
 
 def mins_from_now(dt: datetime) -> int:
-    return int(round((dt - now_uk()).total_seconds() / 60.0))
+    return int(round((dt - now_uk()).total_seconds() / 60))
 
-# ------------------ Live ENV autodetekció ------------------
+def operator_ok(op: str) -> bool:
+    return (op or "").strip().lower()[:4] in ALLOWED_OPERATORS
+
+# ------------------------- Live URL autodetekció -------------------------
 def _first_truthy(*vals):
     for v in vals:
         if v:
@@ -54,28 +57,24 @@ def _first_truthy(*vals):
     return ""
 
 def _guess_url(kind: str) -> str:
-    """kind: 'vm' (VehicleMonitoring) vagy 'sm' (StopMonitoring)"""
     cands = []
     for k, v in os.environ.items():
         kk = k.upper()
         vv = str(v or "").strip()
-        if not vv or not vv.lower().startswith("http"):
+        if not vv.startswith(("http://", "https://")):
             continue
-        if kind == "vm" and ("VEHICLE" in kk or "VM" in kk or kk.endswith("_VM") or kk.endswith("_VEHICLE")):
+        if kind == "vm" and any(s in kk for s in ("VEHICLE", "VM")):
             cands.append(vv)
-        if kind == "sm" and ("STOP" in kk or "SM" in kk or kk.endswith("_SM") or kk.endswith("_STOP")):
+        if kind == "sm" and any(s in kk for s in ("STOP", "SM")):
             cands.append(vv)
     return cands[0] if cands else ""
 
 def _build_extra_headers() -> dict:
     h = {}
-    # 1) explicit páros
     if os.getenv("SIRI_KEY_HEADER") and os.getenv("SIRI_KEY_VALUE"):
         h[os.getenv("SIRI_KEY_HEADER")] = os.getenv("SIRI_KEY_VALUE")
-    # 2) általános HEAD/KEY
     if os.getenv("SIRI_HEADER_NAME") and os.getenv("SIRI_HEADER_VALUE"):
         h[os.getenv("SIRI_HEADER_NAME")] = os.getenv("SIRI_HEADER_VALUE")
-    # 3) BODS tipikus
     if os.getenv("OCP_APIM_SUBSCRIPTION_KEY"):
         h["Ocp-Apim-Subscription-Key"] = os.getenv("OCP_APIM_SUBSCRIPTION_KEY")
     return h
@@ -92,33 +91,24 @@ SIRI_SM_URL_RAW = _first_truthy(
 )
 EXTRA_HEADERS = _build_extra_headers()
 
-def _format_vm_url(line_ref: str) -> tuple[str, dict]:
-    """
-    Támogat:
-      - "...VehicleMonitoring?LineRef={line_ref}" sablonos
-      - "...VehicleMonitoring" + params={"LineRef": line_ref}
-    """
+def _format_vm_url(line_ref: str):
     u = SIRI_VM_URL_RAW or ""
+    if not u:
+        return "", {}
     if "{line_ref}" in u:
         return u.replace("{line_ref}", str(line_ref)), {}
-    return u, {"LineRef": line_ref} if u else ({}, {})
+    # ha már van query benne, nem baj – httpx.add params összevonja
+    return u, {"LineRef": line_ref}
 
-def _format_sm_url(stop_id: str) -> tuple[str, dict]:
-    """
-    Támogat:
-      - "...StopMonitoring?MonitoringRef={stop_id}" sablonos
-      - "...StopMonitoring" + params={"MonitoringRef": stop_id}
-    """
+def _format_sm_url(stop_id: str):
     u = SIRI_SM_URL_RAW or ""
+    if not u:
+        return "", {}
     if "{stop_id}" in u:
         return u.replace("{stop_id}", str(stop_id)), {}
-    return u, {"MonitoringRef": stop_id, "MaximumStopVisits": "10"} if u else ({}, {})
+    return u, {"MonitoringRef": stop_id, "MaximumStopVisits": "10"}
 
-# ------------------ App & fallback sablonok ------------------
-app = FastAPI()
-templates = Jinja2Templates(directory="templates")
-
-# beépített (fallback) sablon – akkor használjuk, ha nincs fájl
+# ------------------------- Fallback sablonok -------------------------
 from jinja2 import Environment, BaseLoader, select_autoescape
 
 JINJA_FALLBACK = Environment(
@@ -133,8 +123,7 @@ STYLE = """
 .wrap{max-width:980px;margin:0 auto;padding:16px}
 h1{font-size:40px;margin:16px 0 12px}
 h2{font-size:20px;color:var(--muted);margin:24px 0 8px}
-a{color:var(--link);text-decoration:none}
-a:hover{text-decoration:underline}
+a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px}
 .card{background:var(--card);padding:14px 16px;border-radius:14px;box-shadow:0 1px 0 rgba(255,255,255,.05) inset}
 .badge{display:inline-block;background:#1f2937;border-radius:10px;padding:6px 10px;margin-right:8px}
@@ -143,7 +132,6 @@ a:hover{text-decoration:underline}
 .row .time{background:#1f2937;border-radius:12px;padding:8px 10px;min-width:56px;text-align:center;font-weight:600}
 .row.live{border:1px solid var(--live)}
 .row.live .time{background:rgba(16,185,129,.15)}
-.row.timetable{}
 .row .right{color:var(--muted)}
 .row.live .right{color:var(--live)}
 .row.live.due{animation:blink 1s steps(2,end) infinite;border-color:var(--due)}
@@ -165,7 +153,7 @@ TPL_INDEX = """
 <h1>Járatok</h1>
 <div class="grid">
 {% for r in routes %}
-  <div class="card"><a href="/r/{{ r.short }}"><span class="badge">{{ r.short }}</span></a><div class="small">{{ r.operator or '' }}</div></div>
+  <div class="card"><a href="/r/{{ r.key }}"><span class="badge">{{ r.short }}</span></a><div class="small">{{ r.operator or '' }}</div></div>
 {% endfor %}
 </div>
 </div></body></html>
@@ -184,7 +172,7 @@ TPL_SEARCH = """
 {% if not routes %}<div class="small">Nincs találat.</div>{% endif %}
 <div class="grid">
 {% for r in routes %}
-  <div class="card"><a href="/r/{{ r.short }}"><span class="badge">{{ r.short }}</span></a></div>
+  <div class="card"><a href="/r/{{ r.key }}"><span class="badge">{{ r.short }}</span></a></div>
 {% endfor %}
 </div>
 
@@ -193,10 +181,9 @@ TPL_SEARCH = """
 <div>
 {% for s in stops %}
   <div class="row">
-    <div class="left"><div class="time">🔹</div><div>
-      <div><strong>{{ s.name }}</strong></div>
-      <div class="small">{{ s.code or s.id }}</div>
-    </div></div>
+    <div class="left"><div class="time">🔹</div>
+      <div><div><strong>{{ s.name }}</strong></div><div class="small">{{ s.code or s.id }}</div></div>
+    </div>
     <div class="right"><a href="/stop/{{ s.code or s.id }}">Megnyitás</a></div>
   </div>
 {% endfor %}
@@ -216,12 +203,13 @@ TPL_STOP = """
 <div class="small">{{ stop.stop_name }}{% if stop.stop_code %} [{{ stop.stop_code }}]{% endif %}</div>
 
 <h2>Indulások</h2>
+{% if not rows %}<div class="small">Nincs közelgő indulás.</div>{% endif %}
 {% for r in rows %}
   <div class="row {{ r.row_class }}">
     <div class="left">
       <div class="time">{{ r.time_str }}</div>
       <div>
-        <div><a href="/r/{{ r.route_short }}"><strong>{{ r.headsign or r.route_short }}</strong></a></div>
+        <div><a href="/r/{{ r.route_key }}"><strong>{{ r.headsign or r.route_short }}</strong></a></div>
         <div class="small">{{ r.route_short }}{% if r.fleet %} • {{ r.fleet }}{% endif %}</div>
       </div>
     </div>
@@ -260,25 +248,25 @@ TPL_ROUTE = """
 </div></body></html>
 """
 
+# Mindig a beépített sablont használjuk, KIVÉVE ha USE_EXTERNAL_TEMPLATES=1
+USE_EXTERNAL = os.getenv("USE_EXTERNAL_TEMPLATES", "").strip() == "1"
+templates = Jinja2Templates(directory="templates") if USE_EXTERNAL else None
+
 def render_with_fallback(template_name: str, context: dict) -> HTMLResponse:
-    # Ha van fájlsablon, azt használjuk
-    try:
+    if USE_EXTERNAL and templates:
         return templates.TemplateResponse(template_name, context)
-    except Exception:
-        pass
-    # Fallback beépített HTML
-    tpl_src = {
+    src = {
         "index.html": TPL_INDEX,
         "search.html": TPL_SEARCH,
         "stop.html": TPL_STOP,
         "route.html": TPL_ROUTE,
-    }.get(template_name)
-    if not tpl_src:
-        return HTMLResponse("<h1>Template not found</h1>", status_code=500)
-    tpl = JINJA_FALLBACK.from_string(tpl_src)
-    return HTMLResponse(tpl.render(**{k: v for k, v in context.items() if k != "request"}))
+    }.get(template_name, "<h1>Template not found</h1>")
+    tpl = JINJA_FALLBACK.from_string(src)
+    # a fallbacknál nem kell a request objektum
+    safe_ctx = {k: v for k, v in context.items() if k != "request"}
+    return HTMLResponse(tpl.render(**safe_ctx))
 
-# ------------------ GTFS betöltés és indexek ------------------
+# ------------------------- GTFS betöltés -------------------------
 routes = []; stops = []; trips = []; stop_times = []
 routes_by_id = {}; routes_by_short = defaultdict(list)
 stops_by_id = {}; stops_by_code = {}
@@ -286,7 +274,8 @@ trips_by_id = {}; trips_by_route = defaultdict(list)
 stop_times_by_stop = defaultdict(list); stop_times_by_trip = defaultdict(list)
 
 def _read_csv(path):
-    if not os.path.exists(path): return []
+    if not os.path.exists(path):
+        return []
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
 
@@ -295,6 +284,7 @@ def load_gtfs():
     sp = os.path.join(DATA_DIR, "stops.txt")
     tp = os.path.join(DATA_DIR, "trips.txt")
     stp = os.path.join(DATA_DIR, "stop_times.txt")
+
     routes[:] = _read_csv(rp); stops[:] = _read_csv(sp)
     trips[:] = _read_csv(tp); stop_times[:] = _read_csv(stp)
 
@@ -303,14 +293,15 @@ def load_gtfs():
         rid = (r.get("route_id") or "").strip()
         routes_by_id[rid] = r
         short = (r.get("route_short_name") or "").strip()
-        if short: routes_by_short[short.lower()].append(r)
+        if short:
+            routes_by_short[short.lower()].append(r)
 
     stops_by_id.clear(); stops_by_code.clear()
     for s in stops:
         sid = (s.get("stop_id") or "").strip()
         sc = (s.get("stop_code") or "").strip()
         if sid: stops_by_id[sid] = s
-        if sc: stops_by_code[sc] = s
+        if sc:  stops_by_code[sc] = s
 
     trips_by_id.clear(); trips_by_route.clear()
     for t in trips:
@@ -328,9 +319,9 @@ def load_gtfs():
     for tid, arr in stop_times_by_trip.items():
         arr.sort(key=lambda x: gtfs_sec(x.get("departure_time") or x.get("arrival_time") or ""))
 
-# ------------------ Live hívások (cache + URL sablon támogatás) ------------------
+# ------------------------- Live hívások -------------------------
 LIVE_CACHE = {}
-LIVE_TTL = 20  # mp
+LIVE_TTL = 20  # másodperc
 
 def cache_get(k):
     v = LIVE_CACHE.get(k)
@@ -353,13 +344,13 @@ async def http_get_json(url, params=None):
     except Exception:
         return None
 
-def operator_ok(op: str) -> bool:
-    return (op or "").strip().lower()[:4] in ALLOWED_OPERATORS
-
 async def fetch_live_vm(route_short: str):
-    ck = ("vm", (route_short or "").lower())
+    if not route_short:
+        return []
+    ck = ("vm", route_short.lower())
     c = cache_get(ck)
-    if c is not None: return c
+    if c is not None:
+        return c
     out = []
     url, params = _format_vm_url(route_short)
     if url:
@@ -367,21 +358,22 @@ async def fetch_live_vm(route_short: str):
         try:
             deliveries = (data or {}).get("Siri", {}).get("ServiceDelivery", {}).get("VehicleMonitoringDelivery", [])
             for d in deliveries:
-                for a in d.get("VehicleActivity", []):
+                for a in d.get("VehicleActivity", []) or []:
                     j = a.get("MonitoredVehicleJourney", {}) or {}
                     line = (j.get("LineRef") or j.get("PublishedLineName") or "").strip()
                     op = (j.get("OperatorRef") or "").strip()
                     if route_short and line and route_short.lower() != str(line).lower():
                         continue
-                    if op and not operator_ok(op): continue
+                    if op and not operator_ok(op):
+                        continue
                     loc = j.get("VehicleLocation") or {}
                     lat = loc.get("Latitude"); lon = loc.get("Longitude")
-                    if lat is None or lon is None: continue
+                    if lat is None or lon is None:
+                        continue
                     out.append({
                         "lat": float(lat), "lon": float(lon),
-                        "bearing": j.get("Bearing"),
                         "fleet": str(j.get("VehicleRef") or a.get("VehicleRef") or ""),
-                        "line": str(line), "operator": op.lower()[:4]
+                        "line": str(line), "operator": op.lower()[:4],
                     })
         except Exception:
             out = []
@@ -391,7 +383,8 @@ async def fetch_live_vm(route_short: str):
 async def fetch_live_sm(stop_code_or_id: str):
     ck = ("sm", stop_code_or_id)
     c = cache_get(ck)
-    if c is not None: return c
+    if c is not None:
+        return c
     items = []
     url, params = _format_sm_url(stop_code_or_id)
     if url:
@@ -399,11 +392,12 @@ async def fetch_live_sm(stop_code_or_id: str):
         try:
             deliveries = (data or {}).get("Siri", {}).get("ServiceDelivery", {}).get("StopMonitoringDelivery", [])
             for d in deliveries:
-                for v in d.get("MonitoredStopVisit", []):
+                for v in d.get("MonitoredStopVisit", []) or []:
                     j = v.get("MonitoredVehicleJourney", {}) or {}
                     line = (j.get("LineRef") or j.get("PublishedLineName") or "").strip()
                     op = (j.get("OperatorRef") or "").strip()
-                    if op and not operator_ok(op): continue
+                    if op and not operator_ok(op):
+                        continue
                     call = j.get("MonitoredCall") or {}
                     aimed = call.get("AimedDepartureTime") or call.get("AimedArrivalTime")
                     exp = call.get("ExpectedDepartureTime") or call.get("ExpectedArrivalTime")
@@ -417,8 +411,10 @@ async def fetch_live_sm(stop_code_or_id: str):
                             a = datetime.fromisoformat(aimed.replace("Z", "+00:00"))
                             e = datetime.fromisoformat(exp.replace("Z", "+00:00"))
                             mins = round((e - a).total_seconds() / 60.0)
-                            if mins != 0: delay_text = f"{mins:+d}m"
-                        if dep_dt: is_due = abs((now_uk() - dep_dt).total_seconds()) < 60
+                            if mins != 0:
+                                delay_text = f"{mins:+d}m"
+                        if dep_dt:
+                            is_due = abs((now_uk() - dep_dt).total_seconds()) < 60
                     except Exception:
                         pass
                     items.append({
@@ -433,17 +429,19 @@ async def fetch_live_sm(stop_code_or_id: str):
     cache_set(ck, items)
     return items
 
-# ------------------ Segédek ------------------
+# ------------------------- Segédfüggvények -------------------------
 def stop_by_any(id_or_code: str):
     return stops_by_id.get(id_or_code) or stops_by_code.get(id_or_code)
 
 def routes_for_short(short_lower: str):
     lst = routes_by_short.get(short_lower, [])
-    if not lst: return []
+    if not lst:
+        return []
     res = []
     for r in lst:
         ag = (r.get("agency_id") or "").strip().lower()[:4]
-        if ag and ag not in ALLOWED_OPERATORS: continue
+        if ag and ag not in ALLOWED_OPERATORS:
+            continue
         res.append(r)
     return res or lst
 
@@ -454,14 +452,12 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
     scode = (stop_obj.get("stop_code") or stop_obj.get("stop_id") or "").strip()
 
     live_raw = await fetch_live_sm(scode)
-    live_by_trip = {}
+    live_by_key = {}
     for it in live_raw or []:
-        if not it.get("dep_dt"): 
+        if not it.get("dep_dt"):
             continue
-        if it.get("operator") not in ALLOWED_OPERATORS:
-            continue
-        key = (it.get("trip_id") or "", it.get("line") or "", it.get("vehicle_ref") or "")
-        live_by_trip[key] = it
+        key = (it.get("trip_id") or "", (it.get("line") or "").lower())
+        live_by_key[key] = it
 
     rows = []
     for st in stop_times_by_stop.get(sid, []):
@@ -480,14 +476,15 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
             continue
 
         headsign = (trip.get("trip_headsign") or "").strip()
-        k = (tid or "", route_short, "")
-        live_hit = live_by_trip.get(k)
+        key = (tid or "", route_short.lower())
+        live_hit = live_by_key.get(key)
 
         if live_hit:
             rows.append({
                 "time_str": fmt_hhmm(live_hit["dep_dt"]),
                 "headsign": live_hit.get("headsign") or headsign,
                 "route_short": route_short or live_hit.get("line") or "",
+                "route_key": (route_short or live_hit.get("line") or "").lower(),
                 "wait_mins": mins_from_now(live_hit["dep_dt"]),
                 "is_live": True,
                 "is_due": live_hit.get("is_due", False),
@@ -501,6 +498,7 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
                 "time_str": fmt_hhmm(dep_dt),
                 "headsign": headsign,
                 "route_short": route_short,
+                "route_key": route_short.lower(),
                 "wait_mins": mins_from_now(dep_dt),
                 "is_live": False,
                 "is_due": False,
@@ -510,18 +508,21 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
                 "delay_text": "",
             })
 
-    # élő, amihez nincs menetrendi pár
-    for _, it in (live_by_trip or {}).items():
-        if any(r["is_live"] and r["trip_id"] == (it.get("trip_id") or "") for r in rows):
-            continue
+    # olyan LIVE indulások, amikhez nincs menetrendi sor
+    for it in (live_raw or []):
         d = it.get("dep_dt")
-        if not d: continue
+        if not d:
+            continue
+        key = (it.get("trip_id") or "", (it.get("line") or "").lower())
+        if any(r["is_live"] and (r["trip_id"], r["route_key"]) == key for r in rows):
+            continue
         if d < (now - timedelta(minutes=1)) or d > until:
             continue
         rows.append({
             "time_str": fmt_hhmm(d),
             "headsign": it.get("headsign") or "",
             "route_short": it.get("line") or "",
+            "route_key": (it.get("line") or "").lower(),
             "wait_mins": mins_from_now(d),
             "is_live": True,
             "is_due": it.get("is_due", False),
@@ -534,7 +535,9 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
     rows.sort(key=lambda x: (x["time_str"], 0 if x["is_live"] else 1))
     return rows
 
-# ------------------ Endpontok ------------------
+# ------------------------- FastAPI -------------------------
+app = FastAPI()
+
 @app.on_event("startup")
 def _startup():
     load_gtfs()
@@ -562,21 +565,26 @@ def diag():
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    # egyedi shortok, csak BLUS/UNIL
+    # egyedi shortok (+ route_id mint kompatibilis kulcs a linkhez)
     seen = set(); items = []
     for r in routes:
         short = (r.get("route_short_name") or "").strip()
-        if not short: continue
+        if not short:
+            continue
         ag = (r.get("agency_id") or "").strip().lower()[:4]
-        if ag and ag not in ALLOWED_OPERATORS: continue
+        if ag and ag not in ALLOWED_OPERATORS:
+            continue
         key = short.lower()
-        if key in seen: continue
+        if key in seen:
+            continue
         seen.add(key)
-        items.append({"short": short, "operator": ag or ""})
+        items.append({"short": short, "key": key, "operator": ag or ""})
+
     def sort_key(x):
         s = x["short"]; num=""; suf=""
         for ch in s:
-            (num := num + ch) if ch.isdigit() else (suf := suf + ch)
+            if ch.isdigit(): num += ch
+            else: suf += ch
         return (int(num or 0), suf.lower())
     items.sort(key=sort_key)
 
@@ -592,8 +600,9 @@ def search(request: Request, q: str = ""):
             if q.lower() in short:
                 r = arr[0]
                 ag = (r.get("agency_id") or "").strip().lower()[:4]
-                if ag and ag not in ALLOWED_OPERATORS: continue
-                routes_found.append({"short": r.get("route_short_name")})
+                if ag and ag not in ALLOWED_OPERATORS:
+                    continue
+                routes_found.append({"short": r.get("route_short_name"), "key": short})
         for s in stops:
             name = s.get("stop_name") or ""
             if q.lower() in name.lower():
@@ -610,23 +619,29 @@ async def stop_view(request: Request, sid_or_code: str):
     ctx = {"request": request, "stop": s, "rows": rows, "now_uk": now_uk().strftime("%H:%M:%S")}
     return render_with_fallback("stop.html", ctx)
 
-# rövid alias: régi linkekhez pl. /s/XYZ
 @app.get("/s/{sid_or_code}", response_class=HTMLResponse)
 async def stop_alias(request: Request, sid_or_code: str):
     return await stop_view(request, sid_or_code)
 
-@app.get("/r/{route_short}", response_class=HTMLResponse)
-async def route_view(request: Request, route_short: str):
-    short = (route_short or "").lower()
-    rlist = routes_for_short(short)
+@app.get("/r/{route_key}", response_class=HTMLResponse)
+async def route_view(request: Request, route_key: str):
+    key = (route_key or "").lower()
+    # 1) próbáljuk rövid név alapján
+    rlist = routes_for_short(key)
+    # 2) ha nincs, próbáljuk route_id-val
+    if not rlist:
+        r = routes_by_id.get(route_key)
+        if r:
+            rlist = [r]
+            key = (r.get("route_short_name") or "").strip().lower()
     if not rlist:
         raise HTTPException(status_code=404, detail="Route not found")
-    live = await fetch_live_vm(rlist[0].get("route_short_name"))
+    short = (rlist[0].get("route_short_name") or "").strip()
+    live = await fetch_live_vm(short)
     live = [v for v in (live or []) if (v.get("operator") or "") in ALLOWED_OPERATORS]
-    ctx = {"request": request, "route_short": rlist[0].get("route_short_name"),
-           "live_vehicles": live, "now_uk": now_uk().strftime("%H:%M:%S")}
+    ctx = {"request": request, "route_short": short, "live_vehicles": live, "now_uk": now_uk().strftime("%H:%M:%S")}
     return render_with_fallback("route.html", ctx)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)), reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
