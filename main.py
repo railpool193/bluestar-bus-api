@@ -1,20 +1,24 @@
 import os
 import csv
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
 
 import pytz
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-# httpx opcionális – ha nincs, a live részek egyszerűen üresen maradnak
+# httpx opcionális – ha nincs telepítve, a live egyszerűen üres lesz
 try:
     import httpx
 except Exception:
     httpx = None
 
-# ------------------------- Beállítások -------------------------
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("bluestar")
+
+# ------------------------- Alapbeállítások -------------------------
 DATA_DIR = os.getenv("DATA_DIR", "gtfs")
 UK_TZ = pytz.timezone("Europe/London")
 ALLOWED_OPERATORS = {"blus", "unil"}  # Bluestar / Unilink
@@ -24,7 +28,6 @@ def now_uk():
 
 def midnight_uk(dt=None):
     dt = dt or now_uk()
-    # mindig naiv datetime-ból készítünk aware UK-t
     return UK_TZ.localize(datetime(dt.year, dt.month, dt.day, 0, 0, 0))
 
 def gtfs_sec(hhmmss: str) -> int:
@@ -71,12 +74,15 @@ def _guess_url(kind: str) -> str:
 
 def _build_extra_headers() -> dict:
     h = {}
+    # tipikus kulcsok
     if os.getenv("SIRI_KEY_HEADER") and os.getenv("SIRI_KEY_VALUE"):
         h[os.getenv("SIRI_KEY_HEADER")] = os.getenv("SIRI_KEY_VALUE")
     if os.getenv("SIRI_HEADER_NAME") and os.getenv("SIRI_HEADER_VALUE"):
         h[os.getenv("SIRI_HEADER_NAME")] = os.getenv("SIRI_HEADER_VALUE")
     if os.getenv("OCP_APIM_SUBSCRIPTION_KEY"):
         h["Ocp-Apim-Subscription-Key"] = os.getenv("OCP_APIM_SUBSCRIPTION_KEY")
+    if os.getenv("X_API_KEY"):
+        h["X-API-Key"] = os.getenv("X_API_KEY")
     return h
 
 SIRI_VM_URL_RAW = _first_truthy(
@@ -97,7 +103,6 @@ def _format_vm_url(line_ref: str):
         return "", {}
     if "{line_ref}" in u:
         return u.replace("{line_ref}", str(line_ref)), {}
-    # ha már van query benne, nem baj – httpx.add params összevonja
     return u, {"LineRef": line_ref}
 
 def _format_sm_url(stop_id: str):
@@ -108,13 +113,9 @@ def _format_sm_url(stop_id: str):
         return u.replace("{stop_id}", str(stop_id)), {}
     return u, {"MonitoringRef": stop_id, "MaximumStopVisits": "10"}
 
-# ------------------------- Fallback sablonok -------------------------
+# ------------------------- Beépített sablonok (sötét téma) -------------------------
 from jinja2 import Environment, BaseLoader, select_autoescape
-
-JINJA_FALLBACK = Environment(
-    loader=BaseLoader(),
-    autoescape=select_autoescape(["html", "xml"]),
-)
+JINJA_FALLBACK = Environment(loader=BaseLoader(), autoescape=select_autoescape(["html","xml"]))
 
 STYLE = """
 <style>
@@ -248,7 +249,6 @@ TPL_ROUTE = """
 </div></body></html>
 """
 
-# Mindig a beépített sablont használjuk, KIVÉVE ha USE_EXTERNAL_TEMPLATES=1
 USE_EXTERNAL = os.getenv("USE_EXTERNAL_TEMPLATES", "").strip() == "1"
 templates = Jinja2Templates(directory="templates") if USE_EXTERNAL else None
 
@@ -262,7 +262,6 @@ def render_with_fallback(template_name: str, context: dict) -> HTMLResponse:
         "route.html": TPL_ROUTE,
     }.get(template_name, "<h1>Template not found</h1>")
     tpl = JINJA_FALLBACK.from_string(src)
-    # a fallbacknál nem kell a request objektum
     safe_ctx = {k: v for k, v in context.items() if k != "request"}
     return HTMLResponse(tpl.render(**safe_ctx))
 
@@ -341,6 +340,17 @@ async def http_get_json(url, params=None):
             r = await client.get(url, params=params or {}, headers=EXTRA_HEADERS)
             r.raise_for_status()
             return r.json()
+    except Exception as e:
+        log.warning("live request failed: %s", e)
+        return None
+
+def _parse_iso(dt_str: str):
+    try:
+        if not dt_str:
+            return None
+        # támogatunk Z-t és mikroszekundumot is
+        ds = dt_str.replace("Z", "+00:00")
+        return datetime.fromisoformat(ds).astimezone(UK_TZ)
     except Exception:
         return None
 
@@ -356,9 +366,9 @@ async def fetch_live_vm(route_short: str):
     if url:
         data = await http_get_json(url, params=params)
         try:
-            deliveries = (data or {}).get("Siri", {}).get("ServiceDelivery", {}).get("VehicleMonitoringDelivery", [])
+            deliveries = (data or {}).get("Siri", {}).get("ServiceDelivery", {}).get("VehicleMonitoringDelivery", []) or []
             for d in deliveries:
-                for a in d.get("VehicleActivity", []) or []:
+                for a in (d.get("VehicleActivity") or []):
                     j = a.get("MonitoredVehicleJourney", {}) or {}
                     line = (j.get("LineRef") or j.get("PublishedLineName") or "").strip()
                     op = (j.get("OperatorRef") or "").strip()
@@ -373,9 +383,10 @@ async def fetch_live_vm(route_short: str):
                     out.append({
                         "lat": float(lat), "lon": float(lon),
                         "fleet": str(j.get("VehicleRef") or a.get("VehicleRef") or ""),
-                        "line": str(line), "operator": op.lower()[:4],
+                        "line": str(line), "operator": (op or "").lower()[:4],
                     })
-        except Exception:
+        except Exception as e:
+            log.warning("parse VM failed: %s", e)
             out = []
     cache_set(ck, out)
     return out
@@ -390,9 +401,9 @@ async def fetch_live_sm(stop_code_or_id: str):
     if url:
         data = await http_get_json(url, params=params)
         try:
-            deliveries = (data or {}).get("Siri", {}).get("ServiceDelivery", {}).get("StopMonitoringDelivery", [])
+            deliveries = (data or {}).get("Siri", {}).get("ServiceDelivery", {}).get("StopMonitoringDelivery", []) or []
             for d in deliveries:
-                for v in d.get("MonitoredStopVisit", []) or []:
+                for v in (d.get("MonitoredStopVisit") or []):
                     j = v.get("MonitoredVehicleJourney", {}) or {}
                     line = (j.get("LineRef") or j.get("PublishedLineName") or "").strip()
                     op = (j.get("OperatorRef") or "").strip()
@@ -401,30 +412,25 @@ async def fetch_live_sm(stop_code_or_id: str):
                     call = j.get("MonitoredCall") or {}
                     aimed = call.get("AimedDepartureTime") or call.get("AimedArrivalTime")
                     exp = call.get("ExpectedDepartureTime") or call.get("ExpectedArrivalTime")
-                    dep_dt = None; delay_text = ""; is_due = False
-                    try:
-                        if exp:
-                            dep_dt = datetime.fromisoformat(exp.replace("Z", "+00:00")).astimezone(UK_TZ)
-                        elif aimed:
-                            dep_dt = datetime.fromisoformat(aimed.replace("Z", "+00:00")).astimezone(UK_TZ)
-                        if aimed and exp:
-                            a = datetime.fromisoformat(aimed.replace("Z", "+00:00"))
-                            e = datetime.fromisoformat(exp.replace("Z", "+00:00"))
+                    dep_dt = _parse_iso(exp) or _parse_iso(aimed)
+                    delay_text = ""
+                    if aimed and exp:
+                        a = _parse_iso(aimed); e = _parse_iso(exp)
+                        if a and e:
                             mins = round((e - a).total_seconds() / 60.0)
                             if mins != 0:
                                 delay_text = f"{mins:+d}m"
-                        if dep_dt:
-                            is_due = abs((now_uk() - dep_dt).total_seconds()) < 60
-                    except Exception:
-                        pass
+                    is_due = bool(dep_dt and abs((now_uk() - dep_dt).total_seconds()) < 60)
+
                     items.append({
-                        "line": line, "operator": op.lower()[:4],
+                        "line": line, "operator": (op or "").lower()[:4],
                         "headsign": j.get("DestinationName"),
                         "vehicle_ref": j.get("VehicleRef"),
                         "dep_dt": dep_dt, "delay_text": delay_text, "is_due": is_due,
-                        "trip_id": j.get("FramedVehicleJourneyRef", {}).get("DatedVehicleJourneyRef") or "",
+                        "trip_id": (j.get("FramedVehicleJourneyRef", {}) or {}).get("DatedVehicleJourneyRef") or "",
                     })
-        except Exception:
+        except Exception as e:
+            log.warning("parse SM failed: %s", e)
             items = []
     cache_set(ck, items)
     return items
@@ -482,6 +488,7 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
         if live_hit:
             rows.append({
                 "time_str": fmt_hhmm(live_hit["dep_dt"]),
+                "time_dt": live_hit["dep_dt"],
                 "headsign": live_hit.get("headsign") or headsign,
                 "route_short": route_short or live_hit.get("line") or "",
                 "route_key": (route_short or live_hit.get("line") or "").lower(),
@@ -496,6 +503,7 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
         else:
             rows.append({
                 "time_str": fmt_hhmm(dep_dt),
+                "time_dt": dep_dt,
                 "headsign": headsign,
                 "route_short": route_short,
                 "route_key": route_short.lower(),
@@ -514,12 +522,13 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
         if not d:
             continue
         key = (it.get("trip_id") or "", (it.get("line") or "").lower())
-        if any(r["is_live"] and (r["trip_id"], r["route_key"]) == key for r in rows):
+        if any((r["trip_id"], r["route_key"]) == key for r in rows):
             continue
         if d < (now - timedelta(minutes=1)) or d > until:
             continue
         rows.append({
             "time_str": fmt_hhmm(d),
+            "time_dt": d,
             "headsign": it.get("headsign") or "",
             "route_short": it.get("line") or "",
             "route_key": (it.get("line") or "").lower(),
@@ -532,7 +541,7 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
             "delay_text": it.get("delay_text") or "",
         })
 
-    rows.sort(key=lambda x: (x["time_str"], 0 if x["is_live"] else 1))
+    rows.sort(key=lambda x: (x["time_dt"], 0 if x["is_live"] else 1))
     return rows
 
 # ------------------------- FastAPI -------------------------
@@ -541,6 +550,7 @@ app = FastAPI()
 @app.on_event("startup")
 def _startup():
     load_gtfs()
+    log.info("GTFS loaded: routes=%d stops=%d", len(routes), len(stops))
 
 @app.get("/healthz")
 def healthz():
@@ -561,11 +571,11 @@ def diag():
         "vm_url": SIRI_VM_URL_RAW,
         "sm_url": SIRI_SM_URL_RAW,
         "extra_headers": list(EXTRA_HEADERS.keys()),
+        "use_external_templates": USE_EXTERNAL,
     })
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    # egyedi shortok (+ route_id mint kompatibilis kulcs a linkhez)
     seen = set(); items = []
     for r in routes:
         short = (r.get("route_short_name") or "").strip()
@@ -610,6 +620,11 @@ def search(request: Request, q: str = ""):
     ctx = {"request": request, "q": q, "routes": routes_found, "stops": stops_found, "now_uk": now_uk().strftime("%H:%M:%S")}
     return render_with_fallback("search.html", ctx)
 
+@app.get("/stop", response_class=HTMLResponse)
+def stop_missing():
+    # ha valaki paraméter nélkül nyitja meg
+    return RedirectResponse("/")
+
 @app.get("/stop/{sid_or_code}", response_class=HTMLResponse)
 async def stop_view(request: Request, sid_or_code: str):
     s = stop_by_any(sid_or_code)
@@ -623,13 +638,16 @@ async def stop_view(request: Request, sid_or_code: str):
 async def stop_alias(request: Request, sid_or_code: str):
     return await stop_view(request, sid_or_code)
 
+@app.get("/r", response_class=HTMLResponse)
+def route_missing():
+    return RedirectResponse("/")
+
 @app.get("/r/{route_key}", response_class=HTMLResponse)
 async def route_view(request: Request, route_key: str):
     key = (route_key or "").lower()
-    # 1) próbáljuk rövid név alapján
     rlist = routes_for_short(key)
-    # 2) ha nincs, próbáljuk route_id-val
     if not rlist:
+        # próbáljuk route_id-val
         r = routes_by_id.get(route_key)
         if r:
             rlist = [r]
