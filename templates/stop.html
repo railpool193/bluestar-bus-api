@@ -1,88 +1,26 @@
-<!doctype html>
-<html lang="hu">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>{{ stop_name if stop_name is defined else "Megálló" }}</title>
-  <style>
-    :root{--bg:#0f1115;--panel:#171a21;--muted:#8b95a7;--text:#e6e9ef;--pill:#232936;--pill-live:#1f5f3b;--card:#1a1f2b;--shadow:0 6px 18px rgba(0,0,0,.25);--radius:16px}
-    *{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
-    a{color:inherit;text-decoration:none}
-    .wrap{max-width:960px;margin:0 auto;padding:16px}
-    .topbar{display:flex;align-items:center;gap:12px}
-    .brand{display:flex;align-items:center;font-weight:700}.brand .star{color:#7ab0ff;margin-right:6px}
-    .spacer{flex:1}.clock{color:var(--muted);font-variant-numeric:tabular-nums}
-    .search{margin:16px 0}.search input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #2a2f3a;background:#0e1219;color:var(--text);outline:none}
-    h1{font-size:34px;letter-spacing:.3px;margin:10px 0 6px}.sub{color:var(--muted);margin-left:6px}
-    .section-title{color:var(--muted);font-weight:700;margin:18px 4px 10px}
-    .list{display:flex;flex-direction:column;gap:10px}
-    .item{display:flex;align-items:center;gap:14px;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px}
-    .item:hover{outline:1px solid #2b3240}
-    .pill{min-width:58px;text-align:center;border-radius:999px;padding:8px 10px;background:var(--pill);font-weight:800;letter-spacing:.5px}
-    .dest{flex:1;font-weight:700}
-    .time{font-variant-numeric:tabular-nums;color:#cfd6e6}
-    .live{background:var(--pill-live)}
-    .muted{color:var(--muted)}.hidden{display:none!important}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="topbar">
-      <a class="brand" href="/"><span class="star">★</span>bluestar</a>
-      <div class="spacer"></div>
-      <div id="ukClock" class="clock">UK: --:--:--</div>
-    </div>
+{% extends "base.html" %}
+{% block title %}Megálló • {{ stop.stop_name }} • bluestar{% endblock %}
+{% block content %}
+  <h1 class="h1">Megálló</h1>
+  <div class="subtitle">{{ stop.stop_name }}</div>
 
-    <form class="search" action="/s" method="get">
-      <input name="q" placeholder="Keresés: járat vagy megálló" autocomplete="off" />
-    </form>
-
-    <h1>{{ stop_name if stop_name is defined else "Megálló" }}{% if stop_code %}<span class="sub">[{{ stop_code }}]</span>{% endif %}</h1>
-
-    <div class="section-title">Indulások</div>
-    {% set _deps = departures if departures is defined else (stop_departures if stop_departures is defined else []) %}
-    <div id="depList" class="list">
-      {% for d in _deps %}
-        {% set t = d.time_str or d.departure_time or d.arrival_time or d.time or d.dep_time %}
-        {% set hhmm = (t|string)[0:5] if t else '' %}
-        <a class="item"
-           href="/trip/{{ d.trip_id }}{% if d.stop_id is defined %}?from={{ d.stop_id }}{% endif %}"
-           data-hms="{{ t if t else '' }}" data-hhmm="{{ hhmm }}">
-          <div class="pill {% if d.is_live %}live{% endif %}">{{ d.route_short_name }}</div>
-          <div class="dest">{{ d.headsign }}</div>
-          <div class="time">{% if hhmm %}{{ hhmm }}{% else %}—{% endif %}</div>
+  <h2 class="h2">Indulások</h2>
+  {% if departures|length == 0 %}
+    <div class="muted">Nincs közelgő indulás.</div>
+  {% else %}
+    <div class="list">
+      {% for d in departures %}
+        <a class="card row" href="/t/{{ d.trip_id }}">
+          <div class="pill">{{ d.time_str }}</div>
+          <div class="row-main">
+            <div class="row-title">{{ d.headsign or '&nbsp;' }}</div>
+            <div class="row-sub">{{ d.route_display }}</div>
+          </div>
+          <div class="row-tail muted">
+            {% if d.minutes is not none %}{{ d.minutes }} perc{% else %}&nbsp;{% endif %}
+          </div>
         </a>
-      {% else %}
-        <div class="muted">Nincs adat ehhez a megállóhoz.</div>
       {% endfor %}
     </div>
-  </div>
-
-  <script>
-    function tickClock(){const now=new Date();document.getElementById('ukClock').textContent='UK: '+now.toLocaleTimeString('en-GB',{hour12:false});}
-    setInterval(tickClock,1000);tickClock();
-
-    // Csak jövőbeni indulásokat hagyjuk a listában
-    (function(){
-      const items=[...document.querySelectorAll('#depList .item')];
-      if(!items.length) return;
-      const today=new Date();const Y=today.getFullYear(),M=today.getMonth(),D=today.getDate();
-      function toWhen(el){
-        const iso=el.getAttribute('data-iso'); if(iso){const d=new Date(iso); if(!isNaN(d)) return d;}
-        const hms=el.getAttribute('data-hms')||el.getAttribute('data-hhmm'); if(hms){
-          const parts=hms.split(':').map(Number); if(parts.length>=2){return new Date(Y,M,D,parts[0],parts[1],0,0);}
-        }
-        return null;
-      }
-      function refresh(){
-        const now=Date.now(); let first=null;
-        items.forEach(el=>{const w=toWhen(el); if(!w){el.classList.remove('hidden'); return;}
-          if(w.getTime()+30e3<now){el.classList.add('hidden');} else {el.classList.remove('hidden'); if(!first) first=el;}
-        });
-        if(first){first.scrollIntoView({behavior:'instant',block:'start'});}
-      }
-      refresh(); setInterval(refresh,60e3);
-    })();
-  </script>
-</body>
-</html>
+  {% endif %}
+{% endblock %}
