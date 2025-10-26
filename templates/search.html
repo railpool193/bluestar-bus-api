@@ -1,29 +1,58 @@
-{% extends "base.html" %}
-{% block content %}
-<h1>Keresés: "{{ q }}"</h1>
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Keresés – {{ q }}</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body class="bg-neutral-900 text-neutral-100">
+  <header class="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+    <a href="/" class="font-semibold text-lg">★ bluestar</a>
+    <form action="/search" method="get" class="w-[60%] max-w-xl">
+      <input name="q" value="{{ q }}" placeholder="Keresés: járat vagy megálló"
+             class="w-full bg-neutral-800 rounded px-3 py-2 outline-none" />
+    </form>
+    <div class="opacity-70">UK: {{ now.strftime("%H:%M:%S") }}</div>
+  </header>
 
-<h3>Járatok</h3>
-<ul class="list">
-  {% for r in routes %}
-    <li class="list-row">
-      <div class="strong">{{ r.route_short_name or r.route_id }}</div>
-      <div class="muted">{{ r.route_long_name or r.agency_name }}</div>
-      <a href="/route/{{ r.route_id }}">Megnyitás</a>
-    </li>
-  {% else %}
-    <li class="muted">Nincs találat.</li>
-  {% endfor %}
-</ul>
+  <main class="px-4 py-6 max-w-5xl mx-auto space-y-8">
+    <h1 class="text-3xl font-bold">Keresés: "{{ q }}"</h1>
 
-<h3>Megállók</h3>
-<ul class="list">
-  {% for s in stops %}
-    <li class="list-row">
-      <div class="strong">{{ s.stop_name }}</div>
-      <a href="/stop/{{ s.stop_id }}">Megnyitás</a>
-    </li>
-  {% else %}
-    <li class="muted">Nincs találat.</li>
-  {% endfor %}
-</ul>
-{% endblock %}
+    <section>
+      <h2 class="text-xl font-semibold mb-3 opacity-80">Járatok</h2>
+      {% if routes|length == 0 %}
+        <div class="opacity-60">Nincs találat.</div>
+      {% else %}
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {% for r in routes %}
+          <a href="/r/{{ r.route_id }}"
+             class="block rounded-lg border border-neutral-800 hover:border-neutral-600 bg-neutral-850 px-4 py-4">
+            <div class="text-lg font-bold text-blue-300">
+              {{ r.route_short_name or r.route_id }}
+            </div>
+            <div class="text-xs opacity-70">{{ r.agency or '' }}</div>
+          </a>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </section>
+
+    <section>
+      <h2 class="text-xl font-semibold mb-3 opacity-80">Megállók</h2>
+      {% if stops|length == 0 %}
+        <div class="opacity-60">Nincs találat.</div>
+      {% else %}
+        <div class="space-y-2">
+          {% for s in stops %}
+          <div class="flex items-center justify-between rounded-lg border border-neutral-800 bg-neutral-850 px-4 py-3">
+            <div class="font-medium">{{ s.stop_name }}</div>
+            <a class="text-blue-300 hover:underline" href="/stop/{{ s.stop_id }}">Megnyitás</a>
+          </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>
