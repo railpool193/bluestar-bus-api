@@ -10,3 +10,4 @@ pandas==2.2.3
 numpy==2.1.2
 geopy==2.4.1
 shapely==2.0.4
+requests>=2.31
