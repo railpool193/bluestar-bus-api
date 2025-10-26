@@ -1,134 +1,106 @@
-import os
-import csv
-from datetime import datetime, date, time, timedelta
-from typing import List, Dict, Tuple, Set
+from __future__ import annotations
+import os, zipfile, io
+import pandas as pd
+from typing import Dict, Any, Optional, Tuple, List
+from datetime import datetime, date, timedelta
+from functools import lru_cache
 
-GTFS_DIR = os.getenv("GTFS_DIR", "gtfs")  # ide csomagold ki a Bluestar GTFS zip-et
+GTFS_PATH = os.getenv("GTFS_PATH", "./gtfs/bluestar.zip")
 
-# Segédek
-def _parse_hms(hms: str) -> int:
-    """HH:MM:SS → nap elejétől számolt percek, 24h feletti időket is kezeli (pl. 25:10:00)."""
-    if not hms:
+def _read_gtfs_file(z: zipfile.ZipFile, name: str) -> pd.DataFrame:
+    with z.open(name) as f:
+        return pd.read_csv(f, dtype=str).fillna("")
+
+@lru_cache(maxsize=1)
+def load_gtfs() -> Dict[str, pd.DataFrame]:
+    if os.path.isdir(GTFS_PATH):
+        # kibontott .txt fájlok
+        read = lambda n: pd.read_csv(os.path.join(GTFS_PATH, n), dtype=str).fillna("")
+        stops = read("stops.txt")
+        routes = read("routes.txt")
+        trips = read("trips.txt")
+        stop_times = read("stop_times.txt")
+        calendars = read("calendar.txt") if os.path.exists(os.path.join(GTFS_PATH,"calendar.txt")) else pd.DataFrame()
+        shapes = read("shapes.txt") if os.path.exists(os.path.join(GTFS_PATH,"shapes.txt")) else pd.DataFrame()
+    else:
+        with zipfile.ZipFile(GTFS_PATH, "r") as z:
+            stops = _read_gtfs_file(z, "stops.txt")
+            routes = _read_gtfs_file(z, "routes.txt")
+            trips = _read_gtfs_file(z, "trips.txt")
+            stop_times = _read_gtfs_file(z, "stop_times.txt")
+            calendars = _read_gtfs_file(z, "calendar.txt") if "calendar.txt" in z.namelist() else pd.DataFrame()
+            shapes = _read_gtfs_file(z, "shapes.txt") if "shapes.txt" in z.namelist() else pd.DataFrame()
+
+    # indexek
+    stop_times["stop_sequence"] = stop_times["stop_sequence"].astype(int)
+    stop_times.sort_values(["trip_id","stop_sequence"], inplace=True)
+    return {
+        "stops": stops, "routes": routes, "trips": trips,
+        "stop_times": stop_times, "calendar": calendars, "shapes": shapes
+    }
+
+def hhmmss_to_seconds(s: str) -> int:
+    # GTFS akár 24:xx:xx felett is lehet
+    try:
+        h,m,x = s.split(":")
+        return int(h)*3600 + int(m)*60 + int(x)
+    except Exception:
         return -1
-    h, m, s = [int(x) for x in hms.split(":")]
-    return h * 60 + m + (1 if s >= 30 else 0)
 
-def _today_service_ids(cal_rows: List[Dict], cal_dates: List[Dict]) -> Set[str]:
-    """Ma érvényes service_id-k (calendar + calendar_dates alapján)."""
-    today = date.today()
-    weekday = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"][today.weekday()]
-    active: Set[str] = set()
+def service_name(row: pd.Series, routes: pd.DataFrame) -> Tuple[str,str]:
+    r = routes[routes["route_id"]==row["route_id"]].head(1)
+    if r.empty:
+        return "", ""
+    short, long = r["route_short_name"].values[0], r["route_long_name"].values[0]
+    return short, long
 
-    for r in cal_rows:
-        start = datetime.strptime(r["start_date"], "%Y%m%d").date()
-        end   = datetime.strptime(r["end_date"], "%Y%m%d").date()
-        if start <= today <= end and r.get(weekday,"0") == "1":
-            active.add(r["service_id"])
+def build_indexes():
+    gtfs = load_gtfs()
+    trips = gtfs["trips"]
+    stops = gtfs["stops"]
+    routes = gtfs["routes"]
+    stop_times = gtfs["stop_times"]
 
-    # calendar_dates felülírások
-    for r in cal_dates:
-        d = datetime.strptime(r["date"], "%Y%m%d").date()
-        if d == today:
-            if r["exception_type"] == "1":
-                active.add(r["service_id"])
-            elif r["exception_type"] == "2" and r["service_id"] in active:
-                active.remove(r["service_id"])
-    return active
+    trips_idx = {t["trip_id"]: t for _,t in trips.iterrows()}
+    stops_idx = {s["stop_id"]: s for _,s in stops.iterrows()}
+    routes_idx = {r["route_id"]: r for _,r in routes.iterrows()}
+    by_route = {}
+    for rid, grp in trips.groupby("route_id"):
+        by_route[rid] = grp["trip_id"].tolist()
+    by_trip_stop_times = {tid: df for tid, df in stop_times.groupby("trip_id")}
+    return {
+        "trips_idx": trips_idx,
+        "stops_idx": stops_idx,
+        "routes_idx": routes_idx,
+        "trips_by_route": by_route,
+        "stop_times_by_trip": by_trip_stop_times
+    }
 
-class GTFS:
-    def __init__(self, base_dir: str = GTFS_DIR):
-        self.base = base_dir
-        self.stops: List[Dict] = []
-        self.stop_times: List[Dict] = []
-        self.trips: Dict[str, Dict] = {}
-        self.routes: Dict[str, Dict] = {}
-        self.calendar: List[Dict] = []
-        self.calendar_dates: List[Dict] = []
+def trip_stop_rows(trip_id: str) -> pd.DataFrame:
+    gtfs = load_gtfs()
+    sts = gtfs["stop_times"]
+    return sts[sts["trip_id"]==trip_id].sort_values("stop_sequence")
 
-    def _read_csv(self, name: str) -> List[Dict]:
-        path = os.path.join(self.base, name)
-        if not os.path.exists(path):
-            return []
-        with open(path, newline="", encoding="utf-8-sig") as f:
-            return list(csv.DictReader(f))
+def route_shape_coords(shape_id: str) -> List[Tuple[float,float]]:
+    gtfs = load_gtfs()
+    shapes = gtfs["shapes"]
+    if shapes.empty or shape_id=="":
+        return []
+    df = shapes[shapes["shape_id"]==shape_id].sort_values("shape_pt_sequence")
+    return [(float(r.shape_pt_lat), float(r.shape_pt_lon)) for _,r in df.iterrows()]
 
-    def load(self):
-        self.stops = self._read_csv("stops.txt")
-        self.stop_times = self._read_csv("stop_times.txt")
-        self.calendar = self._read_csv("calendar.txt")
-        self.calendar_dates = self._read_csv("calendar_dates.txt")
-        routes = self._read_csv("routes.txt")
-        trips = self._read_csv("trips.txt")
-        self.routes = {r["route_id"]: r for r in routes}
-        self.trips = {t["trip_id"]: t for t in trips}
-
-    def search_stops(self, name_query: str, limit: int = 10) -> List[Dict]:
-        q = name_query.strip().lower()
-        if not q:
-            return []
-        items = []
-        for s in self.stops:
-            name = s.get("stop_name","")
-            if q in name.lower():
-                items.append({
-                    "stop_id": s["stop_id"],
-                    "display_name": name
-                })
-                if len(items) >= limit:
-                    break
-        return items
-
-    def scheduled_departures(self, stop_id: str, minutes: int = 60, limit: int = 30) -> List[Dict]:
-        """Menetrendi indulások adott megállóból a következő X percre."""
-        if not self.stop_times or not self.trips:
-            return []
-
-        now = datetime.now()
-        now_minutes = now.hour*60 + now.minute
-        horizon = now_minutes + minutes
-
-        active_services = _today_service_ids(self.calendar, self.calendar_dates)
-        out: List[Dict] = []
-
-        for st in self.stop_times:
-            if st["stop_id"] != stop_id:
-                continue
-            dep = _parse_hms(st.get("departure_time") or st.get("arrival_time"))
-            if dep < 0:
-                continue
-            # 24h feletti időket kezeljük: csak az aznapi ablakban tartjuk meg
-            if not (now_minutes <= dep <= horizon):
-                continue
-
-            trip = self.trips.get(st["trip_id"])
-            if not trip or trip.get("service_id") not in active_services:
-                continue
-
-            route = self.routes.get(trip["route_id"], {})
-            route_short = route.get("route_short_name") or route.get("route_id")
-            headsign = trip.get("trip_headsign","")
-
-            # ISO idő a mai napra
-            hh = dep // 60
-            mm = dep % 60
-            dep_iso = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(minutes=dep)
-
-            out.append({
-                "route": str(route_short),
-                "destination": headsign,
-                "time_iso": dep_iso.isoformat(),
-                "is_live": False
-            })
-
-        out.sort(key=lambda x: x["time_iso"])
-        return out[:limit]
-
-# singleton
-_gtfs: GTFS = None
-
-def get_gtfs() -> GTFS:
-    global _gtfs
-    if _gtfs is None:
-        _gtfs = GTFS()
-        _gtfs.load()
-    return _gtfs
+def upcoming_departures_at_stop(stop_id: str, now_sec: int, max_results=40) -> pd.DataFrame:
+    gtfs = load_gtfs()
+    st = gtfs["stop_times"]
+    # csak ahol van departure_time
+    df = st[(st["stop_id"]==stop_id) & (st["departure_time"]!="")]
+    df["_dep"] = df["departure_time"].map(hhmmss_to_seconds)
+    df = df[df["_dep"]>=now_sec-60]  # kis csúszás engedélyezve
+    df = df.sort_values("_dep").head(max_results)
+    # összekapcsolás route/trip-hez
+    trips = gtfs["trips"][["trip_id","route_id","trip_headsign","direction_id","shape_id"]]
+    routes = gtfs["routes"][["route_id","route_short_name","route_long_name","agency_id"]]
+    out = df.merge(trips, on="trip_id", how="left").merge(routes, on="route_id", how="left")
+    # duplikátumok eltüntetése (route_short_name, trip_id, _dep)
+    out = out.drop_duplicates(subset=["route_short_name","trip_id","_dep"])
+    return out
