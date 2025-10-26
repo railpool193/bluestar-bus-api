@@ -1,44 +1,32 @@
-{% extends "_base.html" %}
-{% block title %}{{ stop_name }} · bluestar{% endblock %}
-{% block body %}
-  <div class="card section">
-    <h2>{{ stop_name }}</h2>
-    {% if is_terminal %}
-      <div class="kicker">Végállomás – csak indulások</div>
-    {% else %}
-      <div class="kicker">Érkezések és indulások</div>
-    {% endif %}
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ stop_name }}</h1>
 
-    <div class="section">
-      <h3 style="margin:0 0 8px 0">Indulások</h3>
-      <div class="list">
-        {% for d in departures %}
-          <div class="row">
-            <div class="badge {{ 'live' if d.live_time else 'sched' }}">
-              {{ d.live_time or d.sched_time }}
-            </div>
-            <div class="stopname">{{ d.route }} → {{ d.headsign }}</div>
-            <div class="count" data-eta="{{ d.eta_epoch or 0 }}"></div>
-          </div>
-        {% endfor %}
+<h3>Indulások</h3>
+<ul class="list">
+  {% for d in departures %}
+    <li class="list-row">
+      <div>
+        <div class="strong">{{ d.route }} → {{ d.headsign }}</div>
       </div>
-    </div>
+      <div class="time sched">{{ d.sched_time }}</div>
+    </li>
+  {% else %}
+    <li class="muted">Nincs megjeleníthető indulás.</li>
+  {% endfor %}
+</ul>
 
-    {% if not is_terminal %}
-    <div class="section">
-      <h3 style="margin:0 0 8px 0">Érkezések</h3>
-      <div class="list">
-        {% for a in arrivals %}
-          <div class="row">
-            <div class="badge {{ 'live' if a.live_time else 'sched' }}">
-              {{ a.live_time or a.sched_time }}
-            </div>
-            <div class="stopname">{{ a.route }} ← {{ a.origin }}</div>
-            <div class="count" data-eta="{{ a.eta_epoch or 0 }}"></div>
-          </div>
-        {% endfor %}
+{% if arrivals and arrivals|length %}
+<h3>Érkezések</h3>
+<ul class="list">
+  {% for a in arrivals %}
+    <li class="list-row">
+      <div>
+        <div class="strong">{{ a.route }} ← {{ a.headsign }}</div>
       </div>
-    </div>
-    {% endif %}
-  </div>
+      <div class="time sched">{{ a.sched_time }}</div>
+    </li>
+  {% endfor %}
+</ul>
+{% endif %}
 {% endblock %}
