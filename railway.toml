@@ -1,5 +1,11 @@
 [build]
 builder = "NIXPACKS"
 
-[deploy]
-startCommand = "uvicorn main:app --host 0.0.0.0 --port ${PORT}"
+[variables]
+DATA_DIR = "./data"
+GTFS_PATH = "./gtfs/bluestar.zip"
+ALLOWED_OPERATORS = "Bluestar,Unilink,uni-link,UNILINK"
+ALLOWED_LINE_PREFIXES = "U,BLUESTAR" # opcionális, a kódban a konkrét short_name-ek is szerepelnek
+BODS_FEED_URL = "https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key=${BODS_API_KEY}"
+
+# Hozz létre Railway-en egy titkot: BODS_API_KEY
