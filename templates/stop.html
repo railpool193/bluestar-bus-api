@@ -1,32 +1,134 @@
-{% extends "base.html" %}
-{% block content %}
-<h1>{{ stop_name }}</h1>
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ stop_name if stop_name is defined else "Megálló" }}</title>
+  <style>
+    :root{
+      --bg:#0f1115; --panel:#171a21; --muted:#8b95a7; --text:#e6e9ef;
+      --pill:#232936; --pill-live:#1f5f3b; --accent:#5aa3ff;
+      --card:#1a1f2b; --shadow:0 6px 18px rgba(0,0,0,.25); --radius:16px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif}
+    a{color:inherit;text-decoration:none}
+    .wrap{max-width:960px;margin:0 auto;padding:16px}
+    .topbar{display:flex;align-items:center;gap:12px}
+    .brand{display:flex;align-items:center;font-weight:700}
+    .brand .star{color:#7ab0ff;margin-right:6px}
+    .spacer{flex:1}
+    .clock{color:var(--muted);font-variant-numeric:tabular-nums}
+    .search{margin:16px 0}
+    .search input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #2a2f3a;background:#0e1219;color:var(--text);outline:none}
+    h1{font-size:34px;letter-spacing:.3px;margin:10px 0 6px}
+    .sub{color:var(--muted);margin-bottom:12px}
 
-<h3>Indulások</h3>
-<ul class="list">
-  {% for d in departures %}
-    <li class="list-row">
-      <div>
-        <div class="strong">{{ d.route }} → {{ d.headsign }}</div>
-      </div>
-      <div class="time sched">{{ d.sched_time }}</div>
-    </li>
-  {% else %}
-    <li class="muted">Nincs megjeleníthető indulás.</li>
-  {% endfor %}
-</ul>
+    .section-title{color:var(--muted);font-weight:700;margin:18px 4px 10px}
+    .list{display:flex;flex-direction:column;gap:10px}
+    .item{display:flex;align-items:center;gap:14px;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px}
+    .item:hover{outline:1px solid #2b3240}
+    .pill{min-width:58px;text-align:center;border-radius:999px;padding:8px 10px;background:var(--pill);font-weight:800;letter-spacing:.5px}
+    .dest{flex:1;font-weight:700}
+    .time{font-variant-numeric:tabular-nums;color:#cfd6e6}
+    .live{background:var(--pill-live)}
+    .muted{color:var(--muted)}
+    .hidden{display:none!important}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <a class="brand" href="/"><span class="star">★</span>bluestar</a>
+      <div class="spacer"></div>
+      <div id="ukClock" class="clock">UK: --:--:--</div>
+    </div>
 
-{% if arrivals and arrivals|length %}
-<h3>Érkezések</h3>
-<ul class="list">
-  {% for a in arrivals %}
-    <li class="list-row">
-      <div>
-        <div class="strong">{{ a.route }} ← {{ a.headsign }}</div>
-      </div>
-      <div class="time sched">{{ a.sched_time }}</div>
-    </li>
-  {% endfor %}
-</ul>
-{% endif %}
-{% endblock %}
+    <form class="search" action="/s" method="get">
+      <input name="q" placeholder="Keresés: járat vagy megálló" autocomplete="off" />
+    </form>
+
+    <h1>{{ stop_name if stop_name is defined else "Megálló" }}
+      {% if stop_code is defined and stop_code %}<span class="sub">[{{ stop_code }}]</span>{% endif %}
+    </h1>
+
+    <div class="section-title">Indulások</div>
+    {% set _deps = departures if departures is defined else (stop_departures if stop_departures is defined else []) %}
+    <div id="depList" class="list">
+      {% for d in _deps %}
+        {# várható Jinja mezők: route_short_name, headsign, time_str, iso_time, is_live, trip_id, stop_id #}
+        <a class="item"
+           href="/trip/{{ d.trip_id }}{% if d.stop_id is defined %}?from={{ d.stop_id }}{% endif %}"
+           data-iso="{{ d.iso_time if d.iso_time is defined else '' }}"
+           data-hhmm="{{ d.time_str if d.time_str is defined else '' }}">
+          <div class="pill {% if d.is_live %}live{% endif %}">
+            {{ d.route_short_name }}
+          </div>
+          <div class="dest">{{ d.headsign }}</div>
+          <div class="time">
+            {% if d.is_live %}<strong>{{ d.time_str }}</strong>
+            {% else %}{{ d.time_str }}{% endif %}
+          </div>
+        </a>
+      {% else %}
+        <div class="muted">Nincs adat ehhez a megállóhoz.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <script>
+    // UK clock
+    function tickClock(){
+      const now = new Date();
+      // megj: a szerver UK időt ír ki felül – a kliens helyi idejét jelenítjük meg "UK:" előtaggal
+      document.getElementById('ukClock').textContent =
+        'UK: ' + now.toLocaleTimeString('en-GB',{hour12:false});
+    }
+    setInterval(tickClock, 1000); tickClock();
+
+    // Csak jövőbeni indulások megjelenítése
+    (function(){
+      const items = Array.from(document.querySelectorAll('#depList .item'));
+      if(!items.length) return;
+
+      const today = new Date();
+      const baseY = today.getFullYear(), baseM = today.getMonth(), baseD = today.getDate();
+
+      function toWhen(el){
+        const iso = el.getAttribute('data-iso');
+        if (iso) {
+          const d = new Date(iso);
+          if (!isNaN(d)) return d;
+        }
+        const hhmm = el.getAttribute('data-hhmm');
+        if (hhmm && /^\d{2}:\d{2}$/.test(hhmm)) {
+          const [h,m] = hhmm.split(':').map(Number);
+          return new Date(baseY, baseM, baseD, h, m, 0, 0);
+        }
+        return null;
+      }
+
+      function refresh(){
+        const now = new Date();
+        let firstFuture = null;
+        items.forEach(el=>{
+          const when = toWhen(el);
+          if(!when){ el.classList.remove('hidden'); return; }
+          if(when.getTime() + 30*1000 < now.getTime()){ // 30s türelem
+            el.classList.add('hidden'); // múltbeli -> elrejt
+          } else {
+            el.classList.remove('hidden');
+            if(!firstFuture) firstFuture = el;
+          }
+        });
+        // Görgetés az első jövőbeni elemhez
+        if(firstFuture){ firstFuture.scrollIntoView({behavior:'instant', block:'start'}); }
+      }
+      refresh();
+      // frissítés percenként
+      setInterval(refresh, 60*1000);
+    })();
+  </script>
+</body>
+</html>
