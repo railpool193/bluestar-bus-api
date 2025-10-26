@@ -1,15 +1,12 @@
-{% extends "_base.html" %}
-{% block title %}Járatok · bluestar{% endblock %}
-{% block body %}
-  <div class="card section">
-    <h2>Járatok</h2>
-    <div class="kicker">Bluestar + Unilink</div>
-    <div class="grid" style="margin-top:12px">
-      {% for r in routes %}
-        <a class="route" href="/route/{{ r.route_short_name|e }}">
-          {{ r.route_short_name }}
-        </a>
-      {% endfor %}
-    </div>
-  </div>
+{% extends "base.html" %}
+{% block content %}
+<h1>Járatok</h1>
+<div class="grid">
+  {% for r in routes %}
+    <a class="card" href="/route/{{ r.route_id }}">
+      <div class="route-badge">{{ r.route_short_name or r.route_id }}</div>
+      <div class="route-sub">{{ r.route_long_name or r.agency_name }}</div>
+    </a>
+  {% endfor %}
+</div>
 {% endblock %}
