@@ -12,3 +12,5 @@ geopy==2.4.1
 shapely==2.0.4
 requests>=2.31
 httpx==0.27.2
+aiofiles==23.2.1
+async-lru==2.0.4
