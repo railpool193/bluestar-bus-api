@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ stop.stop_name }} <span class="muted">[{{ stop.stop_code }}]</span></h1>
+<div id="depList" class="list"></div>
+
+<script>
+(async function(){
+  const params = new URLSearchParams(location.search);
+  const onlyDepartures = params.get("only_departures") !== "false"; // default: igaz
+  const res = await fetch(`/api/stop/{{ stop.stop_id }}/departures?only_departures=${onlyDepartures}`);
+  const rows = await res.json();
+  const root = document.getElementById('depList');
+  root.innerHTML = '';
+  for (const r of rows){
+    // csak Bluestar/Unilink – backend már szűrte
+    const href = `/trip/${r.trip_id}`;
+    const row = document.createElement('a');
+    row.className = 'row';
+    row.href = href;
+
+    const left = document.createElement('div');
+    left.className = 'left';
+    left.textContent = r.route_short_name;
+
+    const center = document.createElement('div');
+    center.className = 'center ellips';
+    center.textContent = r.headsign;
+
+    const right = document.createElement('div');
+    right.className = 'right mono';
+    right.textContent = r.dep_time;
+
+    row.append(left, center, right);
+    root.append(row);
+  }
+})();
+</script>
+{% endblock %}
