@@ -69,3 +69,32 @@ a:hover{color:var(--accent-2)}
 }
 
 .map{height:340px; width:100%; background:#0c0f14; border:1px solid var(--border); border-radius:.9rem}
+
+/* --- újak / módosítottak --- */
+:root{
+  --live:#18b368;          /* zöld az élőhöz */
+  --live-soft:#123e2b;     /* halvány háttér-zöld */
+  --sched:#e8eef6;         /* fehér menetrendi */
+  --late:#ff6b6b;          /* piros késés */
+  --early:#6ba3ff;         /* kék sietség */
+}
+
+/* „pill” színezés változatok */
+.pill-live{ background:var(--live-soft); color:var(--live); border:1px solid #1f5d45 }
+.pill-sched{ background:var(--pill); color:var(--sched) }
+
+/* villogó (DUE) */
+.blink {
+  animation: blink 1s step-start 0s infinite;
+}
+@keyframes blink {
+  50% { opacity: .25; }
+}
+
+/* trip késés/sietség badge jobb fentre */
+.trip-meta {
+  position: absolute; right: 1rem; top: 0; transform: translateY(-110%);
+  display: inline-flex; gap:.4rem; align-items:center;
+}
+.badge-late   { color: var(--late);  border-color: var(--late); }
+.badge-early  { color: var(--early); border-color: var(--early); }
