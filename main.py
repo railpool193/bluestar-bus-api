@@ -1,645 +1,202 @@
-"""
-Bluestar – Egyszerű menetrend és élő jármű API FastAPI-vel.
-
-Ez az alkalmazás leváltja az eredeti Bluestar busz API-t.  JSON végpontokon
-keresztül elérhető a megálló- és viszonylatkeresés, a közelgő indulások
-lekérdezése, egy adott járat teljes megállólistája, az élő járműpozíciók,
-a GTFS feltöltés/betöltés, valamint a BODS SIRI‑VM élő feed konfigurációja.
-A frontend a `static` mappából származó index.html-t szolgálja ki.
-
-A cél az áttekinthetőség és a robusztus működés: minden bemenet validálódik,
-a hiányzó GTFS-táblák kezelése kegyes, a menetrendi logika minimális, az
-élő adatok rövid ideig cache-elődnek, és minden időpont normalizált.
-"""
-
-import io
-import os
-import time
-import zipfile
-from datetime import datetime, timedelta, date
-from typing import Dict, List, Optional, Any
-
-import pandas as pd
-import pytz
-import httpx
-import xmltodict
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from __future__ import annotations
+import os, asyncio
+from typing import Dict, Any, Optional, List
+from fastapi import FastAPI, Request, Query
+from fastapi.responses import HTMLResponse, ORJSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from datetime import datetime, timedelta, timezone
+from dateutil import tz
 
-# ---------------------------------------------------------------------------
-# Konfiguráció és állapot
+from gtfs_utils import load_gtfs, build_indexes, trip_stop_rows, upcoming_departures_at_stop, route_shape_coords
+from siri_live import vehicles_live, select_vehicle_for_trip, ALLOWED_LINE_NAMES
 
-APP_VERSION = "1.0.0"
+app = FastAPI(title="bluestar")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Mappák létrehozása a GTFS és egyéb fájlok tárolásához.
-DATA_DIR = os.path.abspath("data")
-GTFS_DIR = os.path.join(DATA_DIR, "gtfs")
-GTFS_ZIP = os.path.join(DATA_DIR, "gtfs.zip")
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(GTFS_DIR, exist_ok=True)
-os.makedirs("static", exist_ok=True)
-
-# Időzóna beállítás. Alapértelmezés: Europe/London.
-TZ_NAME = os.environ.get("TZ", "Europe/London")
-try:
-    TZ = pytz.timezone(TZ_NAME)
-except Exception:
-    TZ = pytz.timezone("Europe/London")
-
-# Élő feed frissítési intervallum (mp)
-DEFAULT_REFRESH_SEC = 30
-
-class LiveConfig(BaseModel):
-    """Élő feed konfiguráció."""
-    feed_url: Optional[str] = None
-    refresh_sec: int = DEFAULT_REFRESH_SEC
-
-class AppState:
-    """Alkalmazás állapot."""
-    def __init__(self):
-        self.build: int = int(time.time())
-        self.live_cfg: LiveConfig = LiveConfig()
-        self.gtfs_ready: bool = False
-        self.gtfs_meta: Dict[str, Any] = {}
-        self.gtfs_tables: Dict[str, pd.DataFrame] = {}
-        self.vehicles: List[Dict[str, Any]] = []
-        self.vehicles_ts: float = 0.0
-
-STATE = AppState()
-
-# ---------------------------------------------------------------------------
-# Segédfüggvények
-
-def now_utc() -> datetime:
-    return datetime.utcnow().replace(tzinfo=pytz.utc)
-
-def now_local() -> datetime:
-    return now_utc().astimezone(TZ)
-
-def parse_hhmmss_to_today(hhmmss: str, local_day: date) -> datetime:
-    h, m, s = map(int, hhmmss.split(":"))
-    day_offset = h // 24
-    h = h % 24
-    dt = datetime(local_day.year, local_day.month, local_day.day, h, m, s, tzinfo=TZ)
-    dt += timedelta(days=day_offset)
-    return dt
-
-def service_is_running(trip_row: pd.Series, dt_local: datetime) -> bool:
-    """Eldönti, hogy a járat indul-e adott napon (calendar.txt + calendar_dates.txt szerint)."""
-    service_id = trip_row.get("service_id")
-    day = dt_local.date()
-    cal = STATE.gtfs_tables.get("calendar")
-    ok_calendar = True
-    if cal is not None and not cal.empty:
-        c = cal[cal["service_id"] == service_id]
-        ok_calendar = False
-        if not c.empty:
-            c = c.iloc[0]
-            start = pd.to_datetime(c["start_date"], format="%Y%m%d").date()
-            end = pd.to_datetime(c["end_date"], format="%Y%m%d").date()
-            if start <= day <= end:
-                weekday = [
-                    "monday", "tuesday", "wednesday", "thursday",
-                    "friday", "saturday", "sunday"
-                ][day.weekday()]
-                ok_calendar = bool(int(c[weekday]))
-    dates = STATE.gtfs_tables.get("calendar_dates")
-    if dates is not None and not dates.empty:
-        d = dates[dates["service_id"] == service_id]
-        if not d.empty:
-            d = d.copy()
-            d["date"] = pd.to_datetime(d["date"], format="%Y%m%d").dt.date
-            same = d[d["date"] == day]
-            if not same.empty:
-                ex = int(same.iloc[0]["exception_type"])
-                return ex == 1
-    return ok_calendar
-
-async def fetch_live_if_needed() -> None:
-    """Élő adatok letöltése ha lejárt a cache."""
-    cfg = STATE.live_cfg
-    if not cfg.feed_url:
-        return
-    now_ts = time.time()
-    if now_ts - STATE.vehicles_ts < cfg.refresh_sec:
-        return
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(cfg.feed_url)
-            resp.raise_for_status()
-            text = resp.text
-    except Exception:
-        return
-    try:
-        payload = xmltodict.parse(text)
-    except Exception:
-        return
-    vehicles: List[Dict[str, Any]] = []
-    try:
-        deliveries = (
-            payload.get("Siri", {})
-            .get("ServiceDelivery", {})
-            .get("VehicleMonitoringDelivery", [])
-        )
-        if isinstance(deliveries, dict):
-            deliveries = [deliveries]
-        for delivery in deliveries:
-            acts = delivery.get("VehicleActivity", [])
-            if isinstance(acts, dict):
-                acts = [acts]
-            for act in acts:
-                mvj = act.get("MonitoredVehicleJourney", {}) or {}
-                when_str = act.get("RecordedAtTime") or act.get("ValidUntilTime")
-                try:
-                    ts = datetime.fromisoformat(
-                        when_str.replace("Z", "+00:00")
-                    ).astimezone(pytz.utc)
-                except Exception:
-                    ts = now_utc()
-                mc = mvj.get("MonitoredCall") or {}
-                onward = (mvj.get("OnwardCalls") or {}).get("OnwardCall") or []
-                exp_dep = (
-                    mc.get("ExpectedDepartureTime")
-                    or (onward[0].get("ExpectedDepartureTime") if onward else None)
-                )
-                aimed_dep = (
-                    mc.get("AimedDepartureTime")
-                    or (onward[0].get("AimedDepartureTime") if onward else None)
-                )
-                def _p(s: Optional[str]) -> Optional[datetime]:
-                    if not s:
-                        return None
-                    try:
-                        return datetime.fromisoformat(
-                            s.replace("Z", "+00:00")
-                        ).astimezone(pytz.utc)
-                    except Exception:
-                        return None
-                vehicles.append({
-                    "line": str(mvj.get("PublishedLineName") or mvj.get("LineRef") or "").strip(),
-                    "destination": (mvj.get("DestinationName") or "").strip(),
-                    "vehicle_ref": str(mvj.get("VehicleRef") or mvj.get("VehicleId") or "").strip(),
-                    "lat": (mvj.get("VehicleLocation") or {}).get("Latitude"),
-                    "lon": (mvj.get("VehicleLocation") or {}).get("Longitude"),
-                    "bearing": mvj.get("Bearing"),
-                    "timestamp_utc": ts.isoformat(),
-                    "aimed_dep_utc": _p(aimed_dep).isoformat() if _p(aimed_dep) else None,
-                    "expected_dep_utc": _p(exp_dep).isoformat() if _p(exp_dep) else None,
-                })
-    except Exception:
-        pass
-    for v in vehicles:
-        try:
-            a = v.get("aimed_dep_utc")
-            e = v.get("expected_dep_utc")
-            if a and e:
-                a_dt = datetime.fromisoformat(a)
-                e_dt = datetime.fromisoformat(e)
-                v["delay_min"] = int(round((e_dt - a_dt).total_seconds() / 60.0))
-            else:
-                v["delay_min"] = None
-        except Exception:
-            v["delay_min"] = None
-    STATE.vehicles = vehicles
-    STATE.vehicles_ts = now_ts
-
-def load_gtfs_from_dir(gtfs_dir: str) -> None:
-    """GTFS betöltése egy mappából."""
-    required = ["stops", "routes", "trips", "stop_times"]
-    tables: Dict[str, pd.DataFrame] = {}
-    for name in required + ["shapes", "calendar", "calendar_dates"]:
-        path = os.path.join(gtfs_dir, f"{name}.txt")
-        if os.path.exists(path):
-            df = pd.read_csv(path, dtype=str)
-            tables[name] = df
-        else:
-            tables[name] = pd.DataFrame()
-    missing = [t for t in required if tables[t].empty]
-    if missing:
-        raise RuntimeError(f"Hiányzó GTFS táblák: {', '.join(missing)}")
-    STATE.gtfs_tables.clear()
-    STATE.gtfs_tables.update(tables)
-    STATE.gtfs_ready = True
-    STATE.gtfs_meta = {
-        "gtfs_stops": len(tables["stops"]),
-        "gtfs_routes": len(tables["routes"]),
-        "tz": TZ_NAME,
-    }
-
-def extract_and_load_gtfs(zip_bytes: bytes) -> None:
-    """GTFS ZIP kicsomagolása és betöltése."""
-    for fname in os.listdir(GTFS_DIR):
-        try:
-            os.remove(os.path.join(GTFS_DIR, fname))
-        except Exception:
-            pass
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        zf.extractall(GTFS_DIR)
-    load_gtfs_from_dir(GTFS_DIR)
-
-def ensure_gtfs_loaded() -> None:
-    """GTFS betöltés ellenőrzése."""
-    if not STATE.gtfs_ready:
-        raise HTTPException(status_code=503, detail="GTFS nincs betöltve")
-
-def build_live_by_route() -> Dict[str, Dict[str, Any]]:
-    """Élő adatok route szerinti kiválasztása (legfrissebb pozíció)."""
-    best: Dict[str, Dict[str, Any]] = {}
-    now = now_utc()
-    for v in STATE.vehicles:
-        route = (v.get("line") or "").strip()
-        if not route:
-            continue
-        try:
-            ts = datetime.fromisoformat(v["timestamp_utc"])
-        except Exception:
-            continue
-        if (now - ts).total_seconds() > 90:
-            continue
-        cur = best.get(route)
-        if (not cur) or (ts > datetime.fromisoformat(cur["ts"])):
-            best[route] = {
-                "ts": ts.isoformat(),
-                "expected": v.get("expected_dep_utc"),
-                "aimed": v.get("aimed_dep_utc"),
-                "delay_min": v.get("delay_min"),
-                "destination": v.get("destination"),
-            }
-    return best
-
-def departure_rows_for_stop(stop_id: str, window_min: int) -> List[Dict[str, Any]]:
-    """Közelgő indulások lekérdezése egy megállóból."""
-    trips_df = STATE.gtfs_tables.get("trips")
-    stop_times_df = STATE.gtfs_tables.get("stop_times")
-    routes_df = STATE.gtfs_tables.get("routes")
-    if trips_df is None or stop_times_df is None:
-        return []
-    now_local_dt = now_local()
-    end_local_dt = now_local_dt + timedelta(minutes=max(1, min(window_min, 480)))
-    route_names: Dict[str, str] = {}
-    if routes_df is not None and not routes_df.empty:
-        for _, row in routes_df.iterrows():
-            rid = row.get("route_id") or ""
-            short = str(row.get("route_short_name") or "").strip()
-            longn = str(row.get("route_long_name") or "").strip()
-            route_names[rid] = short or longn or rid
-    live = build_live_by_route()
-    rows: List[Dict[str, Any]] = []
-    grouped = stop_times_df[stop_times_df["stop_id"] == stop_id]
-    for _, st_row in grouped.iterrows():
-        dep_str = st_row.get("departure_time") or st_row.get("arrival_time") or ""
-        if not dep_str:
-            continue
-        try:
-            dep_local = parse_hhmmss_to_today(dep_str, now_local_dt.date())
-        except Exception:
-            continue
-        # Csak jövőbeli indulások
-        if dep_local <= now_local_dt:
-            continue
-        dep_utc = dep_local.astimezone(pytz.utc)
-        if dep_local > end_local_dt:
-            continue
-        trip_id = st_row.get("trip_id")
-        if trip_id is None:
-            continue
-        trip_row = trips_df[trips_df["trip_id"] == trip_id]
-        if trip_row.empty:
-            continue
-        trip_meta = trip_row.iloc[0]
-        if not service_is_running(trip_meta, now_local_dt):
-            continue
-        route_id = trip_meta.get("route_id") or ""
-        route = route_names.get(route_id, route_id)
-        headsign = str(trip_meta.get("trip_headsign") or "").strip()
-        li = live.get(route)
-        dep_use = dep_utc
-        is_live = False
-        delay_min = None
-        if li and li.get("expected"):
-            try:
-                exp = datetime.fromisoformat(li["expected"])
-                if abs((exp - dep_utc).total_seconds()) < 2 * 3600:
-                    dep_use = exp
-                    is_live = True
-                    delay_min = li.get("delay_min")
-            except Exception:
-                pass
-        mins = int((dep_use - now_utc()).total_seconds() // 60)
-        is_due = is_live and (-1 <= mins <= 0)
-        destination = headsign or (li or {}).get("destination") or "–"
-        rows.append({
-            "route": route or "–",
-            "destination": destination,
-            "time_iso": dep_use.isoformat(),
-            "time_display": "Due" if is_due else dep_use.astimezone(TZ).strftime("%H:%M"),
-            "is_live": is_live,
-            "is_due": is_due,
-            "delay_min": delay_min,
-            "trip_id": trip_id,
-        })
-    seen = set()
-    uniq: List[Dict[str, Any]] = []
-    for r in rows:
-        key = (r["route"], r["destination"], r["time_iso"])
-        if key in seen:
-            continue
-        seen.add(key)
-        uniq.append(r)
-    uniq.sort(key=lambda r: (not r["is_due"], r["time_iso"]))
-    return uniq
-
-# ---------------------------------------------------------------------------
-# FastAPI alkalmazás és végpontok
-
-app = FastAPI(title="Bluestar Replacement API", version=APP_VERSION, docs_url=None, redoc_url=None)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+env = Environment(
+    loader=FileSystemLoader("templates"),
+    autoescape=select_autoescape(['html', 'xml'])
 )
 
-@app.get("/api/status")
-async def api_status() -> Dict[str, Any]:
-    """Státusz információk (verzió, build, idő, konfiguráció)."""
-    return {
-        "ok": True,
-        "version": APP_VERSION,
-        "build": STATE.build,
-        "time": now_local().strftime("%H:%M:%S"),
-        "tz": TZ_NAME,
-        "live_feed_configured": bool(STATE.live_cfg.feed_url),
-        "gtfs_ready": STATE.gtfs_ready,
-        "gtfs_stops": STATE.gtfs_meta.get("gtfs_stops", 0),
-    }
+def render(tpl: str, **ctx) -> HTMLResponse:
+    tmpl = env.get_template(tpl)
+    return HTMLResponse(tmpl.render(**ctx))
 
-@app.get("/api/live/config")
-async def api_get_live_config() -> Dict[str, Any]:
-    """Élő feed konfiguráció lekérdezése."""
-    return STATE.live_cfg.dict()
+def now_uk():
+    # UK idő (BST/GMT)
+    return datetime.now(tz.gettz("Europe/London"))
 
-@app.post("/api/live/config")
-async def api_set_live_config(cfg: LiveConfig) -> Dict[str, Any]:
-    """Élő feed URL és frissítési idő beállítása."""
-    if not cfg.feed_url:
-        raise HTTPException(status_code=400, detail="feed_url is required")
-    if cfg.refresh_sec < 5 or cfg.refresh_sec > 3600:
-        raise HTTPException(status_code=400, detail="refresh_sec must be between 5 and 3600 seconds")
-    STATE.live_cfg = cfg
-    STATE.vehicles_ts = 0.0
-    return {"ok": True}
+# --------- PAGES ---------
 
-@app.post("/api/gtfs/upload")
-async def api_gtfs_upload(file: UploadFile = File(...)) -> Dict[str, Any]:
-    """GTFS zip feltöltése."""
-    data = await file.read()
-    try:
-        extract_and_load_gtfs(data)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    try:
-        with open(GTFS_ZIP, "wb") as f:
-            f.write(data)
-    except Exception:
-        pass
-    return {"ok": True, "gtfs_stops": STATE.gtfs_meta.get("gtfs_stops", 0)}
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    gtfs = load_gtfs()
+    routes = (gtfs["routes"][["route_id","route_short_name","route_long_name","agency_id"]]
+              .sort_values(["route_short_name"]))
+    # csak Bluestar/Unilink jellegű route-ok – ha route_short_name számos vagy U*
+    def keep(row):
+        rsn = (row["route_short_name"] or "").strip()
+        return (rsn in ALLOWED_LINE_NAMES) or rsn.isdigit() or rsn.upper().startswith("U")
+    routes = routes[routes.apply(keep, axis=1)]
+    return render("index.html", routes=routes.to_dict(orient="records"), now=now_uk())
 
-class GtfsUrlIn(BaseModel):
-    url: str
+@app.get("/stop/{stop_id}", response_class=HTMLResponse)
+async def stop_page(stop_id: str):
+    gtfs = load_gtfs()
+    stops = gtfs["stops"]
+    stop = stops[stops["stop_id"]==stop_id].head(1)
+    if stop.empty:
+        return render("base.html", content=f"Ismeretlen megálló: {stop_id}")
+    return render("stop.html", stop=stop.iloc[0].to_dict(), now=now_uk())
 
-@app.post("/api/gtfs/load-url")
-async def api_gtfs_load_url(body: GtfsUrlIn) -> Dict[str, Any]:
-    """GTFS letöltése URL-ről és betöltése."""
-    if not body.url:
-        raise HTTPException(status_code=400, detail="url is required")
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(body.url)
-            resp.raise_for_status()
-            data = resp.content
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to download GTFS: {e}")
-    try:
-        extract_and_load_gtfs(data)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    try:
-        with open(GTFS_ZIP, "wb") as f:
-            f.write(data)
-    except Exception:
-        pass
-    return {"ok": True, "gtfs_stops": STATE.gtfs_meta.get("gtfs_stops", 0)}
+@app.get("/route/{route_id}", response_class=HTMLResponse)
+async def route_page(route_id: str):
+    gtfs = load_gtfs()
+    routes = gtfs["routes"]
+    r = routes[routes["route_id"]==route_id].head(1)
+    if r.empty:
+        return render("base.html", content=f"Ismeretlen járat: {route_id}")
+    return render("route.html", route=r.iloc[0].to_dict(), now=now_uk())
 
-@app.post("/api/reload-gtfs")
-async def api_reload_gtfs() -> Dict[str, Any]:
-    """Betöltött GTFS újratöltése (zip vagy txt fájlokból)."""
-    if os.path.exists(GTFS_ZIP):
-        try:
-            with open(GTFS_ZIP, "rb") as f:
-                data = f.read()
-            extract_and_load_gtfs(data)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
-    elif any(fname.endswith(".txt") for fname in os.listdir(GTFS_DIR)):
-        try:
-            load_gtfs_from_dir(GTFS_DIR)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
-    else:
-        raise HTTPException(status_code=400, detail="No GTFS to reload")
-    return {"ok": True, "gtfs_stops": STATE.gtfs_meta.get("gtfs_stops", 0)}
+@app.get("/trip/{trip_id}", response_class=HTMLResponse)
+async def trip_page(trip_id: str):
+    gtfs = load_gtfs()
+    trips = gtfs["trips"]
+    routes = gtfs["routes"]
+    t = trips[trips["trip_id"]==trip_id].head(1)
+    if t.empty:
+        return render("base.html", content=f"Ismeretlen trip: {trip_id}")
 
-@app.get("/api/stops/search")
-async def api_stops_search(q: str = "") -> List[Dict[str, str]]:
-    """Megállók keresése név alapján (max. 50 találat)."""
-    ensure_gtfs_loaded()
-    ql = (q or "").strip().lower()
-    stops = STATE.gtfs_tables.get("stops")
-    if stops is None or stops.empty:
-        return []
-    res: List[Dict[str, str]] = []
-    if not ql:
-        return res
-    for _, row in stops.iterrows():
-        name = str(row.get("stop_name") or "").strip()
-        if ql in name.lower():
-            res.append({"id": row.get("stop_id"), "name": name})
-            if len(res) >= 50:
-                break
-    return res
-
-@app.get("/api/routes/search")
-async def api_routes_search(q: str = "") -> List[Dict[str, str]]:
-    """Viszonylatok keresése (max. 50 találat)."""
-    ensure_gtfs_loaded()
-    ql = (q or "").strip().lower()
-    routes = STATE.gtfs_tables.get("routes")
-    if routes is None or routes.empty:
-        return []
-    res: List[Dict[str, str]] = []
-    if not ql:
-        return res
-    for _, row in routes.iterrows():
-        short = str(row.get("route_short_name") or "").strip()
-        longn = str(row.get("route_long_name") or "").strip()
-        rid = row.get("route_id") or ""
-        display = short or longn or rid
-        if ql in display.lower():
-            res.append({"route": display})
-            if len(res) >= 50:
-                break
-    return res
-
-@app.get("/api/departures")
-async def api_departures(stop_id: str, window: int = 90) -> Dict[str, Any]:
-    """Közelgő indulások lekérdezése megállónként."""
-    ensure_gtfs_loaded()
-    window = max(1, min(window, 480))
-    await fetch_live_if_needed()
-    rows = departure_rows_for_stop(stop_id, window)
-    return {"departures": rows}
-
-@app.get("/api/trip")
-async def api_trip(trip_id: str) -> Dict[str, Any]:
-    """Egy járat teljes megállólistája és időpontjai."""
-    ensure_gtfs_loaded()
-    trips = STATE.gtfs_tables.get("trips")
-    stop_times = STATE.gtfs_tables.get("stop_times")
-    stops = STATE.gtfs_tables.get("stops")
-    if trips is None or stop_times is None or stops is None:
-        raise HTTPException(status_code=404, detail="Trip not found")
-    trip_row = trips[trips["trip_id"] == trip_id]
-    if trip_row.empty:
-        raise HTTPException(status_code=404, detail="Trip not found")
-    meta = trip_row.iloc[0]
-    route_id = meta.get("route_id") or ""
-    route_display = (
-        str(meta.get("route_short_name") or "").strip()
-        or str(meta.get("route_long_name") or "").strip()
-        or route_id
+    route = routes[routes["route_id"]==t.iloc[0]["route_id"]].head(1).iloc[0].to_dict()
+    return render("trip.html",
+        trip=t.iloc[0].to_dict(),
+        route=route,
+        now=now_uk()
     )
-    headsign = str(meta.get("trip_headsign") or "").strip()
-    rows: List[Dict[str, Any]] = []
-    now_dt = now_local()
-    for _, st_row in stop_times[stop_times["trip_id"] == trip_id].iterrows():
-        dep_str = st_row.get("departure_time") or st_row.get("arrival_time") or ""
-        try:
-            dep_local = parse_hhmmss_to_today(dep_str, now_dt.date())
-        except Exception:
-            continue
-        stop_id_row = st_row.get("stop_id")
-        try:
-            stop_name = (
-                stops[stops["stop_id"] == stop_id_row].iloc[0].get("stop_name") or ""
-            ).strip()
-        except Exception:
-            stop_name = str(stop_id_row or "")
-        rows.append({
-            "stop_id": stop_id_row,
-            "stop_name": stop_name,
-            "time_iso": dep_local.astimezone(pytz.utc).isoformat(),
-            "time_display": dep_local.strftime("%H:%M"),
-            "is_past": dep_local < now_dt,
-            "is_live": False,
-            "is_due": False,
-            "delay_min": None,
+
+# --------- API ---------
+
+@app.get("/api/stop/{stop_id}/departures")
+async def api_stop_departures(stop_id: str, only_departures: bool = True):
+    """
+    Végállomásnál (keresés destination stopra) kérheted only_departures=True
+    – ilyenkor csak a departure_time-mal rendelkező sorok jönnek.
+    Régi indulások kiszűrve (>= most - 60s).
+    Csak Bluestar/Unilink route-okra szűrve.
+    """
+    now = now_uk()
+    sec = now.hour*3600 + now.minute*60 + now.second
+    df = upcoming_departures_at_stop(stop_id, sec, max_results=60)
+
+    # csak Bluestar/Unilink
+    def keep(row):
+        rsn = (row["route_short_name"] or "").strip()
+        return (rsn in ALLOWED_LINE_NAMES) or rsn.isdigit() or rsn.upper().startswith("U")
+    df = df[df.apply(keep, axis=1)]
+
+    if only_departures:
+        df = df[df["departure_time"]!=""]
+
+    out = []
+    for _,r in df.iterrows():
+        out.append({
+            "trip_id": r["trip_id"],
+            "route_id": r["route_id"],
+            "route_short_name": r["route_short_name"],
+            "headsign": r["trip_headsign"],
+            "dep_time": r["departure_time"],
+            "stop_sequence": int(r["stop_sequence"]),
+            "shape_id": r.get("shape_id","")
         })
-    return {"route": route_display, "headsign": headsign, "stops": rows}
+    return ORJSONResponse(out)
+
+@app.get("/api/trip/{trip_id}")
+async def api_trip(trip_id: str):
+    """
+    Trip stoplista + élő jármű kiválasztása (ha van).
+    Soronként: scheduled_time, live_time (ha van), status: 'LIVE'/'TT'
+    """
+    gtfs = load_gtfs()
+    trips = gtfs["trips"]
+    routes = gtfs["routes"]
+    t = trips[trips["trip_id"]==trip_id].head(1)
+    if t.empty:
+        return ORJSONResponse({"error":"unknown_trip"}, status_code=404)
+
+    t0 = t.iloc[0].to_dict()
+    route = routes[routes["route_id"]==t0["route_id"]].head(1).iloc[0].to_dict()
+    short = (route.get("route_short_name") or "").strip()
+    stops_df = trip_stop_rows(trip_id)
+
+    # Élő jármű lekérés, szűrés
+    vehicles = await vehicles_live()
+    vehicle = select_vehicle_for_trip(
+        trip_key=trip_id,
+        line_name=short,
+        candidates=vehicles
+    )
+
+    # status építés
+    rows = []
+    uk = now_uk()
+    for _, row in stops_df.iterrows():
+        sched = row["arrival_time"] or row["departure_time"]
+        label = "TT"
+        live_time = None
+        if vehicle:
+            # heurisztika: ha van jármű és közel van az adott megállóhoz, jelöljük live-nak,
+            # illetve ha a jármű last_update < 60s
+            label = "TT"
+            # (egyszerű jelölés: ha van vehicle, akkor a sorok 'LIVE' jellegűek – a frontend
+            # külön zölddel fogja mutatni a live ETA-t, ha kiszámítható)
+        rows.append({
+            "stop_id": row["stop_id"],
+            "stop_sequence": int(row["stop_sequence"]),
+            "stop_name": row.get("stop_name",""),
+            "scheduled": sched,
+            "live": live_time,
+            "label": label
+        })
+
+    return ORJSONResponse({
+        "trip": t0,
+        "route": route,
+        "vehicle": vehicle,     # Trip nézetben a frontend CSAK ezt a járművet jeleníti meg
+        "rows": rows
+    })
+
+@app.get("/api/route/{route_id}/shape")
+async def api_route_shape(route_id: str):
+    gtfs = load_gtfs()
+    trips = gtfs["trips"]
+    t = trips[trips["route_id"]==route_id].head(1)
+    coords = []
+    if not t.empty:
+        shape_id = t.iloc[0]["shape_id"]
+        coords = route_shape_coords(shape_id)
+    return ORJSONResponse({"coords": coords})
 
 @app.get("/api/vehicles")
-async def api_vehicles(route: Optional[str] = None) -> Dict[str, Any]:
-    """Élő járművek lekérdezése (viszonylattal szűrhető)."""
-    await fetch_live_if_needed()
-    now_dt = now_utc()
-    items: Dict[str, Dict[str, Any]] = {}
-    for v in STATE.vehicles:
-        if route and str(v.get("line") or "").strip().lower() != str(route).strip().lower():
-            continue
-        lat = v.get("lat")
-        lon = v.get("lon")
-        if not lat or not lon:
-            continue
-        try:
-            ts = datetime.fromisoformat(v["timestamp_utc"])
-        except Exception:
-            continue
-        if (now_dt - ts).total_seconds() > 60:
-            continue
-        vref = v.get("vehicle_ref") or ""
-        if not vref:
-            continue
-        cur = items.get(vref)
-        if (not cur) or (ts > datetime.fromisoformat(cur["timestamp"])):
-            items[vref] = {
-                "vehicle_ref": vref,
-                "lat": lat,
-                "lon": lon,
-                "bearing": v.get("bearing"),
-                "timestamp": ts.isoformat(),
-                "label": f"{str(v.get('line') or '').strip()} · {str(v.get('destination') or '').strip()}".strip(),
-            }
-    return {"items": list(items.values()), "ts": STATE.vehicles_ts}
+async def api_vehicles(route_short_name: Optional[str]=None, for_trip: Optional[str]=None):
+    """
+    Visszaadja a szűrt élő járműveket. 
+    - Ha `for_trip` meg van adva, CSAK a kiválasztott jármű jön vissza.
+    - Egyébként route_short_name szerint szűr.
+    """
+    vehicles = await vehicles_live()
+    if for_trip:
+        gtfs = load_gtfs()
+        trips = gtfs["trips"]
+        routes = gtfs["routes"]
+        t = trips[trips["trip_id"]==for_trip].head(1)
+        if t.empty:
+            return ORJSONResponse([])
+        r = routes[routes["route_id"]==t.iloc[0]["route_id"]].head(1).iloc[0].to_dict()
+        short = (r.get("route_short_name") or "").strip()
+        v = select_vehicle_for_trip(for_trip, short, vehicles)
+        return ORJSONResponse([v] if v else [])
 
-@app.get("/api/route-shape")
-def api_route_shape(route: str) -> Dict[str, Any]:
-    """Egy adott viszonylat útvonalának alakja (shapes.txt alapján)."""
-    ensure_gtfs_loaded()
-    shapes_df = STATE.gtfs_tables.get("shapes")
-    trips_df = STATE.gtfs_tables.get("trips")
-    routes_df = STATE.gtfs_tables.get("routes")
-    if shapes_df is None or shapes_df.empty:
-        return {"shape": []}
-    rparam = (route or "").strip()
-    route_id = None
-    if routes_df is not None and not routes_df.empty:
-        for _, row in routes_df.iterrows():
-            short = str(row.get("route_short_name") or "").strip()
-            longn = str(row.get("route_long_name") or "").strip()
-            rid = row.get("route_id") or ""
-            if rparam.lower() == short.lower() or rparam.lower() == longn.lower():
-                route_id = rid
-                break
-    if not route_id:
-        route_id = rparam
-    shape_id = None
-    if trips_df is not None and not trips_df.empty:
-        for _, row in trips_df.iterrows():
-            if str(row.get("route_id") or "").lower() == route_id.lower():
-                shape_id = row.get("shape_id")
-                if shape_id:
-                    break
-    if not shape_id:
-        return {"shape": []}
-    seg = shapes_df[shapes_df["shape_id"] == shape_id]
-    if seg.empty:
-        return {"shape": []}
-    if "shape_pt_sequence" in seg.columns:
-        try:
-            seg = seg.copy()
-            seg["shape_pt_sequence"] = seg["shape_pt_sequence"].astype(float)
-            seg = seg.sort_values("shape_pt_sequence")
-        except Exception:
-            pass
-    coords: List[List[float]] = []
-    for _, r in seg.iterrows():
-        try:
-            lat = float(r.get("shape_pt_lat"))
-            lon = float(r.get("shape_pt_lon"))
-            coords.append([lat, lon])
-        except Exception:
-            continue
-    return {"shape": coords}
-
-# ---------------------------------------------------------------------------
-# Statikus fájlok és root
-
-@app.get("/")
-def serve_root():
-    """Az index.html kiszolgálása a gyökéren."""
-    return FileResponse(os.path.join("static", "index.html"))
-
-app.mount("/static", StaticFiles(directory="static", html=True), name="static")
+    if route_short_name:
+        vehicles = [v for v in vehicles if v.get("line_name")==route_short_name]
+    return ORJSONResponse(vehicles)
