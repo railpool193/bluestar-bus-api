@@ -1,13 +1,11 @@
-{% extends "base.html" %}
-{% block title %}Járatok • bluestar{% endblock %}
-{% block content %}
-  <h1 class="h1">Járatok</h1>
-  <div class="grid">
-    {% for r in routes %}
-      <a class="chip" href="/r/{{ r.route_id }}">
-        <span class="chip-main">{{ r.display }}</span>
-        <span class="chip-sub">{{ r.agency }}</span>
-      </a>
-    {% endfor %}
-  </div>
+{% extends "base.html" %}{% block content %}
+<div class="h1">Járatok</div>
+<div class="grid">
+  {% for r in routes %}
+  <a class="route" href="/r/{{ r.route_id }}">
+    <div style="font-size:26px">{{ r.short_name }}</div>
+    <div class="tiny muted">{{ r.agency }}</div>
+  </a>
+  {% endfor %}
+</div>
 {% endblock %}
