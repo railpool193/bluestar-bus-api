@@ -1,19 +1,25 @@
-# app.py
+# main.py
 
 import os
 from flask import Flask, render_template, jsonify
 import requests
-from google.transit import gtfs_realtime_pb2
+# Szükséges a GTFS-Realtime protokoll puffer dekódolásához
+from google.transit import gtfs_realtime_pb2 
 
 # --- KONFIGURÁCIÓ ---
-# Használd a saját API kulcsodat!
-# A Railway-en érdemes környezeti változóban tárolni (os.environ.get('API_KEY'))
-API_KEY = "9d2f6818e2723996467fedb958ba682aa9860a93" 
+# Ha a Railway Variables fülén adtad meg, akkor a kódból vedd ki a kulcsot,
+# és használd helyette az os.environ.get-et!
+
+# A te API kulcsod: 9d2f6818e2723996467fedb958ba682aa9860a93
+# Javasolt:
+API_KEY = os.environ.get('API_KEY', '9d2f6818e2723996467fedb958ba682aa9860a93') 
 
 # Bluestar/Unilink Live Data Feed URL
+# FONTOS: Az API kulcsot az URL-hez kell fűzni!
 GTFS_RT_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key={API_KEY}"
 
-app = Flask(__name__)
+# A Procfile ezt a nevet használja (main:app)
+app = Flask(__name__, template_folder='templates')
 
 # --- ADAT FELDOLGOZÁS ---
 
@@ -24,8 +30,8 @@ def get_live_buses():
     """
     try:
         # 1. API Hívás
-        response = requests.get(GTFS_RT_URL)
-        response.raise_for_status() # Hibát dob, ha a státuszkód 4xx vagy 5xx
+        response = requests.get(GTFS_RT_URL, timeout=10) # 10 másodperces időkorlát
+        response.raise_for_status() 
 
         # 2. GTFS-Realtime Feed feldolgozása (Protocol Buffers)
         feed = gtfs_realtime_pb2.FeedMessage()
@@ -33,21 +39,19 @@ def get_live_buses():
 
         buses = []
         for entity in feed.entity:
-            # Csak azokat az entity-ket dolgozzuk fel, amelyek járműpozíciót tartalmaznak
             if entity.HasField('vehicle'):
                 vehicle = entity.vehicle
                 
-                # A pozíció adatok meglétének ellenőrzése
                 if vehicle.HasField('position') and vehicle.trip.HasField('route_id'):
                     
                     # 3. Adatok kinyerése
                     lat = vehicle.position.latitude
                     lon = vehicle.position.longitude
                     
-                    # A vonal azonosítója (pl. U1A, 3, 11)
+                    # Vonal azonosítója (pl. U1A, 3, 11)
                     route_id = vehicle.trip.route_id 
                     
-                    # A jármű egyedi azonosítója (pl. rendszám)
+                    # Jármű azonosítója (pl. rendszám)
                     vehicle_label = vehicle.vehicle.label if vehicle.vehicle.HasField('label') else entity.id
 
                     buses.append({
@@ -58,12 +62,12 @@ def get_live_buses():
                         'label': vehicle_label,
                     })
 
-        # 4. JSON válasz küldése a frontendnek
         return jsonify(buses)
 
     except requests.exceptions.RequestException as e:
+        # Hibakezelés az API hívásnál (pl. időtúllépés, 403, 404)
         print(f"Hiba a GTFS-RT API hívásban: {e}")
-        return jsonify({"error": "Sikertelen adatlekérdezés a külső API-tól"}), 500
+        return jsonify({"error": "Sikertelen adatlekérdezés a külső API-tól"}), 503
     except Exception as e:
         print(f"Általános hiba az adatfeldolgozás során: {e}")
         return jsonify({"error": "Belső szerver hiba"}), 500
@@ -75,11 +79,11 @@ def index():
     """
     Betölti a fő térképoldalt a templates/index.html fájlból.
     """
+    # Flask automatikusan megkeresi a templates mappában
     return render_template('index.html')
 
+# Csak helyi fejlesztéshez, a Railway a Gunicorn-t használja!
 if __name__ == '__main__':
-    # A Railway-en a 'PORT' környezeti változót kell használni
     port = int(os.environ.get('PORT', 5000))
-    # A hostot '0.0.0.0'-ra kell állítani a távoli eléréshez (Railway, Docker)
+    # A hostot '0.0.0.0'-ra kell állítani Railway-en
     app.run(host='0.0.0.0', port=port, debug=True)
-
