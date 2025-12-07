@@ -1,4 +1,4 @@
-# main.py
+# main.py (JAVÍTOTT VÁLTOZAT - FIGYELD A get_live_buses FÜGGVÉNYT!)
 
 import os
 from flask import Flask, render_template, jsonify
@@ -8,14 +8,12 @@ from requests.exceptions import RequestException
 
 # --- KONFIGURÁCIÓ ---
 
-# A kód a kulcsot közvetlenül tartalmazza. 
-# Ha a Railway Variables fülén adtad meg, akkor használd az os.environ.get('API_KEY')-t!
-API_KEY = "9d2f6818e2723996467fedb958ba682aa9860a93" 
+# A kulcsot célszerű a Railway Variables fülén is beállítani (API_KEY)
+API_KEY = os.environ.get('API_KEY', "9d2f6818e2723996467fedb958ba682aa9860a93") 
 
 # Bluestar/Unilink Live Data Feed URL
 GTFS_RT_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key={API_KEY}"
 
-# A Procfile ezt a nevet használja (main:app)
 app = Flask(__name__, template_folder='templates')
 
 # --- ADAT FELDOLGOZÁS ---
@@ -23,65 +21,72 @@ app = Flask(__name__, template_folder='templates')
 @app.route('/api/live_buses', methods=['GET'])
 def get_live_buses():
     """
-    Lekérdezi és feldolgozza az élő GTFS-Realtime (Vehicle Positions) adatokat, 
-    és naplózza a hibákat a debugoláshoz.
+    Lekérdezi, feldolgozza és hibakezeli az élő GTFS-Realtime adatokat.
     """
     
     try:
         # 1. API Hívás
         response = requests.get(GTFS_RT_URL, timeout=15)
         
-        # DEBUG: Írjuk ki a státuszkódot a Railway Logokba!
+        # DEBUG: Státuszkód naplózása (ezt nézd a Railway logokban!)
         print(f"DEBUG: Külső API státuszkód: {response.status_code}")
         
-        # Ha a státuszkód 400 (Bad Request) vagy 500 (Server Error) feletti, hiba
-        response.raise_for_status() 
+        response.raise_for_status() # Hibát dob, ha 4xx/5xx
 
-        # 2. GTFS-Realtime Feed feldolgozása (Protocol Buffers)
+        # 2. GTFS-Realtime Feed feldolgozása
         feed = gtfs_realtime_pb2.FeedMessage()
         feed.ParseFromString(response.content)
 
         buses = []
         for entity in feed.entity:
-            if entity.HasField('vehicle'):
-                vehicle = entity.vehicle
+            # Csak azokat dolgozzuk fel, amelyek járműpozíciót tartalmaznak
+            if not entity.HasField('vehicle'):
+                continue
+            
+            vehicle = entity.vehicle
+            
+            # --- JAVÍTÁS: ROBUSZTUS ELLENŐRZÉS ---
+            # Kizárjuk azokat, amelyeknek nincs pozíciója (lat/lon) vagy vonalszáma (route_id)
+            if not vehicle.HasField('position') or not vehicle.position.HasField('latitude'):
+                continue
                 
-                if vehicle.HasField('position') and vehicle.trip.HasField('route_id'):
-                    
-                    lat = vehicle.position.latitude
-                    lon = vehicle.position.longitude
-                    route_id = vehicle.trip.route_id 
-                    vehicle_label = vehicle.vehicle.label if vehicle.vehicle.HasField('label') else entity.id
+            # Ezt a részt kell robusztussá tenni:
+            if not vehicle.HasField('trip') or not vehicle.trip.HasField('route_id'):
+                route_id = 'Ismeretlen'
+            else:
+                route_id = vehicle.trip.route_id
+            
+            # --- FELDOLGOZÁS ---
+            lat = vehicle.position.latitude
+            lon = vehicle.position.longitude
+            vehicle_label = vehicle.vehicle.label if vehicle.vehicle.HasField('label') else entity.id
 
-                    buses.append({
-                        'id': entity.id,
-                        'lat': lat,
-                        'lon': lon,
-                        'route': route_id,
-                        'label': vehicle_label,
-                    })
+            buses.append({
+                'id': entity.id,
+                'lat': lat,
+                'lon': lon,
+                'route': route_id,
+                'label': vehicle_label,
+            })
         
-        # 3. JSON válasz küldése a frontendnek
+        # 3. JSON válasz
         return jsonify(buses)
 
     except RequestException as e:
-        # PONTOSAN NAPLÓZZUK A KÜLSŐ API HIBÁJÁT (pl. 403 Forbidden)
-        print(f"KRITIKUS HIBA: Requests Exception (valószínűleg 403): {e}")
-        # A 403-as hiba esetén is egy értelmes JSON-t küldünk vissza
+        # HTTP hibák (pl. 403 Forbidden az API kulcs miatt)
+        print(f"KRITIKUS HIBA: Requests Exception: {e}")
         return jsonify({"error": f"Sikertelen adatlekérdezés (HTTP Hiba vagy API Kulcs hiba): {e}"}), 503
     
     except Exception as e:
-        # PONTOSAN NAPLÓZZUK A PYTHON/PARSING HIBAÜZENETÉT
+        # Általános hiba a feldolgozás során (pl. Protobuf Parsing hiba)
         print(f"KRITIKUS HIBA: Általános feldolgozási hiba: {e}")
-        return jsonify({"error": "Belső szerver hiba a feldolgozás során"}), 500
+        # Hiba visszaküldése a pontos Python hibaüzenettel
+        return jsonify({"error": f"Belső szerver hiba a feldolgozás során: {e}"}), 500
 
 # --- WEBOLDAL VÉGPONT ---
 
 @app.route('/')
 def index():
-    """
-    Betölti a fő térképoldalt a templates/index.html fájlból.
-    """
     return render_template('index.html')
 
 if __name__ == '__main__':
