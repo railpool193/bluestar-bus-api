@@ -1,4 +1,4 @@
-# main.py - SIRI XML (URL Explicit formátum kényszerítésével)
+# main.py - VÉGLEGES MEGOLDÁSI KÍSÉRLET: SIRI XML (URL Explicit formátum kényszerítéssel)
 
 import os
 from flask import Flask, render_template, jsonify
@@ -9,6 +9,7 @@ import traceback
 
 # --- KONFIGURÁCIÓ ---
 
+# API kulcs beolvasása a Railway környezeti változójából.
 API_KEY = os.environ.get("BODS_API_KEY", "9d2f6818e2723996467fedb958ba682aa9860a93") 
 
 # A VÉGLEGES URL: explicit módon hozzáadjuk a format=xml-t
@@ -24,21 +25,27 @@ NAMESPACES = {
 
 app = Flask(__name__, template_folder='templates')
 
+# --- ADAT FELDOLGOZÁS ---
+
 @app.route('/api/live_buses', methods=['GET'])
 def get_live_buses():
+    """
+    Lekérdezi és feldolgozza a SIRI XML formátumú buszadatokat.
+    """
+    
     headers = {
-        # Az Accept headert hagyjuk a helyén, de az URL-ben is kényszerítjük a formátumot
         'Accept': 'application/xml',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36'
     }
     
     try:
+        # 1. API Hívás
         response = requests.get(GTFS_RT_URL, headers=headers, timeout=15)
         
         print(f"DEBUG: Külső API státuszkód: {response.status_code}")
         response.raise_for_status() 
 
-        # XML feldolgozás
+        # 2. XML feldolgozás
         root = ET.fromstring(response.content)
         buses = []
         deliveries = root.findall('siri:ServiceDelivery/siri:VehicleMonitoringDelivery', NAMESPACES)
