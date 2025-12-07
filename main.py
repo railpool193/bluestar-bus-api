@@ -1,4 +1,4 @@
-# main.py (JAVÍTOTT VÁLTOZAT - FIGYELD A get_live_buses FÜGGVÉNYT!)
+# main.py
 
 import os
 from flask import Flask, render_template, jsonify
@@ -8,12 +8,13 @@ from requests.exceptions import RequestException
 
 # --- KONFIGURÁCIÓ ---
 
-# A kulcsot célszerű a Railway Variables fülén is beállítani (API_KEY)
-API_KEY = os.environ.get('API_KEY', "9d2f6818e2723996467fedb958ba682aa9860a93") 
+# API kulcs a kódból. Ha a Railway Variables fülön van, akkor az os.environ.get('API_KEY')-t használd!
+API_KEY = "9d2f6818e2723996467fedb958ba682aa9860a93" 
 
 # Bluestar/Unilink Live Data Feed URL
 GTFS_RT_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key={API_KEY}"
 
+# A Procfile által használt Flask alkalmazás neve
 app = Flask(__name__, template_folder='templates')
 
 # --- ADAT FELDOLGOZÁS ---
@@ -24,33 +25,35 @@ def get_live_buses():
     Lekérdezi, feldolgozza és hibakezeli az élő GTFS-Realtime adatokat.
     """
     
+    # Header a megfelelő Protobuf adatformátum kikényszerítésére
+    headers = {'Accept': 'application/x-protobuf'}
+    
     try:
-        # 1. API Hívás
-        response = requests.get(GTFS_RT_URL, timeout=15)
+        # 1. API Hívás (Headerrel)
+        response = requests.get(GTFS_RT_URL, headers=headers, timeout=15)
         
-        # DEBUG: Státuszkód naplózása (ezt nézd a Railway logokban!)
+        # DEBUG: Státuszkód naplózása a Railway Logokba
         print(f"DEBUG: Külső API státuszkód: {response.status_code}")
         
         response.raise_for_status() # Hibát dob, ha 4xx/5xx
 
         # 2. GTFS-Realtime Feed feldolgozása
         feed = gtfs_realtime_pb2.FeedMessage()
-        feed.ParseFromString(response.content)
+        feed.ParseFromString(response.content) # Ezen a ponton volt a hiba
 
         buses = []
         for entity in feed.entity:
-            # Csak azokat dolgozzuk fel, amelyek járműpozíciót tartalmaznak
+            # Csak a járműpozíciókat dolgozzuk fel
             if not entity.HasField('vehicle'):
                 continue
             
             vehicle = entity.vehicle
             
-            # --- JAVÍTÁS: ROBUSZTUS ELLENŐRZÉS ---
-            # Kizárjuk azokat, amelyeknek nincs pozíciója (lat/lon) vagy vonalszáma (route_id)
+            # Ellenőrizzük, hogy van-e pozíció (lat/lon)
             if not vehicle.HasField('position') or not vehicle.position.HasField('latitude'):
                 continue
                 
-            # Ezt a részt kell robusztussá tenni:
+            # Ellenőrizzük, hogy van-e útvonal (trip) és vonalazonosító (route_id)
             if not vehicle.HasField('trip') or not vehicle.trip.HasField('route_id'):
                 route_id = 'Ismeretlen'
             else:
@@ -69,18 +72,16 @@ def get_live_buses():
                 'label': vehicle_label,
             })
         
-        # 3. JSON válasz
         return jsonify(buses)
 
     except RequestException as e:
-        # HTTP hibák (pl. 403 Forbidden az API kulcs miatt)
-        print(f"KRITIKUS HIBA: Requests Exception: {e}")
+        # HTTP hibák (403, 401, Timeout)
+        print(f"KRITIKUS HIBA: Requests Exception (HTTP hiba): {e}")
         return jsonify({"error": f"Sikertelen adatlekérdezés (HTTP Hiba vagy API Kulcs hiba): {e}"}), 503
     
     except Exception as e:
-        # Általános hiba a feldolgozás során (pl. Protobuf Parsing hiba)
+        # Általános feldolgozási hiba (Protobuf parsing)
         print(f"KRITIKUS HIBA: Általános feldolgozási hiba: {e}")
-        # Hiba visszaküldése a pontos Python hibaüzenettel
         return jsonify({"error": f"Belső szerver hiba a feldolgozás során: {e}"}), 500
 
 # --- WEBOLDAL VÉGPONT ---
