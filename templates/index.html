@@ -1,11 +1,147 @@
-{% extends "base.html" %}{% block content %}
-<div class="h1">Járatok</div>
-<div class="grid">
-  {% for r in routes %}
-  <a class="route" href="/r/{{ r.route_id }}">
-    <div style="font-size:26px">{{ r.short_name }}</div>
-    <div class="tiny muted">{{ r.agency }}</div>
-  </a>
-  {% endfor %}
-</div>
-{% endblock %}
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bluestar & Unilink Live Tracker</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20n6a4jHW3P6T8m6tU6sXv2K3R5SDFn0JzE08C4I7F0="
+            crossorigin=""></script>
+
+    <style>
+        /* A térkép teljes képernyős megjelenítéséhez */
+        #map { 
+            height: 100vh; 
+            width: 100%;
+        }
+        body { margin: 0; padding: 0; }
+
+        /* Egyedi busz ikon stílusa (a vonalszámnak) */
+        .bus-icon {
+            background-color: #005A9C; /* Bluestar kék */
+            color: white;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            font-size: 14px;
+            border: 2px solid #fff;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+            /* Animáció hozzáadása a "pulzáló" hatáshoz */
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<script>
+    // --- 1. TÉRKÉP BEÁLLÍTÁSA ---
+    
+    // Kezdeti középpont (Southampton, UK)
+    const SOUTHAMPTON_CENTER = [50.9097, -1.4044]; 
+    const INITIAL_ZOOM = 13;
+
+    // Létrehozzuk a Leaflet térképet
+    const map = L.map('map').setView(SOUTHAMPTON_CENTER, INITIAL_ZOOM);
+
+    // Hozzáadjuk az OpenStreetMap csempéket (Tiles)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // Egy objektum a jelenlegi busz markerek tárolására
+    // Ez segít abban, hogy a frissítéskor ne hozzunk létre új markert, hanem csak frissítsük a pozíciót
+    let busMarkers = {}; 
+
+    // --- 2. JELZŐK KEZELÉSE ---
+
+    /**
+     * Egyedi HTML alapú ikont hoz létre a vonalszámmal
+     * @param {string} routeId - A busz vonalának azonosítója (pl. "U1A").
+     * @returns {L.DivIcon}
+     */
+    function createBusIcon(routeId) {
+        // A vonalszámot kiszedjük a GTFS-RT adatból (pl. "Bluestar-1" -> "1")
+        const cleanRoute = routeId.split('-').pop();
+
+        return L.divIcon({
+            className: 'bus-icon',
+            html: `<div>${cleanRoute}</div>`,
+            iconSize: [30, 30], // méret beállítása
+            iconAnchor: [15, 15] // a marker közepe legyen a koordinátán
+        });
+    }
+
+    /**
+     * Lekérdezi és frissíti az élő buszpozíciókat.
+     */
+    async function updateLiveBuses() {
+        try {
+            const response = await fetch('/api/live_buses');
+            const newBuses = await response.json();
+
+            // Egy ideiglenes halmaz az újonnan beolvasott busz ID-k tárolására
+            const newBusIds = new Set();
+
+            newBuses.forEach(bus => {
+                newBusIds.add(bus.id);
+                const latLng = [bus.lat, bus.lon];
+
+                if (bus.id in busMarkers) {
+                    // A busz már létezik: csak a pozíciót frissítjük
+                    busMarkers[bus.id].setLatLng(latLng);
+                } else {
+                    // Új busz érkezett: új markert hozunk létre
+                    const icon = createBusIcon(bus.route);
+                    const marker = L.marker(latLng, { icon: icon }).addTo(map);
+
+                    // Popup hozzáadása a kattintáshoz
+                    marker.bindPopup(`
+                        <b>Vonal: ${bus.route}</b><br>
+                        Jármű azonosító: ${bus.label}<br>
+                        Utolsó frissítés: ${new Date().toLocaleTimeString()}
+                    `);
+                    
+                    busMarkers[bus.id] = marker;
+                }
+            });
+
+            // Eltávolítjuk azokat a buszokat, amelyek már nem szerepelnek az élő adatban
+            Object.keys(busMarkers).forEach(busId => {
+                if (!newBusIds.has(busId)) {
+                    map.removeLayer(busMarkers[busId]);
+                    delete busMarkers[busId];
+                }
+            });
+
+        } catch (error) {
+            console.error('Hiba az élő buszadatok frissítésekor:', error);
+            // Felhasználó felé történő hibaüzenet megjelenítése opcionális
+        }
+    }
+
+    // --- 3. FRISSÍTÉS INDÍTÁSA ---
+    
+    // Először frissítjük, amint betöltött az oldal
+    updateLiveBuses();
+
+    // Rendszeres frissítés beállítása (10 másodpercenként)
+    setInterval(updateLiveBuses, 10000); 
+
+</script>
+
+</body>
+</html>
