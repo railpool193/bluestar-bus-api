@@ -2,3 +2,4 @@ Flask
 requests
 protobuf
 gunicorn
+uvicorn
