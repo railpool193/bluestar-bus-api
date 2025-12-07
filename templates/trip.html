@@ -1,71 +1,36 @@
-{% extends "base.html" %}
-{% block title %}Járat részletei • bluestar{% endblock %}
+{% extends "base.html" %}{% block content %}
+<div class="h1">Járat</div>
+<div class="muted">Trip: {{ trip.trip_id }}
+  {% if delay_txt %}<span class="badge live">{{ delay_txt }}</span>{% endif %}
+</div>
 
-{% block extra_head %}
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-{% endblock %}
+<div id="map" class="map"></div>
 
-{% block content %}
-  <div style="position:relative">
-    <h1 class="h1">Járat</h1>
-    {% if delay is not none %}
-      <div class="trip-meta">
-        {% if delay > 0 %}
-          <span class="badge badge-late">+{{ delay }} perc</span>
-        {% elif delay < 0 %}
-          <span class="badge badge-early">{{ delay }} perc</span>
-        {% else %}
-          <span class="badge">pontosan</span>
-        {% endif %}
-      </div>
-    {% endif %}
+<script>
+  // Best-effort polyline (csak megállópontokból)
+  const rows = {{ rows | tojson }};
+  const stops = {{ stops | tojson }};
+  const pts = [];
+  rows.forEach(r=>{
+    const s = stops[r.stop_id];
+    if (s && s.stop_lat && s.stop_lon) pts.push([parseFloat(s.stop_lat), parseFloat(s.stop_lon)]);
+  });
+  const map = L.map('map').setView(pts.length?pts[0]:[50.9,-1.4], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+  if (pts.length){
+    const line = L.polyline(pts).addTo(map);
+    L.featureGroup([line]).addTo(map);
+    map.fitBounds(line.getBounds().pad(0.2));
+  }
+</script>
+
+<h3>Következő megállók</h3>
+{% for r in rows %}
+  <div class="card">
+    <div class="row">
+      <div class="pill">{{ (r.departure_time or r.arrival_time)[:5] }}</div>
+      <div>{{ stops[r.stop_id].stop_name }}</div>
+    </div>
   </div>
-
-  <div id="map" class="map"></div>
-
-  <div class="list" style="margin-top:1rem">
-    {% for leg in legs %}
-      <div class="card row">
-        <div class="pill {% if leg.kind=='live' %}pill-live{% else %}pill-sched{% endif %} {% if leg.kind=='live' and leg.is_due %}blink{% endif %}">
-          {{ leg.time_str or '--:--' }}
-        </div>
-        <div class="row-main">
-          <div class="row-title" {% if leg.kind=='live' %}style="color:var(--live)"{% endif %}>
-            {{ leg.stop_name }}
-          </div>
-        </div>
-        <div class="row-tail muted">
-          {% if leg.minutes is not none %}
-            {% if leg.kind=='live' %}<span style="color:var(--live)">{{ leg.minutes }} perc</span>{% else %}{{ leg.minutes }} perc{% endif %}
-          {% endif %}
-        </div>
-      </div>
-    {% endfor %}
-  </div>
-{% endblock %}
-
-{% block extra_js %}
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script>
-    const pts  = {{ points|tojson }};
-    const live = {{ live|tojson }};
-    const map  = L.map('map', { scrollWheelZoom:true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
-
-    if (pts.length){
-      const poly = L.polyline(pts.map(p=>[p.lat,p.lon]), {weight:5}).addTo(map);
-      map.fitBounds(poly.getBounds().pad(0.2));
-    } else {
-      map.setView([50.9,-1.4], 12);
-    }
-    live.forEach(v=>{
-      const fleet = v.fleet || v.vehicle_ref || 'ismeretlen';
-      L.marker([v.lat, v.lon], {
-        icon: L.divIcon({
-          className:'live-pin',
-          html:`<div style="background:#0c0f14;border:2px solid #21c17a;color:#21c17a;border-radius:10px;padding:.1rem .3rem;font-weight:700">${v.line}</div>`
-        })
-      }).addTo(map).bindPopup(`<b>${v.line}</b> – ${v.dest || ''}<br/>Fleet: ${fleet}`);
-    });
-  </script>
+{% endfor %}
 {% endblock %}
