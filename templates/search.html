@@ -1,37 +1,18 @@
-{% extends "base.html" %}
-{% block title %}Keresés: "{{ q }}" • bluestar{% endblock %}
-{% block content %}
-  <h1 class="h1">Keresés: "{{ q }}"</h1>
+{% extends "base.html" %}{% block content %}
+<div class="h1">Keresés: "{{ q }}"</div>
 
-  <section class="section">
-    <h2 class="h2">Járatok</h2>
-    {% if routes|length == 0 %}
-      <div class="muted">Nincs találat.</div>
-    {% else %}
-      <div class="grid">
-        {% for r in routes %}
-          <a class="chip" href="/r/{{ r.route_id }}">
-            <span class="chip-main">{{ r.display }}</span>
-            <span class="chip-sub">{{ r.agency }}</span>
-          </a>
-        {% endfor %}
-      </div>
-    {% endif %}
-  </section>
+<h3>Járatok</h3>
+{% if not route_hits %}<div class="muted">Nincs találat.</div>{% endif %}
+<ul>
+  {% for r in route_hits %}
+  <li><a href="/r/{{ r.route_id }}">{{ r.short_name }}</a></li>
+  {% endfor %}
+</ul>
 
-  <section class="section">
-    <h2 class="h2">Megállók</h2>
-    {% if stops|length == 0 %}
-      <div class="muted">Nincs találat.</div>
-    {% else %}
-      <div class="list">
-        {% for s in stops %}
-          <div class="card row">
-            <div class="row-title">{{ s.stop_name }}</div>
-            <a class="btn" href="/stop/{{ s.stop_id }}">Megnyitás</a>
-          </div>
-        {% endfor %}
-      </div>
-    {% endif %}
-  </section>
+<h3>Megállók</h3>
+<ul>
+  {% for s in stop_hits %}
+  <li><a href="/stop/{{ s.stop_id }}">{{ s.name }}</a></li>
+  {% endfor %}
+</ul>
 {% endblock %}
