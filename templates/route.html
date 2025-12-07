@@ -1,48 +1,21 @@
-{% extends "base.html" %}
-{% block title %}Járat • {{ route.display_name }} • bluestar{% endblock %}
+{% extends "base.html" %}{% block content %}
+<div class="h1">Route <span class="badge">{{ route.route_short_name or route.route_id }}</span></div>
 
-{% block extra_head %}
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-{% endblock %}
+<h3>Élő járművek (Bluestar/Unilink)</h3>
+<div id="map" class="map"></div>
+<div class="tiny muted">Járművek: {{ veh_count }}</div>
 
-{% block content %}
-  <h1 class="h1">Route <span class="badge">{{ route.display_name }}</span></h1>
-
-  <h2 class="h3">Élő járművek (Bluestar/Unilink)</h2>
-  {% if live|length == 0 %}
-    <div class="muted">Jelenleg nincs élő jármű.</div>
-  {% else %}
-    <div id="map" class="map"></div>
-    <div class="muted" style="margin-top:.5rem">Járművek: {{ live|length }} db</div>
-  {% endif %}
-{% endblock %}
-
-{% block extra_js %}
-  {% if live|length > 0 %}
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script>
-    const live = {{ live|tojson }};
-    const map = L.map('map', { scrollWheelZoom: true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
-
-    const markers = [];
-    live.forEach(v => {
-      const m = L.marker([v.lat, v.lon], {
-        icon: L.divIcon({
-          className: 'live-pin',
-          html: `<div style="background:#0c0f14;border:2px solid #21c17a;color:#21c17a;border-radius:10px;padding:.1rem .3rem;font-weight:700">${v.line}</div>`
-        })
-      }).addTo(map);
-      const fleet = v.fleet || v.vehicle_ref || 'ismeretlen';
-      m.bindPopup(`<b>${v.line}</b> – ${v.dest || ''}<br/>Fleet: ${fleet}`);
-      markers.push(m);
-    });
-    if (markers.length){
-      const g = L.featureGroup(markers);
-      map.fitBounds(g.getBounds().pad(0.25));
-    } else {
-      map.setView([50.9,-1.4], 12);
-    }
-  </script>
-  {% endif %}
+<script>
+  const vehicles = {{ vehicles | tojson }};
+  const map = L.map('map').setView([50.9, -1.4], 11);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+  const group = L.featureGroup().addTo(map);
+  vehicles.forEach(v=>{
+    const m = L.marker([v.lat, v.lon]).addTo(group);
+    let txt = (v.headsign || "");
+    if (v.vehicle_ref) txt += "<br/><small>fleet: "+v.vehicle_ref+"</small>";
+    m.bindPopup(txt);
+  });
+  if (vehicles.length) map.fitBounds(group.getBounds().pad(0.2));
+</script>
 {% endblock %}
