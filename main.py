@@ -1,4 +1,4 @@
-# main.py - VÉGLEGES SIRI XML FELDOLGOZÁS (Környezeti változóval)
+# main.py - VÉGLEGES SIRI XML FELDOLGOZÁS (Tisztított kérés)
 
 import os
 from flask import Flask, render_template, jsonify
@@ -9,25 +9,20 @@ import traceback
 
 # --- KONFIGURÁCIÓ ---
 
-# API kulcs beolvasása a Railway környezeti változójából (SIRI_API_KEY vagy BODS_API_KEY)
-# Használjuk a BODS_API_KEY változót, ahogy a képeden is látható volt.
-# Ha nem találja a környezeti változót, a kód használja a keményen kódolt értéket.
-API_KEY = os.environ.get("BODS_API_KEY") 
-if not API_KEY:
-    # Visszatérés a korábbi, manuálisan megadott kulcsra, ha a környezeti változó nem létezik
-    API_KEY = "9d2f6818e2723996467fedb958ba682aa9860a93" 
+# API kulcs beolvasása a Railway környezeti változójából
+# Megjegyzés: Ha a Railway-en BODS_API_KEY néven állítottad be, az felülírja a hardkódolt értéket.
+API_KEY = os.environ.get("BODS_API_KEY", "9d2f6818e2723996467fedb958ba682aa9860a93") 
 
 # Bluestar/Unilink Live Data Feed URL
 GTFS_RT_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key={API_KEY}"
 
-# SIRI XML névtér (elengedhetetlen az XML elemek helyes megtalálásához)
+# SIRI XML névtér
 NAMESPACES = {
     'siri': 'http://www.siri.org.uk/siri',
     'datex': 'http://www.datex.org.uk/schema/1.0/datex',
     'xsi': 'http://www.w3.org/2001/XMLSchema-instance'
 }
 
-# A Procfile által használt Flask alkalmazás neve
 app = Flask(__name__, template_folder='templates')
 
 # --- ADAT FELDOLGOZÁS ---
@@ -35,12 +30,13 @@ app = Flask(__name__, template_folder='templates')
 @app.route('/api/live_buses', methods=['GET'])
 def get_live_buses():
     """
-    Lekérdezi és feldolgozza a SIRI XML formátumú buszadatokat.
+    Lekérdezi és feldolgozza a SIRI XML formátumú buszadatokat a legtisztább HTTP kéréssel.
     """
     
-    # Kérés fejlécei (Headers). Csak XML formátumot fogadunk el.
+    # A legtisztább kérés XML formátumra, a 406-os hiba elkerülésére
     headers = {
-        'Accept': 'application/xml', 
+        'Accept': 'application/xml', # Csak XML-t fogadunk el
+        # Eltávolítottuk a User-Agent-et és más fejléceket, hogy a kérés a lehető legkevésbé legyen gyanús
     }
     
     try:
@@ -52,22 +48,15 @@ def get_live_buses():
 
         # 2. SIRI XML feldolgozása
         root = ET.fromstring(response.content)
-        
         buses = []
-        
-        # XML útvonalak a VehicleMonitoringDelivery-hez
         deliveries = root.findall('siri:ServiceDelivery/siri:VehicleMonitoringDelivery', NAMESPACES)
         
         for delivery in deliveries:
-            # Megkeressük az összes MonitoredVehicleJourney elemet
             journeys = delivery.findall('siri:VehicleActivity/siri:MonitoredVehicleJourney', NAMESPACES)
             
             for journey in journeys:
-                # Útvonal (LineRef)
                 route_element = journey.find('siri:LineRef', NAMESPACES)
                 route_id = route_element.text if route_element is not None else 'Ismeretlen'
-                
-                # Jármű pozíció
                 location_element = journey.find('siri:VehicleLocation', NAMESPACES)
                 
                 if location_element is not None:
@@ -78,32 +67,28 @@ def get_live_buses():
                         try:
                             lat = float(lat_element.text)
                             lon = float(lon_element.text)
-                            
-                            # Jármű azonosító
                             vehicle_ref_element = journey.find('siri:VehicleRef', NAMESPACES)
                             vehicle_id = vehicle_ref_element.text if vehicle_ref_element is not None else 'N/A'
 
-                            # A buszok listájához adás
                             buses.append({
                                 'id': vehicle_id,
                                 'lat': lat,
                                 'lon': lon,
                                 'route': route_id,
-                                'label': route_id, # Címkeként használjuk az útvonalat
+                                'label': route_id,
                             })
-                        except (ValueError, TypeError) as e:
-                            print(f"HIBA: Érvénytelen Lat/Lon érték a busznál: {e}")
-                            continue
+                        except (ValueError, TypeError):
+                            continue # Kihagyjuk az érvénytelen pozíciójú buszt
         
         return jsonify(buses)
 
     except RequestException as e:
-        # HTTP hiba (406, 403, 401, Timeout)
+        # HTTP hiba (406, 403, 401)
         print(f"KRITIKUS HIBA: Requests Exception (HTTP Hiba): {e}")
         return jsonify({"error": f"Sikertelen adatlekérdezés (HTTP Hiba): {e}"}), 503
     
     except ET.ParseError as e:
-        # XML feldolgozási hiba (ha nem valid XML jön vissza)
+        # XML dekódolási hiba
         print(f"KRITIKUS HIBA: XML Parse hiba: {e}")
         return jsonify({"error": f"XML dekódolási hiba: {e}"}), 500
         
