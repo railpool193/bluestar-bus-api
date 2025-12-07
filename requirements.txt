@@ -1,5 +1,5 @@
 Flask
 requests
-protobuf
 gunicorn
-gtfs-realtime-bindings
+gtfs-realtime-bindings==1.0.1
+protobuf==3.20.0
