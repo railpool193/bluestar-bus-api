@@ -1,9 +1,9 @@
-# main.py - VÉGLEGES KÓD (Hibakezeléssel)
+# main.py - VÉGLEGES SIRI XML FELDOLGOZÁS
 
 import os
 from flask import Flask, render_template, jsonify
 import requests
-from google.transit import gtfs_realtime_pb2
+import xml.etree.ElementTree as ET
 from requests.exceptions import RequestException
 import traceback
 
@@ -12,8 +12,15 @@ import traceback
 # Az API kulcsod
 API_KEY = "9d2f6818e2723996467fedb958ba682aa9860a93" 
 
-# Bluestar/Unilink Live Data Feed URL
+# Bluestar/Unilink Live Data Feed URL (ugyanaz)
 GTFS_RT_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key={API_KEY}"
+
+# SIRI XML névtér (elengedhetetlen az XML elemek helyes megtalálásához)
+NAMESPACES = {
+    'siri': 'http://www.siri.org.uk/siri',
+    'datex': 'http://www.datex.org.uk/schema/1.0/datex',
+    'xsi': 'http://www.w3.org/2001/XMLSchema-instance'
+}
 
 # A Procfile által használt Flask alkalmazás neve
 app = Flask(__name__, template_folder='templates')
@@ -23,86 +30,84 @@ app = Flask(__name__, template_folder='templates')
 @app.route('/api/live_buses', methods=['GET'])
 def get_live_buses():
     """
-    Lekérdezi, feldolgozza és hibakezeli az élő GTFS-Realtime adatokat.
-    Kényszeríti a Protobuf formátumot a header használatával.
+    Lekérdezi és feldolgozza a SIRI XML formátumú buszadatokat.
     """
     
-    # Kényszerítjük a DFT szervert, hogy BINÁRIS GTFS-RT Protobuf-ot küldjön XML (SIRI) helyett.
+    # Nem kényszerítünk Protobuf headert, elvárjuk az XML-t (406-os hiba elkerülése)
     headers = {
-        # Két Accept-et adunk meg a bináris formátumhoz
-        'Accept': 'application/x-protobuf, application/octet-stream', 
-        # User-Agent hozzáadása a 406-os hiba elkerülésére
-        'User-Agent': 'Custom Python Bus Tracker Script' 
+        'Accept': 'application/xml', # XML formátum elfogadása
+        'User-Agent': 'Custom Python SIRI XML Script' 
     }
     
     try:
         # 1. API Hívás
         response = requests.get(GTFS_RT_URL, headers=headers, timeout=15)
         
-        # DEBUG: Státuszkód naplózása a Railway Logokba
         print(f"DEBUG: Külső API státuszkód: {response.status_code}")
-        
-        # Ha a státuszkód 400-as vagy 500-as, azonnal HTTP hibaüzenetet küldünk vissza.
         response.raise_for_status() 
 
-        # 2. GTFS-Realtime Feed feldolgozása
-        feed = gtfs_realtime_pb2.FeedMessage()
+        # 2. SIRI XML feldolgozása
+        root = ET.fromstring(response.content)
         
-        # Próbáljuk dekódolni a bináris adatot
-        feed.ParseFromString(response.content) 
-
         buses = []
-        for entity in feed.entity:
-            # ... (A robusztus adatfeldolgozás kódja) ...
-            if not entity.HasField('vehicle'):
-                continue
+        
+        # XML útvonalak a VehicleMonitoringDelivery-hez
+        deliveries = root.findall('siri:ServiceDelivery/siri:VehicleMonitoringDelivery', NAMESPACES)
+        
+        for delivery in deliveries:
+            # Megkeressük az összes MonitoredVehicleJourney elemet
+            journeys = delivery.findall('siri:VehicleActivity/siri:MonitoredVehicleJourney', NAMESPACES)
             
-            vehicle = entity.vehicle
-            
-            if not vehicle.HasField('position') or not vehicle.position.HasField('latitude'):
-                continue
+            for journey in journeys:
+                # Útvonal (LineRef)
+                route_element = journey.find('siri:LineRef', NAMESPACES)
+                route_id = route_element.text if route_element is not None else 'Ismeretlen'
                 
-            if not vehicle.HasField('trip') or not vehicle.trip.HasField('route_id'):
-                route_id = 'Ismeretlen'
-            else:
-                route_id = vehicle.trip.route_id
-            
-            lat = vehicle.position.latitude
-            lon = vehicle.position.longitude
-            vehicle_label = vehicle.vehicle.label if vehicle.vehicle.HasField('label') else entity.id
+                # Jármű pozíció
+                location_element = journey.find('siri:VehicleLocation', NAMESPACES)
+                
+                if location_element is not None:
+                    lat_element = location_element.find('siri:Latitude', NAMESPACES)
+                    lon_element = location_element.find('siri:Longitude', NAMESPACES)
+                    
+                    if lat_element is not None and lon_element is not None:
+                        try:
+                            lat = float(lat_element.text)
+                            lon = float(lon_element.text)
+                            
+                            # Jármű azonosító (VehicleRef/VehicleUniqueId)
+                            vehicle_ref_element = journey.find('siri:VehicleRef', NAMESPACES)
+                            vehicle_id = vehicle_ref_element.text if vehicle_ref_element is not None else 'N/A'
 
-            buses.append({
-                'id': entity.id,
-                'lat': lat,
-                'lon': lon,
-                'route': route_id,
-                'label': vehicle_label,
-            })
+                            # A buszok listájához adás
+                            buses.append({
+                                'id': vehicle_id,
+                                'lat': lat,
+                                'lon': lon,
+                                'route': route_id,
+                                'label': route_id, # Címkeként használjuk az útvonalat
+                            })
+                        except (ValueError, TypeError) as e:
+                            print(f"HIBA: Érvénytelen Lat/Lon érték a busznál: {e}")
+                            continue
         
         return jsonify(buses)
 
     except RequestException as e:
-        # HTTP hiba: Itt kapjuk el a 406 Not Acceptable hibát!
+        # HTTP hiba (404, 500, Timeout)
         print(f"KRITIKUS HIBA: Requests Exception (HTTP Hiba): {e}")
         return jsonify({"error": f"Sikertelen adatlekérdezés (HTTP Hiba vagy API Kulcs hiba): {e}"}), 503
     
-    except Exception as e:
-        # Általános feldolgozási hiba (Protobuf parsing)
-        # Itt fut be az "Error parsing message" hiba, ha XML-t kapunk
-        print(f"KRITIKUS HIBA: Általános feldolgozási hiba: {e}")
-        # Nyomkövetés kiírása a logokba (nagyon hasznos)
-        traceback.print_exc() 
+    except ET.ParseError as e:
+        # XML feldolgozási hiba (ha nem valid XML jön vissza)
+        print(f"KRITIKUS HIBA: XML Parse hiba: {e}")
+        return jsonify({"error": f"XML dekódolási hiba: {e}"}), 500
         
-        # Ha a dekódolás hiba fut be, a kapott adat első 100 karakterét visszaküldjük a debugoláshoz
-        try:
-            sample_content = response.text[:100] if response.content else "Nincs tartalom."
-        except:
-            sample_content = "Tartalom nem olvasható."
-            
-        return jsonify({
-            "error": f"Belső szerver hiba a feldolgozás során: {e}",
-            "debug_info": f"A kapott adatok eleje: {sample_content}"
-        }), 500
+    except Exception as e:
+        # Általános szerverhiba
+        print(f"KRITIKUS HIBA: Általános szerverhiba: {e}")
+        traceback.print_exc() 
+        return jsonify({"error": f"Belső szerver hiba: {e}"}), 500
 
 # --- WEBOLDAL VÉGPONT ---
 
