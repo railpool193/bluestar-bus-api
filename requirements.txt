@@ -2,5 +2,4 @@ Flask
 requests
 protobuf
 gunicorn
-uvicorn
 gtfs-realtime-bindings
