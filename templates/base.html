@@ -3,33 +3,41 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>{% block title %}bluestar{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css" />
-  {% block extra_head %}{% endblock %}
+  <title>bluestar</title>
+  <style>
+    :root{--bg:#0b0f16;--card:#141b26;--muted:#98a2b3;--text:#e5e7eb;--brand:#6ea8fe;--ok:#22c55e;}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+    a{color:var(--brand);text-decoration:none} a:hover{text-decoration:underline}
+    .wrap{max-width:960px;margin:0 auto;padding:16px}
+    header{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:16px}
+    .logo{font-weight:700} .muted{color:var(--muted)}
+    input[type=text]{background:#0e1420;border:1px solid #263043;border-radius:10px;color:var(--text);padding:8px 10px;min-width:240px}
+    .h1{font-size:44px;font-weight:800;margin:14px 0 6px}
+    .card{background:var(--card);border-radius:16px;padding:14px 16px;margin:10px 0;display:flex;justify-content:space-between;align-items:center}
+    .pill{background:#0e1420;border-radius:14px;padding:8px 12px;min-width:64px;text-align:center;font-weight:700}
+    .row{display:flex;gap:12px;align-items:center}
+    .live{color:var(--ok)}
+    .due{color:#16a34a;animation:pulse 1s infinite}
+    @keyframes pulse{0%{opacity:1}50%{opacity:.3}100%{opacity:1}}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+    .route{background:var(--card);border-radius:16px;padding:14px 16px;font-weight:800}
+    .tiny{font-size:12px}
+    .badge{display:inline-block;background:#0e1420;border:1px solid #263043;border-radius:10px;padding:4px 8px;margin-left:8px}
+    .map{height:360px;border-radius:18px;overflow:hidden;margin:10px 0;background:#0e1420}
+  </style>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
-<body class="app">
-  <header class="topbar">
-    <a class="brand" href="/">★ bluestar</a>
-    <form class="search" action="/search" method="get" role="search">
-      <input name="q" placeholder="Keresés: járat vagy megálló" value="{{ request.query_params.get('q','') }}" />
-    </form>
-    <div class="clock">UK: <span id="ukclock">--:--:--</span></div>
-  </header>
-
-  <main class="container">
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo"><a href="/">★ bluestar</a></div>
+      <form action="/search" method="get">
+        <input name="q" type="text" placeholder="Keresés: járat vagy megálló" value="{{ request.query_params.get('q','') }}">
+      </form>
+      <div class="muted">UK: {{ now_uk.strftime("%H:%M:%S") }}</div>
+    </header>
     {% block content %}{% endblock %}
-  </main>
-
-  <script>
-    // egyszerű UK óra
-    function tickUK() {
-      try {
-        const s = new Date().toLocaleTimeString('hu-HU', { timeZone: 'Europe/London', hour12: false });
-        document.getElementById('ukclock').textContent = s;
-      } catch(e) {}
-    }
-    tickUK(); setInterval(tickUK, 1000);
-  </script>
-  {% block extra_js %}{% endblock %}
+  </div>
 </body>
 </html>
