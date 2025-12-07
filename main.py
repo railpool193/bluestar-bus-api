@@ -1,4 +1,4 @@
-# main.py - VÉGLEGES SIRI XML FELDOLGOZÁS (Tisztított kérés)
+# main.py - SIRI XML (URL Explicit formátum kényszerítésével)
 
 import os
 from flask import Flask, render_template, jsonify
@@ -9,12 +9,11 @@ import traceback
 
 # --- KONFIGURÁCIÓ ---
 
-# API kulcs beolvasása a Railway környezeti változójából
-# Megjegyzés: Ha a Railway-en BODS_API_KEY néven állítottad be, az felülírja a hardkódolt értéket.
 API_KEY = os.environ.get("BODS_API_KEY", "9d2f6818e2723996467fedb958ba682aa9860a93") 
 
-# Bluestar/Unilink Live Data Feed URL
-GTFS_RT_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key={API_KEY}"
+# A VÉGLEGES URL: explicit módon hozzáadjuk a format=xml-t
+# Ez a legbiztosabb módja annak, hogy XML-t kérjünk, ha a szerver támogatja.
+GTFS_RT_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key={API_KEY}&format=xml" 
 
 # SIRI XML névtér
 NAMESPACES = {
@@ -25,28 +24,21 @@ NAMESPACES = {
 
 app = Flask(__name__, template_folder='templates')
 
-# --- ADAT FELDOLGOZÁS ---
-
 @app.route('/api/live_buses', methods=['GET'])
 def get_live_buses():
-    """
-    Lekérdezi és feldolgozza a SIRI XML formátumú buszadatokat a legtisztább HTTP kéréssel.
-    """
-    
-    # A legtisztább kérés XML formátumra, a 406-os hiba elkerülésére
     headers = {
-        'Accept': 'application/xml', # Csak XML-t fogadunk el
-        # Eltávolítottuk a User-Agent-et és más fejléceket, hogy a kérés a lehető legkevésbé legyen gyanús
+        # Az Accept headert hagyjuk a helyén, de az URL-ben is kényszerítjük a formátumot
+        'Accept': 'application/xml',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36'
     }
     
     try:
-        # 1. API Hívás
         response = requests.get(GTFS_RT_URL, headers=headers, timeout=15)
         
         print(f"DEBUG: Külső API státuszkód: {response.status_code}")
-        response.raise_for_status() # HTTP hibákat (pl. 406) elkapja
+        response.raise_for_status() 
 
-        # 2. SIRI XML feldolgozása
+        # XML feldolgozás
         root = ET.fromstring(response.content)
         buses = []
         deliveries = root.findall('siri:ServiceDelivery/siri:VehicleMonitoringDelivery', NAMESPACES)
@@ -78,27 +70,22 @@ def get_live_buses():
                                 'label': route_id,
                             })
                         except (ValueError, TypeError):
-                            continue # Kihagyjuk az érvénytelen pozíciójú buszt
+                            continue 
         
         return jsonify(buses)
 
     except RequestException as e:
-        # HTTP hiba (406, 403, 401)
         print(f"KRITIKUS HIBA: Requests Exception (HTTP Hiba): {e}")
         return jsonify({"error": f"Sikertelen adatlekérdezés (HTTP Hiba): {e}"}), 503
     
     except ET.ParseError as e:
-        # XML dekódolási hiba
         print(f"KRITIKUS HIBA: XML Parse hiba: {e}")
         return jsonify({"error": f"XML dekódolási hiba: {e}"}), 500
         
     except Exception as e:
-        # Általános szerverhiba
         print(f"KRITIKUS HIBA: Általános szerverhiba: {e}")
         traceback.print_exc() 
         return jsonify({"error": f"Belső szerver hiba: {e}"}), 500
-
-# --- WEBOLDAL VÉGPONT ---
 
 @app.route('/')
 def index():
