@@ -1,4 +1,4 @@
-# main.py - VÉGLEGES SIRI XML FELDOLGOZÁS
+# main.py - VÉGLEGES SIRI XML FELDOLGOZÁS (Környezeti változóval)
 
 import os
 from flask import Flask, render_template, jsonify
@@ -9,10 +9,15 @@ import traceback
 
 # --- KONFIGURÁCIÓ ---
 
-# Az API kulcsod
-API_KEY = "9d2f6818e2723996467fedb958ba682aa9860a93" 
+# API kulcs beolvasása a Railway környezeti változójából (SIRI_API_KEY vagy BODS_API_KEY)
+# Használjuk a BODS_API_KEY változót, ahogy a képeden is látható volt.
+# Ha nem találja a környezeti változót, a kód használja a keményen kódolt értéket.
+API_KEY = os.environ.get("BODS_API_KEY") 
+if not API_KEY:
+    # Visszatérés a korábbi, manuálisan megadott kulcsra, ha a környezeti változó nem létezik
+    API_KEY = "9d2f6818e2723996467fedb958ba682aa9860a93" 
 
-# Bluestar/Unilink Live Data Feed URL (ugyanaz)
+# Bluestar/Unilink Live Data Feed URL
 GTFS_RT_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key={API_KEY}"
 
 # SIRI XML névtér (elengedhetetlen az XML elemek helyes megtalálásához)
@@ -33,10 +38,9 @@ def get_live_buses():
     Lekérdezi és feldolgozza a SIRI XML formátumú buszadatokat.
     """
     
-    # Nem kényszerítünk Protobuf headert, elvárjuk az XML-t (406-os hiba elkerülése)
+    # Kérés fejlécei (Headers). Csak XML formátumot fogadunk el.
     headers = {
-        'Accept': 'application/xml', # XML formátum elfogadása
-        'User-Agent': 'Custom Python SIRI XML Script' 
+        'Accept': 'application/xml', 
     }
     
     try:
@@ -44,7 +48,7 @@ def get_live_buses():
         response = requests.get(GTFS_RT_URL, headers=headers, timeout=15)
         
         print(f"DEBUG: Külső API státuszkód: {response.status_code}")
-        response.raise_for_status() 
+        response.raise_for_status() # HTTP hibákat (pl. 406) elkapja
 
         # 2. SIRI XML feldolgozása
         root = ET.fromstring(response.content)
@@ -75,7 +79,7 @@ def get_live_buses():
                             lat = float(lat_element.text)
                             lon = float(lon_element.text)
                             
-                            # Jármű azonosító (VehicleRef/VehicleUniqueId)
+                            # Jármű azonosító
                             vehicle_ref_element = journey.find('siri:VehicleRef', NAMESPACES)
                             vehicle_id = vehicle_ref_element.text if vehicle_ref_element is not None else 'N/A'
 
@@ -94,9 +98,9 @@ def get_live_buses():
         return jsonify(buses)
 
     except RequestException as e:
-        # HTTP hiba (404, 500, Timeout)
+        # HTTP hiba (406, 403, 401, Timeout)
         print(f"KRITIKUS HIBA: Requests Exception (HTTP Hiba): {e}")
-        return jsonify({"error": f"Sikertelen adatlekérdezés (HTTP Hiba vagy API Kulcs hiba): {e}"}), 503
+        return jsonify({"error": f"Sikertelen adatlekérdezés (HTTP Hiba): {e}"}), 503
     
     except ET.ParseError as e:
         # XML feldolgozási hiba (ha nem valid XML jön vissza)
