@@ -31,7 +31,7 @@ SIRI_NAMESPACES = {
 # ------------------------- Alapbeállítások -------------------------
 DATA_DIR = os.getenv("DATA_DIR", "gtfs")
 UK_TZ = pytz.timezone("Europe/London")
-ALLOWED_OPERATORS = {"blus", "unil"}  # Bluestar / Unilink
+ALLOWED_OPERATORS = {"blus", "unil"}
 
 def now_uk():
     return datetime.now(UK_TZ)
@@ -85,7 +85,6 @@ def _guess_url(kind: str) -> str:
 
 def _build_extra_headers() -> dict:
     h = {}
-    # tipikus kulcsok (amelyeket a felhasználó beállított)
     if os.getenv("SIRI_KEY_HEADER") and os.getenv("SIRI_KEY_VALUE"):
         h[os.getenv("SIRI_KEY_HEADER")] = os.getenv("SIRI_KEY_VALUE")
     if os.getenv("SIRI_HEADER_NAME") and os.getenv("SIRI_HEADER_VALUE"):
@@ -95,7 +94,6 @@ def _build_extra_headers() -> dict:
     if os.getenv("X_API_KEY"):
         h["X-API-Key"] = os.getenv("X-API-Key")
     
-    # Hozzáadjuk a kulcsot az URL-hez, és beállítjuk az Accept fejlécet XML-re (406 hiba elkerülése)
     h['Accept'] = 'application/xml'
     h['User-Agent'] = 'Mozilla/5.0 (Custom Python Script)' 
     
@@ -117,7 +115,6 @@ def _format_vm_url(line_ref: str):
     u = SIRI_VM_URL_RAW or ""
     if not u:
         return "", {}
-    # A korábban látott URL-hez hasonlóan, hozzáadjuk az explicit XML formátumot
     u = u + ("&format=xml" if '?' in u else "?format=xml") 
     
     if "{line_ref}" in u:
@@ -128,7 +125,6 @@ def _format_sm_url(stop_id: str):
     u = SIRI_SM_URL_RAW or ""
     if not u:
         return "", {}
-    # A korábban látott URL-hez hasonlóan, hozzáadjuk az explicit XML formátumot
     u = u + ("&format=xml" if '?' in u else "?format=xml") 
 
     if "{stop_id}" in u:
@@ -137,11 +133,8 @@ def _format_sm_url(stop_id: str):
 
 
 # ------------------------- Beépített sablonok -------------------------
-# A sablonok kódja helytakarékossági okokból elhagyva, de a teljes kódban benne kell lennie.
 from jinja2 import Environment, BaseLoader, select_autoescape
 JINJA_FALLBACK = Environment(loader=BaseLoader(), autoescape=select_autoescape(["html","xml"]))
-
-# ... (STYLE, TPL_INDEX, TPL_SEARCH, TPL_STOP, TPL_ROUTE változók kódja itt folytatódna) ...
 
 STYLE = """
 <style>
@@ -276,32 +269,46 @@ TPL_ROUTE = """
 """
 
 USE_EXTERNAL = os.getenv("USE_EXTERNAL_TEMPLATES", "").strip() == "1"
-# Jinja2Templates importálása, ha szükséges
 if USE_EXTERNAL:
     try:
         from fastapi.templating import Jinja2Templates
         templates = Jinja2Templates(directory="templates")
     except ImportError:
-        # Fallback, ha a sablonok nincsenek telepítve
         templates = None
 else:
     templates = None
 
+# KRITIKUS JAVÍTÁS: Explicit biztonsági ellenőrzés a bytes objektumokra a sablon előtt
 def render_with_fallback(template_name: str, context: dict) -> HTMLResponse:
     if USE_EXTERNAL and templates:
         return templates.TemplateResponse(template_name, context)
+
+    # Biztonsági tisztítás: Minden 'bytes' objektumot dekódolunk szöveggé,
+    # elkerülve az 'AttributeError: 'bytes' object has no attribute 'find'' hibát
+    safe_ctx = {}
+    for k, v in context.items():
+        if isinstance(v, bytes):
+            # Ha bytes, dekódoljuk utf-8-ra, vagy stringre konvertáljuk
+            try:
+                safe_ctx[k] = v.decode('utf-8', errors='ignore')
+            except:
+                safe_ctx[k] = str(v)
+        elif k != "request":
+            # Minden más, ami nem 'request' (FastAPI objektum)
+            safe_ctx[k] = v
+
     src = {
         "index.html": TPL_INDEX,
         "search.html": TPL_SEARCH,
         "stop.html": TPL_STOP,
         "route.html": TPL_ROUTE,
     }.get(template_name, "<h1>Template not found</h1>")
+    
     tpl = JINJA_FALLBACK.from_string(src)
-    safe_ctx = {k: v for k, v in context.items() if k != "request"}
     return HTMLResponse(tpl.render(**safe_ctx))
 
 
-# ------------------------- GTFS betöltés (a kód változatlan) -------------------------
+# ------------------------- GTFS betöltés (változatlan) -------------------------
 routes = []; stops = []; trips = []; stop_times = []
 routes_by_id = {}; routes_by_short = defaultdict(list)
 stops_by_id = {}; stops_by_code = {}
@@ -355,9 +362,9 @@ def load_gtfs():
         arr.sort(key=lambda x: gtfs_sec(x.get("departure_time") or x.get("arrival_time") or ""))
 
 
-# ------------------------- Live hívások (JAVÍTOTT: UTF-8 Dekódolás hozzáadva) -------------------------
+# ------------------------- Live hívások (XML dekódolással) -------------------------
 LIVE_CACHE = {}
-LIVE_TTL = 20  # másodperc
+LIVE_TTL = 20
 
 def cache_get(k):
     v = LIVE_CACHE.get(k)
@@ -375,15 +382,14 @@ async def http_get_xml(url, params=None) -> bytes:
         return b""
     try:
         all_headers = EXTRA_HEADERS.copy()
-        # Tisztítjuk a paramétereket, mert a DFT API a query stringben várja
         if params and "LineRef" in params: del params["LineRef"] 
         if params and "MonitoringRef" in params: del params["MonitoringRef"]
         if params and "MaximumStopVisits" in params: del params["MaximumStopVisits"]
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(url, params=params or {}, headers=all_headers)
-            r.raise_for_status() # HTTP hibákat itt elkapjuk (pl. 406)
-            return r.content # Visszaadjuk a nyers XML tartalmat (bytes)
+            r.raise_for_status()
+            return r.content
     except httpx.HTTPStatusError as e:
         log.warning("live request failed (HTTP Error: %s) for URL: %s", e.response.status_code, url)
         return b""
@@ -391,8 +397,6 @@ async def http_get_xml(url, params=None) -> bytes:
         log.warning("live request failed (General): %s", e)
         return b""
 
-
-# ÚJ DEBUG FUNKCIÓ (változatlan)
 async def http_get_raw_debug(url, params=None):
     """Aszinkron HTTP GET kérés Nyers válaszra a hibakereséshez."""
     if not url or httpx is None:
@@ -412,7 +416,7 @@ async def http_get_raw_debug(url, params=None):
                 "status": r.status_code,
                 "url": str(r.url),
                 "headers": dict(r.headers),
-                "content": r.text, # szöveges tartalom
+                "content": r.text,
             }
     except httpx.RequestError as e:
         return {"status": 0, "content": f"Request Error: {type(e).__name__} - {e}"}
@@ -453,11 +457,9 @@ async def fetch_live_vm(route_short: str):
             xml_text = xml_content.decode('utf-8')
             root = ET.fromstring(xml_text)
             
-            # SIRI XML feldolgozása a Vehicle Monitoring Delivery-ben
             deliveries = root.findall('siri:ServiceDelivery/siri:VehicleMonitoringDelivery', SIRI_NAMESPACES)
             
             for d in deliveries:
-                # Vehicle Activity keresése
                 for a in d.findall('siri:VehicleActivity', SIRI_NAMESPACES):
                     j = a.find('siri:MonitoredVehicleJourney', SIRI_NAMESPACES)
                     if j is None: continue
@@ -556,7 +558,7 @@ async def fetch_live_sm(stop_code_or_id: str):
                     exp = call.find('siri:ExpectedDepartureTime', SIRI_NAMESPACES)
                     
                     aimed_str = aimed.text.strip() if aimed is not None else ""
-                    exp_str = exp.text.strip() if exp is not None else aimed_str # Ha nincs exp, akkor aimed
+                    exp_str = exp.text.strip() if exp is not None else aimed_str
                     
                     dep_dt = _parse_iso(exp_str)
                     delay_text = ""
@@ -571,7 +573,6 @@ async def fetch_live_sm(stop_code_or_id: str):
                                 
                     is_due = bool(dep_dt and abs((now_uk() - dep_dt).total_seconds()) < 60)
                     
-                    # Megpróbáljuk beolvasni a DatedVehicleJourneyRef-et
                     trip_id_str = ""
                     if trip_ref_e is not None:
                          dated_ref = trip_ref_e.find('siri:DatedVehicleJourneyRef', SIRI_NAMESPACES)
