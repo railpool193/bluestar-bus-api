@@ -136,7 +136,7 @@ def _format_sm_url(stop_id: str):
 from jinja2 import Environment, BaseLoader, select_autoescape
 JINJA_FALLBACK = Environment(loader=BaseLoader(), autoescape=select_autoescape(["html","xml"]))
 
-# --- Sablonok és Stílusok kihagyva a kód tömörségéért, de a teljes fájlban benne vannak. ---
+# Stílus definíciója (a teljesség kedvéért benne van)
 STYLE = """
 <style>
 :root{--bg:#0f172a;--card:#111827;--muted:#94a3b8;--txt:#e5e7eb;--live:#10b981;--due:#22c55e;--link:#60a5fa;}
@@ -270,8 +270,9 @@ TPL_ROUTE = """
 """
 
 # KRITIKUS JAVÍTÁS: Kézzel felülírjuk a külső sablonok használatát
-USE_EXTERNAL = False # EZ A JAVÍTÁS
-templates = None # EZ A JAVÍTÁS
+# Ezzel elkerüljük az 'AttributeError: 'bytes' object has no attribute 'find'' hibát
+USE_EXTERNAL = False 
+templates = None 
 
 
 def render_with_fallback(template_name: str, context: dict) -> HTMLResponse:
@@ -375,6 +376,7 @@ async def http_get_xml(url, params=None) -> bytes:
         return b""
     try:
         all_headers = EXTRA_HEADERS.copy()
+        # PARAMÉTEREK TISZTÍTÁSA AZ URL-BŐL, HA AZ URL-BEN MÁR SZEREPELNEK
         if params and "LineRef" in params: del params["LineRef"] 
         if params and "MonitoringRef" in params: del params["MonitoringRef"]
         if params and "MaximumStopVisits" in params: del params["MaximumStopVisits"]
@@ -397,6 +399,7 @@ async def http_get_raw_debug(url, params=None):
 
     all_headers = EXTRA_HEADERS.copy()
     
+    # PARAMÉTEREK TISZTÍTÁSA AZ URL-BŐL, HA AZ URL-BEN MÁR SZEREPELNEK
     if params and "LineRef" in params: del params["LineRef"] 
     if params and "MonitoringRef" in params: del params["MonitoringRef"]
     if params and "MaximumStopVisits" in params: del params["MaximumStopVisits"]
@@ -446,7 +449,7 @@ async def fetch_live_vm(route_short: str):
             return []
             
         try:
-            # JAVÍTÁS: Explicit dekódolás utf-8-ra a bytes hiba elkerülése érdekében
+            # Explicit dekódolás utf-8-ra a bytes hiba elkerülése érdekében
             xml_text = xml_content.decode('utf-8')
             root = ET.fromstring(xml_text)
             
@@ -457,11 +460,12 @@ async def fetch_live_vm(route_short: str):
                     j = a.find('siri:MonitoredVehicleJourney', SIRI_NAMESPACES)
                     if j is None: continue
 
+                    # Helyes XML element.find() használata a KeyError elkerülésére
                     line = j.find('siri:LineRef', SIRI_NAMESPACES)
                     op = j.find('siri:OperatorRef', SIRI_NAMESPACES)
                     
-                    line_ref = line.text.strip() if line is not None else ""
-                    op_ref = op.text.strip() if op is not None else ""
+                    line_ref = line.text.strip() if line is not None and line.text else ""
+                    op_ref = op.text.strip() if op is not None and op.text else ""
                     
                     if route_short and line_ref and route_short.lower() != str(line_ref).lower():
                         continue
@@ -482,7 +486,7 @@ async def fetch_live_vm(route_short: str):
                             continue
                         
                         vehicle_ref_e = j.find('siri:VehicleRef', SIRI_NAMESPACES)
-                        fleet_id = vehicle_ref_e.text if vehicle_ref_e is not None else ""
+                        fleet_id = vehicle_ref_e.text if vehicle_ref_e is not None and vehicle_ref_e.text else ""
                         
                         out.append({
                             "lat": lat, "lon": lon,
@@ -518,7 +522,7 @@ async def fetch_live_sm(stop_code_or_id: str):
             return []
 
         try:
-            # JAVÍTÁS: Explicit dekódolás utf-8-ra a bytes hiba elkerülése érdekében
+            # Explicit dekódolás utf-8-ra a bytes hiba elkerülése érdekében
             xml_text = xml_content.decode('utf-8')
             root = ET.fromstring(xml_text)
             
@@ -529,8 +533,9 @@ async def fetch_live_sm(stop_code_or_id: str):
                     j = v.find('siri:MonitoredVehicleJourney', SIRI_NAMESPACES)
                     if j is None: continue
                     
+                    # Helyes XML element.find() használata a KeyError elkerülésére
                     op = j.find('siri:OperatorRef', SIRI_NAMESPACES)
-                    op_ref = op.text.strip() if op is not None else ""
+                    op_ref = op.text.strip() if op is not None and op.text else ""
                     if op_ref and not operator_ok(op_ref):
                         continue
                         
@@ -542,16 +547,16 @@ async def fetch_live_sm(stop_code_or_id: str):
                     v_ref = j.find('siri:VehicleRef', SIRI_NAMESPACES)
                     trip_ref_e = j.find('siri:FramedVehicleJourneyRef', SIRI_NAMESPACES)
                     
-                    line_ref = line.text.strip() if line is not None else ""
-                    headsign_str = headsign.text.strip() if headsign is not None else ""
-                    v_ref_str = v_ref.text.strip() if v_ref is not None else ""
+                    line_ref = line.text.strip() if line is not None and line.text else ""
+                    headsign_str = headsign.text.strip() if headsign is not None and headsign.text else ""
+                    v_ref_str = v_ref.text.strip() if v_ref is not None and v_ref.text else ""
                     
                     # Időpontok
                     aimed = call.find('siri:AimedDepartureTime', SIRI_NAMESPACES)
                     exp = call.find('siri:ExpectedDepartureTime', SIRI_NAMESPACES)
                     
-                    aimed_str = aimed.text.strip() if aimed is not None else ""
-                    exp_str = exp.text.strip() if exp is not None else aimed_str
+                    aimed_str = aimed.text.strip() if aimed is not None and aimed.text else ""
+                    exp_str = exp.text.strip() if exp is not None and exp.text else aimed_str
                     
                     dep_dt = _parse_iso(exp_str)
                     delay_text = ""
@@ -569,7 +574,7 @@ async def fetch_live_sm(stop_code_or_id: str):
                     trip_id_str = ""
                     if trip_ref_e is not None:
                          dated_ref = trip_ref_e.find('siri:DatedVehicleJourneyRef', SIRI_NAMESPACES)
-                         if dated_ref is not None:
+                         if dated_ref is not None and dated_ref.text:
                              trip_id_str = dated_ref.text.strip()
 
 
@@ -799,7 +804,7 @@ async def live_vm_debug(route_short: str):
 async def live_sm_debug(stop_code: str):
     return JSONResponse(await fetch_live_sm(stop_code))
 
-# ÚJ HIBÁKERESŐ VÉGPONT (Nyers API válasz)
+# HIBÁKERESŐ VÉGPONT (Nyers API válasz)
 @app.get("/api/live/debug/{kind}/{id_or_route}")
 async def live_api_debug(kind: str, id_or_route: str):
     """Nyers API válasz lekérdezése hibakereséshez."""
