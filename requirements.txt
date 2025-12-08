@@ -1,9 +1,6 @@
-Flask
-requests
-gunicorn
-httpx
-pytz
 fastapi
 uvicorn
 python-multipart
 jinja2
+pytz
+httpx
