@@ -43,11 +43,17 @@ def midnight_uk(dt=None):
 def gtfs_sec(hhmmss: str) -> int:
     try:
         h, m, s = (hhmmss or "00:00:00").split(":")
-        return int(h) * 3600 + int(m) * 60 + int(s)
+        # Csak 24 órás formátumot engedélyezünk, a GTFS specifikáció szerint a napok átnyúlását a >24 óra kezeli
+        h_val = int(h)
+        if h_val >= 24:
+            # GTFS specifikus: A 24:00:00 jelenti a másnap éjfélkor lévő indulást
+            return 86400 + (h_val - 24) * 3600 + int(m) * 60 + int(s)
+        return h_val * 3600 + int(m) * 60 + int(s)
     except Exception:
         return 0
 
 def sec_to_today(sec: int) -> datetime:
+    """GTFS másodpercek konvertálása UK időzónás datetime objektummá."""
     base = midnight_uk()
     days = sec // 86400
     rem = sec % 86400
@@ -94,6 +100,7 @@ def _build_extra_headers() -> dict:
     if os.getenv("X_API_KEY"):
         h["X-API-Key"] = os.getenv("X-API-KEY")
     
+    # Kényszerítjük az XML formátumot (ha az API ezt megköveteli)
     h['Accept'] = 'application/xml'
     h['User-Agent'] = 'Mozilla/5.0 (Custom Python Script)' 
     
@@ -129,6 +136,7 @@ def _format_sm_url(stop_id: str):
 
     if "{stop_id}" in u:
         return u.replace("{stop_id}", str(stop_id)), {}
+    # Paraméterek hozzáadása az API-hoz, ha nem URL-sablonos
     return u, {"MonitoringRef": stop_id, "MaximumStopVisits": "10"}
 
 
@@ -277,13 +285,13 @@ templates = None
 
 def render_with_fallback(template_name: str, context: dict) -> HTMLResponse:
     if USE_EXTERNAL and templates:
+        # Ez a blokk már sosem fut le a USE_EXTERNAL=False miatt
         return templates.TemplateResponse(template_name, context)
 
     # Biztonsági tisztítás: Minden 'bytes' objektumot dekódolunk szöveggé
     safe_ctx = {}
     for k, v in context.items():
         if isinstance(v, bytes):
-            # Ha bytes, dekódoljuk utf-8-ra, vagy stringre konvertáljuk
             try:
                 safe_ctx[k] = v.decode('utf-8', errors='ignore')
             except:
@@ -353,6 +361,7 @@ def load_gtfs():
         if sid: stop_times_by_stop[sid].append(st)
         if tid: stop_times_by_trip[tid].append(st)
     for tid, arr in stop_times_by_trip.items():
+        # GTFS időpontok sorrendben
         arr.sort(key=lambda x: gtfs_sec(x.get("departure_time") or x.get("arrival_time") or ""))
 
 
@@ -376,7 +385,7 @@ async def http_get_xml(url, params=None) -> bytes:
         return b""
     try:
         all_headers = EXTRA_HEADERS.copy()
-        # PARAMÉTEREK TISZTÍTÁSA AZ URL-BŐL, HA AZ URL-BEN MÁR SZEREPELNEK
+        # Paraméterek tisztítása az URL-ből, ha az URL-ben már szerepelnek (debug funkcióhoz)
         if params and "LineRef" in params: del params["LineRef"] 
         if params and "MonitoringRef" in params: del params["MonitoringRef"]
         if params and "MaximumStopVisits" in params: del params["MaximumStopVisits"]
@@ -387,6 +396,9 @@ async def http_get_xml(url, params=None) -> bytes:
             return r.content
     except httpx.HTTPStatusError as e:
         log.warning("live request failed (HTTP Error: %s) for URL: %s", e.response.status_code, url)
+        # 406 Not Acceptable (és más hibák) kezelése
+        if e.response.status_code == 406:
+            log.warning("Received 406 Not Acceptable. Check API Key and Accept header.")
         return b""
     except Exception as e:
         log.warning("live request failed (General): %s", e)
@@ -395,11 +407,10 @@ async def http_get_xml(url, params=None) -> bytes:
 async def http_get_raw_debug(url, params=None):
     """Aszinkron HTTP GET kérés Nyers válaszra a hibakereséshez."""
     if not url or httpx is None:
-        return {"status": 500, "headers": {}, "content": "Error: httpx is not installed or URL is missing."}
+        return {"status": 500, "content": "Error: httpx is not installed or URL is missing."}
 
     all_headers = EXTRA_HEADERS.copy()
     
-    # PARAMÉTEREK TISZTÍTÁSA AZ URL-BŐL, HA AZ URL-BEN MÁR SZEREPELNEK
     if params and "LineRef" in params: del params["LineRef"] 
     if params and "MonitoringRef" in params: del params["MonitoringRef"]
     if params and "MaximumStopVisits" in params: del params["MaximumStopVisits"]
@@ -424,6 +435,7 @@ def _parse_iso(dt_str: str):
     try:
         if not dt_str:
             return None
+        # Z leváltása UTC időzónára, hogy a datetime.fromisoformat kezelni tudja
         ds = dt_str.replace("Z", "+00:00")
         return datetime.fromisoformat(ds).astimezone(UK_TZ)
     except Exception:
@@ -458,7 +470,7 @@ async def fetch_live_vm(route_short: str):
             for d in deliveries:
                 for a in d.findall('siri:VehicleActivity', SIRI_NAMESPACES):
                     j = a.find('siri:MonitoredVehicleJourney', SIRI_NAMESPACES)
-                    if j is None: continue
+                    if j is None: continue # MonitoredVehicleJourney hiányában kihagyjuk
 
                     # Helyes XML element.find() használata a KeyError elkerülésére
                     line = j.find('siri:LineRef', SIRI_NAMESPACES)
@@ -478,7 +490,7 @@ async def fetch_live_vm(route_short: str):
                     lat_e = loc.find('siri:Latitude', SIRI_NAMESPACES)
                     lon_e = loc.find('siri:Longitude', SIRI_NAMESPACES)
                     
-                    if lat_e is not None and lon_e is not None:
+                    if lat_e is not None and lon_e is not None and lat_e.text and lon_e.text:
                         try:
                             lat = float(lat_e.text); lon = float(lon_e.text)
                         except (ValueError, TypeError):
@@ -531,9 +543,9 @@ async def fetch_live_sm(stop_code_or_id: str):
             for d in deliveries:
                 for v in d.findall('siri:MonitoredStopVisit', SIRI_NAMESPACES):
                     j = v.find('siri:MonitoredVehicleJourney', SIRI_NAMESPACES)
-                    if j is None: continue
+                    if j is None: continue # MonitoredVehicleJourney hiányában kihagyjuk
                     
-                    # Helyes XML element.find() használata a KeyError elkerülésére
+                    # Helyes XML element.find() használata
                     op = j.find('siri:OperatorRef', SIRI_NAMESPACES)
                     op_ref = op.text.strip() if op is not None and op.text else ""
                     if op_ref and not operator_ok(op_ref):
@@ -618,15 +630,18 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
     sid = stop_obj.get("stop_id")
     scode = (stop_obj.get("stop_code") or stop_obj.get("stop_id") or "").strip()
 
+    # Élő adatok lekérése a megálló kód alapján
     live_raw = await fetch_live_sm(scode)
     live_by_key = {}
     for it in live_raw or []:
         if not it.get("dep_dt"):
             continue
+        # Kulcs: (trip_id, útvonal_rövidnév_kisbetűvel) - a pontos illesztéshez
         key = (it.get("trip_id") or "", (it.get("line") or "").lower())
         live_by_key[key] = it
 
     rows = []
+    # Menetrendi adatok iterálása
     for st in stop_times_by_stop.get(sid, []):
         tid = st.get("trip_id")
         trip = trips_by_id.get(tid, {})
@@ -639,6 +654,7 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
 
         dep_sec = gtfs_sec(st.get("departure_time") or st.get("arrival_time") or "")
         dep_dt = sec_to_today(dep_sec)
+        # Időben elindult vagy túl messze van
         if dep_dt < (now - timedelta(minutes=1)) or dep_dt > until:
             continue
 
@@ -647,6 +663,7 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
         live_hit = live_by_key.get(key)
 
         if live_hit:
+            # Élő adat illesztve
             rows.append({
                 "time_str": fmt_hhmm(live_hit["dep_dt"]),
                 "time_dt": live_hit["dep_dt"],
@@ -662,6 +679,7 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
                 "delay_text": live_hit.get("delay_text") or "",
             })
         else:
+            # Csak menetrendi adat
             rows.append({
                 "time_str": fmt_hhmm(dep_dt),
                 "time_dt": dep_dt,
@@ -812,10 +830,8 @@ async def live_api_debug(kind: str, id_or_route: str):
     url = ""; params = {}
     
     if kind.lower() == "vm":
-        # Vehicle Monitoring (Járatra)
         url, params = _format_vm_url(id_or_route.upper())
     elif kind.lower() == "sm":
-        # Stop Monitoring (Megállóra)
         url, params = _format_sm_url(id_or_route)
     else:
         raise HTTPException(status_code=400, detail="Invalid kind. Use 'vm' or 'sm'.")
@@ -829,5 +845,4 @@ async def live_api_debug(kind: str, id_or_route: str):
     if raw_response["status"] == 200 and 'xml' in raw_response.get("headers", {}).get("Content-Type", "").lower():
         return PlainTextResponse(raw_response["content"])
         
-    # Egyébként JSON-ban adjuk vissza a debug infókat
     return JSONResponse(raw_response)
