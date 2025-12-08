@@ -94,7 +94,7 @@ def _build_extra_headers() -> dict:
     if os.getenv("OCP_APIM_SUBSCRIPTION_KEY"):
         h["Ocp-Apim-Subscription-Key"] = os.getenv("OCP_APIM_SUBSCRIPTION_KEY")
     if os.getenv("X_API_KEY"):
-        h["X-API-Key"] = os.getenv("X_API_KEY")
+        h["X-API-Key"] = os.getenv("X-API-Key")
     
     # Hozzáadjuk a kulcsot az URL-hez, és beállítjuk az Accept fejlécet XML-re (406 hiba elkerülése)
     h['Accept'] = 'application/xml'
@@ -380,6 +380,36 @@ async def http_get_xml(url, params=None) -> bytes:
         return b""
 
 
+# ÚJ DEBUG FUNKCIÓ
+async def http_get_raw_debug(url, params=None):
+    """Aszinkron HTTP GET kérés Nyers válaszra a hibakereséshez."""
+    if not url or httpx is None:
+        return {"status": 500, "headers": {}, "content": "Error: httpx is not installed or URL is missing."}
+
+    all_headers = EXTRA_HEADERS.copy()
+    
+    # Tisztítjuk a paramétereket, mert a DFT API a query stringben várja
+    if params and "LineRef" in params: del params["LineRef"] 
+    if params and "MonitoringRef" in params: del params["MonitoringRef"]
+    if params and "MaximumStopVisits" in params: del params["MaximumStopVisits"]
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(url, params=params or {}, headers=all_headers)
+            
+            # Visszaadjuk az összes szükséges adatot
+            return {
+                "status": r.status_code,
+                "url": str(r.url),
+                "headers": dict(r.headers),
+                "content": r.text, # szöveges tartalom
+            }
+    except httpx.RequestError as e:
+        return {"status": 0, "content": f"Request Error: {type(e).__name__} - {e}"}
+    except Exception as e:
+        return {"status": 0, "content": f"General Error: {type(e).__name__} - {e}"}
+
+
 def _parse_iso(dt_str: str):
     try:
         if not dt_str:
@@ -403,9 +433,9 @@ async def fetch_live_vm(route_short: str):
     if url:
         xml_content = await http_get_xml(url, params=params)
         
-        # JAVÍTÁS: Ellenőrizzük, hogy a tartalom üres-e, és ha igen, azonnal térjünk vissza.
+        # JAVÍTOTT BIZTONSÁGI ELLENŐRZÉS: ha üres tartalom jön (pl. 406 hiba miatt)
         if not xml_content:
-            log.info("VM request returned empty content (potential HTTP error).")
+            log.info("VM request returned empty content (potential HTTP error or empty response).")
             cache_set(ck, [])
             return []
             
@@ -454,10 +484,11 @@ async def fetch_live_vm(route_short: str):
                             "line": line_ref, "operator": op_ref.lower()[:4],
                         })
         except ET.ParseError as e:
-            log.warning("parse VM failed (XML Parse Error): %s", e)
+            log.warning(f"parse VM failed (XML Parse Error): {e} | Content size: {len(xml_content)}")
             out = []
         except Exception as e:
-            log.warning("parse VM failed (General Error): %s", e)
+            # Részletes logolás a váratlan hibákhoz (pl. AttributeError)
+            log.error(f"FATAL parse VM error: {e} (Type: {type(e).__name__}) | Content size: {len(xml_content)}")
             out = []
             
     cache_set(ck, out)
@@ -476,9 +507,9 @@ async def fetch_live_sm(stop_code_or_id: str):
     if url:
         xml_content = await http_get_xml(url, params=params)
         
-        # JAVÍTÁS: Ellenőrizzük, hogy a tartalom üres-e, és ha igen, azonnal térjünk vissza.
+        # JAVÍTOTT BIZTONSÁGI ELLENŐRZÉS: ha üres tartalom jön (pl. 406 hiba miatt)
         if not xml_content:
-            log.info("SM request returned empty content (potential HTTP error).")
+            log.info("SM request returned empty content (potential HTTP error or empty response).")
             cache_set(ck, [])
             return []
 
@@ -546,10 +577,11 @@ async def fetch_live_sm(stop_code_or_id: str):
                     })
                     
         except ET.ParseError as e:
-            log.warning("parse SM failed (XML Parse Error): %s", e)
+            log.warning(f"parse SM/VM failed (XML Parse Error): {e} | Content size: {len(xml_content)}")
             items = []
         except Exception as e:
-            log.warning("parse SM failed (General Error): %s", e)
+            # Részletes logolás a váratlan hibákhoz (pl. AttributeError)
+            log.error(f"FATAL parse SM/VM error: {e} (Type: {type(e).__name__}) | Content size: {len(xml_content)}")
             items = []
             
     cache_set(ck, items)
@@ -757,6 +789,7 @@ async def route_view(request: Request, route_key: str):
 async def gtfs_status():
     return PlainTextResponse("GTFS Loaded: Routes=%d, Stops=%d" % (len(routes), len(stops)))
 
+# DEBUG VÉGPONTOK (Feldolgozott JSON eredmény)
 @app.get("/_live/vm/{route_short}")
 async def live_vm_debug(route_short: str):
     return JSONResponse(await fetch_live_vm(route_short))
@@ -764,3 +797,31 @@ async def live_vm_debug(route_short: str):
 @app.get("/_live/sm/{stop_code}")
 async def live_sm_debug(stop_code: str):
     return JSONResponse(await fetch_live_sm(stop_code))
+
+# ÚJ HIBÁKERESŐ VÉGPONT (Nyers API válasz)
+@app.get("/api/live/debug/{kind}/{id_or_route}")
+async def live_api_debug(kind: str, id_or_route: str):
+    """Nyers API válasz lekérdezése hibakereséshez."""
+    
+    url = ""; params = {}
+    
+    if kind.lower() == "vm":
+        # Vehicle Monitoring (Járatra)
+        url, params = _format_vm_url(id_or_route.upper())
+    elif kind.lower() == "sm":
+        # Stop Monitoring (Megállóra)
+        url, params = _format_sm_url(id_or_route)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid kind. Use 'vm' or 'sm'.")
+
+    if not url:
+        return JSONResponse({"status": 503, "content": "API URL not configured."}, status_code=503)
+
+    raw_response = await http_get_raw_debug(url, params=params)
+    
+    # Ha a státusz 200 (OK) és XML-t kaptunk, kiírjuk a tartalmat PlainText-ként
+    if raw_response["status"] == 200 and 'xml' in raw_response.get("headers", {}).get("Content-Type", "").lower():
+        return PlainTextResponse(raw_response["content"])
+        
+    # Egyébként JSON-ban adjuk vissza a debug infókat
+    return JSONResponse(raw_response)
