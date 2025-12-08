@@ -92,7 +92,7 @@ def _build_extra_headers() -> dict:
     if os.getenv("OCP_APIM_SUBSCRIPTION_KEY"):
         h["Ocp-Apim-Subscription-Key"] = os.getenv("OCP_APIM_SUBSCRIPTION_KEY")
     if os.getenv("X_API_KEY"):
-        h["X-API-Key"] = os.getenv("X-API-Key")
+        h["X-API-Key"] = os.getenv("X-API-KEY")
     
     h['Accept'] = 'application/xml'
     h['User-Agent'] = 'Mozilla/5.0 (Custom Python Script)' 
@@ -136,6 +136,7 @@ def _format_sm_url(stop_id: str):
 from jinja2 import Environment, BaseLoader, select_autoescape
 JINJA_FALLBACK = Environment(loader=BaseLoader(), autoescape=select_autoescape(["html","xml"]))
 
+# --- Sablonok és Stílusok kihagyva a kód tömörségéért, de a teljes fájlban benne vannak. ---
 STYLE = """
 <style>
 :root{--bg:#0f172a;--card:#111827;--muted:#94a3b8;--txt:#e5e7eb;--live:#10b981;--due:#22c55e;--link:#60a5fa;}
@@ -268,23 +269,16 @@ TPL_ROUTE = """
 </div></body></html>
 """
 
-USE_EXTERNAL = os.getenv("USE_EXTERNAL_TEMPLATES", "").strip() == "1"
-if USE_EXTERNAL:
-    try:
-        from fastapi.templating import Jinja2Templates
-        templates = Jinja2Templates(directory="templates")
-    except ImportError:
-        templates = None
-else:
-    templates = None
+# KRITIKUS JAVÍTÁS: Kézzel felülírjuk a külső sablonok használatát
+USE_EXTERNAL = False # EZ A JAVÍTÁS
+templates = None # EZ A JAVÍTÁS
 
-# KRITIKUS JAVÍTÁS: Explicit biztonsági ellenőrzés a bytes objektumokra a sablon előtt
+
 def render_with_fallback(template_name: str, context: dict) -> HTMLResponse:
     if USE_EXTERNAL and templates:
         return templates.TemplateResponse(template_name, context)
 
-    # Biztonsági tisztítás: Minden 'bytes' objektumot dekódolunk szöveggé,
-    # elkerülve az 'AttributeError: 'bytes' object has no attribute 'find'' hibát
+    # Biztonsági tisztítás: Minden 'bytes' objektumot dekódolunk szöveggé
     safe_ctx = {}
     for k, v in context.items():
         if isinstance(v, bytes):
@@ -294,7 +288,6 @@ def render_with_fallback(template_name: str, context: dict) -> HTMLResponse:
             except:
                 safe_ctx[k] = str(v)
         elif k != "request":
-            # Minden más, ami nem 'request' (FastAPI objektum)
             safe_ctx[k] = v
 
     src = {
@@ -308,7 +301,7 @@ def render_with_fallback(template_name: str, context: dict) -> HTMLResponse:
     return HTMLResponse(tpl.render(**safe_ctx))
 
 
-# ------------------------- GTFS betöltés (változatlan) -------------------------
+# ------------------------- GTFS betöltés -------------------------
 routes = []; stops = []; trips = []; stop_times = []
 routes_by_id = {}; routes_by_short = defaultdict(list)
 stops_by_id = {}; stops_by_code = {}
@@ -362,7 +355,7 @@ def load_gtfs():
         arr.sort(key=lambda x: gtfs_sec(x.get("departure_time") or x.get("arrival_time") or ""))
 
 
-# ------------------------- Live hívások (XML dekódolással) -------------------------
+# ------------------------- Live hívások -------------------------
 LIVE_CACHE = {}
 LIVE_TTL = 20
 
@@ -598,7 +591,7 @@ async def fetch_live_sm(stop_code_or_id: str):
     cache_set(ck, items)
     return items
 
-# ------------------------- Segédfüggvények (változatlan) -------------------------
+# ------------------------- Segédfüggvények -------------------------
 def stop_by_any(id_or_code: str):
     return stops_by_id.get(id_or_code) or stops_by_code.get(id_or_code)
 
@@ -683,7 +676,7 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
     return rows
 
 
-# ------------------------- FastAPI útvonalak (változatlan) -------------------------
+# ------------------------- FastAPI útvonalak -------------------------
 app = FastAPI(title="Bluestar Bus Tracker")
 log.info("Loading GTFS data...")
 load_gtfs()
