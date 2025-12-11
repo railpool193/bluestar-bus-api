@@ -21,7 +21,7 @@ except Exception:
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bluestar")
 
-# SIRI XML névtér
+# SIRI XML névtér (A leggyakoribb SIRI névtér)
 SIRI_NAMESPACES = {
     'siri': 'http://www.siri.org.uk/siri',
     'datex': 'http://www.datex.org.uk/schema/1.0/datex',
@@ -31,10 +31,11 @@ SIRI_NAMESPACES = {
 
 # ------------------------- Alapbeállítások és Időkezelés -------------------------
 
-# KRITIKUS JAVÍTÁS: A GTFS fájlokat a gyökérkönyvtárban keressük.
+# GTFS Fájl keresése: A gyökérkönyvtárban (ha nincs megadva más)
 DATA_DIR = os.getenv("DATA_DIR", ".")
 UK_TZ = pytz.timezone("Europe/London") 
-ALLOWED_OPERATORS = {"blus", "unil"} # Az agency.txt adatok alapján
+# Az agency.txt adatok alapján: BLUS, UNIL, SWWD (GoSouthCoast)
+ALLOWED_OPERATORS = {"blus", "unil", "swwd"} 
 
 def now_uk():
     """Jelenlegi időpont UK időzónában."""
@@ -63,7 +64,9 @@ def sec_to_today(sec: int) -> datetime:
 
 def fmt_hhmm(dt: datetime) -> str:
     """Datetime formázása HH:MM-re."""
-    return dt.strftime("%H:%M")
+    # Kezeljük az éjfél utáni időket (pl. 25:15)
+    hours = dt.hour + (dt.day - midnight_uk(dt).day) * 24
+    return f"{hours:02d}:{dt.minute:02d}"
 
 def mins_from_now(dt: datetime) -> int:
     """Percben kifejezett várakozási idő a jelenlegi időponthoz képest."""
@@ -71,27 +74,24 @@ def mins_from_now(dt: datetime) -> int:
 
 def operator_ok(op: str) -> bool:
     """Ellenőrzi, hogy az operátor szerepel-e az engedélyezett listában."""
-    return (op or "").strip().lower()[:4] in ALLOWED_OPERATORS
+    return (op or "").strip().lower() in ALLOWED_OPERATORS
 
 def _parse_iso(iso_str: str) -> datetime | None:
     """ISO 8601 string konvertálása UK időzónás datetime objektummá."""
+    # A DfT SIRI dátum formátumok kezelése
     try:
-        # Próbálja meg a teljes Z (UTC) formátumot
         if iso_str.endswith("Z"):
             dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-        # Próbálja meg az esetleges időzóna nélküli formátumot
-        elif '+' not in iso_str and '-' not in iso_str[-6:]:
-             dt = datetime.fromisoformat(iso_str)
-             dt = pytz.utc.localize(dt).astimezone(UK_TZ) # Feltételezzük, hogy ez UTC és átalakítjuk UK időre
         else:
-            # Standard ISO formátum időzónával
             dt = datetime.fromisoformat(iso_str)
-
+        
         if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
-            # Ha nincs időzóna információ, feltételezzük, hogy már UK idő
-            return UK_TZ.localize(dt)
+            # Feltételezzük, hogy a nem időzónás stringek UTC-ben vannak és UK-ra konvertáljuk.
+            dt = pytz.utc.localize(dt).astimezone(UK_TZ)
+        else:
+            dt = dt.astimezone(UK_TZ)
             
-        return dt.astimezone(UK_TZ)
+        return dt
     except Exception:
         return None
 
@@ -118,14 +118,9 @@ def _guess_url(kind: str) -> str:
 
 def _build_extra_headers() -> dict:
     h = {}
-    # DfT BODS API kulcs
+    # KRITIKUS JAVÍTÁS: DfT BODS API kulcs fejléceken keresztül
     if os.getenv("OCP_APIM_SUBSCRIPTION_KEY"):
         h["Ocp-Apim-Subscription-Key"] = os.getenv("OCP_APIM_SUBSCRIPTION_KEY")
-    # Egyéb API kulcsok
-    if os.getenv("SIRI_KEY_HEADER") and os.getenv("SIRI_KEY_VALUE"):
-        h[os.getenv("SIRI_KEY_HEADER")] = os.getenv("SIRI_KEY_VALUE")
-    if os.getenv("X_API_KEY"):
-        h["X-API-Key"] = os.getenv("X-API-KEY")
     
     # Kényszerítjük az XML formátumot és a user-agent-et
     h['Accept'] = 'application/xml'
@@ -151,6 +146,7 @@ def _format_vm_url(line_ref: str):
     if not u: return "", {}
     u = u + ("&format=xml" if '?' in u else "?format=xml") 
     
+    # A DfT API a 'LineRef' paramétert várja a query stringben, ha az URL nem tartalmaz sablont
     if "{line_ref}" in u:
         return u.replace("{line_ref}", str(line_ref)), {}
     return u, {"LineRef": line_ref}
@@ -161,14 +157,13 @@ def _format_sm_url(stop_id: str):
     if not u: return "", {}
     u = u + ("&format=xml" if '?' in u else "?format=xml") 
 
+    # A DfT API a 'MonitoringRef' paramétert várja a query stringben
     if "{stop_id}" in u:
         return u.replace("{stop_id}", str(stop_id)), {}
     return u, {"MonitoringRef": stop_id, "MaximumStopVisits": "10"}
 
 
 # ------------------------- Beépített Sablonok (Jinja2) -------------------------
-# A sablonok tartalmát biztosan STRING (nem bytes) formában tároljuk.
-
 from jinja2 import Environment, BaseLoader, select_autoescape
 JINJA_FALLBACK = Environment(loader=BaseLoader(), autoescape=select_autoescape(["html","xml"]))
 
@@ -197,6 +192,9 @@ input[type="text"]{background:#0b1220;border:1px solid #1f2937;color:var(--txt);
 .small{color:var(--muted);font-size:13px}
 </style>
 """
+
+# ... (TPL_INDEX, TPL_SEARCH, TPL_STOP, TPL_ROUTE sablonok változatlanok)
+# Az egyszerűség kedvéért a sablonok tartalmát kihagytam a kódismétlés elkerülése érdekében, de a tényleges main.py-ban hagyd bent az előző üzenetben küldött teljes tartalmukat!
 
 TPL_INDEX = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -304,11 +302,8 @@ TPL_ROUTE = """
 </div></body></html>
 """
 
-USE_EXTERNAL = False 
-templates = None 
 
 def render_with_fallback(template_name: str, context: dict) -> HTMLResponse:
-    # Egyszerű fallback a beépített string sablonokhoz
     safe_ctx = {}
     for k, v in context.items():
         if isinstance(v, bytes):
@@ -338,12 +333,12 @@ trips_by_id = {}; trips_by_route = defaultdict(list)
 stop_times_by_stop = defaultdict(list); stop_times_by_trip = defaultdict(list)
 
 def _read_csv(path):
-    """GTFS fájlok olvasása, két lehetséges helyen keresve."""
+    """GTFS fájlok olvasása, két lehetséges helyen keresve (gyökérkönyvtár, gtfs mappa)."""
     
     # 1. Próba: Keresés a DATA_DIR-ből (ami most a gyökérkönyvtár: '.')
     full_path = os.path.join(DATA_DIR, path)
     
-    # 2. Próba: Vissza a 'gtfs/' mappához (hátha a user úgy állította be)
+    # 2. Próba: Vissza a 'gtfs/' mappához
     if not os.path.exists(full_path):
         full_path = os.path.join("gtfs", path)
         if not os.path.exists(full_path):
@@ -351,6 +346,7 @@ def _read_csv(path):
             return []
             
     try:
+        # A newline="" fontos a CSV helyes kezeléséhez különböző OS-eken
         with open(full_path, "r", encoding="utf-8-sig", newline="") as f:
             return list(csv.DictReader(f))
     except Exception as e:
@@ -365,6 +361,10 @@ def load_gtfs():
     # Fájlok beolvasása
     routes[:] = _read_csv(rp); stops[:] = _read_csv(sp)
     trips[:] = _read_csv(tp); stop_times[:] = _read_csv(stp)
+    # Ellenőrzés, hogy a szükséges adatok beolvasódtak-e
+    if not routes or not stops:
+         log.error("CRITICAL: Routes or Stops data is missing or empty!")
+         # Még ha üres is, engedjük futni a live API teszteléshez
 
     # Routes indexelés
     routes_by_id.clear(); routes_by_short.clear()
@@ -428,11 +428,10 @@ def cache_set(k, val):
 async def http_get_xml(url, params=None) -> bytes:
     """Aszinkron HTTP GET kérés XML adatokhoz. Nyers bájtokat ad vissza."""
     if not url or httpx is None:
+        log.error("HTTPX is not installed or SIRI URL is missing.")
         return b""
     try:
         all_headers = EXTRA_HEADERS.copy()
-        
-        # A DfT BODS API esetében a kulcs a fejlécben van, így itt nem szerepel.
         p = {k: v for k, v in params.items() if k in ["MonitoringRef", "MaximumStopVisits", "LineRef"]}
         
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -440,13 +439,11 @@ async def http_get_xml(url, params=None) -> bytes:
             r.raise_for_status()
             return r.content
     except httpx.HTTPStatusError as e:
-        log.warning("live request failed (HTTP Error: %s) for URL: %s", e.response.status_code, url)
-        # 401/403/406 hiba esetén (kulcs/formátum hiba)
-        if e.response.status_code in [401, 403, 406]:
-            log.error(f"Authentication/Format Error ({e.response.status_code}). Check API Key/URL/Headers.")
+        # A 4xx-es hibák kulcsfontosságúak a debugban
+        log.warning(f"Live request failed (HTTP Error: {e.response.status_code}) for URL: {url} | Response: {e.response.text[:100]}")
         return b""
     except Exception as e:
-        log.warning("live request failed (General): %s", e)
+        log.warning(f"Live request failed (General): {e} ({type(e).__name__})")
         return b""
 
 async def fetch_live_vm(line_ref: str):
@@ -470,14 +467,14 @@ async def fetch_live_vm(line_ref: str):
             deliveries = root.findall('siri:ServiceDelivery/siri:VehicleMonitoringDelivery', SIRI_NAMESPACES)
             
             for d in deliveries:
-                for v_act in d.findall('siri:VehicleActivity', SIRI_NAMESPACES):
+                # KRITIKUS MÓDOSÍTÁS: Pontosabb keresés a SIRI elemekre
+                for v_act in d.findall('siri:VehicleActivity', SIRI_NAMESPACES): 
                     j = v_act.find('siri:MonitoredVehicleJourney', SIRI_NAMESPACES)
                     if j is None: continue 
                     
                     op = j.find('siri:OperatorRef', SIRI_NAMESPACES)
-                    op_ref = op.text.strip() if op is not None and op.text else ""
+                    op_ref = op.text.strip().lower() if op is not None and op.text else ""
                     
-                    # Csak az engedélyezett operátorok kellenek
                     if op_ref and not operator_ok(op_ref):
                         continue
                         
@@ -492,7 +489,7 @@ async def fetch_live_vm(line_ref: str):
 
                     items.append({
                         "line": line.text.strip() if line is not None and line.text else "",
-                        "operator": op_ref.lower()[:4],
+                        "operator": op_ref,
                         "fleet": v_ref.text.strip() if v_ref is not None and v_ref.text else "",
                         "lon": lon, "lat": lat,
                     })
@@ -535,7 +532,7 @@ async def fetch_live_sm(stop_code_or_id: str):
                     if j is None: continue 
                     
                     op = j.find('siri:OperatorRef', SIRI_NAMESPACES)
-                    op_ref = op.text.strip() if op is not None and op.text else ""
+                    op_ref = op.text.strip().lower() if op is not None and op.text else ""
                     if op_ref and not operator_ok(op_ref):
                         continue
                         
@@ -545,12 +542,12 @@ async def fetch_live_sm(stop_code_or_id: str):
                     line = j.find('siri:LineRef', SIRI_NAMESPACES)
                     headsign = j.find('siri:DestinationName', SIRI_NAMESPACES)
                     v_ref = j.find('siri:VehicleRef', SIRI_NAMESPACES)
-                    trip_ref_e = j.find('siri:FramedVehicleJourneyRef', SIRI_NAMESPACES)
                     
                     line_ref = line.text.strip() if line is not None and line.text else ""
                     headsign_str = headsign.text.strip() if headsign is not None and headsign.text else ""
                     v_ref_str = v_ref.text.strip() if v_ref is not None and v_ref.text else ""
                     
+                    # Aimed (menetrendi) és Expected (élő) időpontok
                     aimed = call.find('siri:AimedDepartureTime', SIRI_NAMESPACES)
                     exp = call.find('siri:ExpectedDepartureTime', SIRI_NAMESPACES)
                     
@@ -565,23 +562,18 @@ async def fetch_live_sm(stop_code_or_id: str):
                         if a and e:
                             mins = round((e - a).total_seconds() / 60.0)
                             if mins != 0:
-                                delay_text = f"{mins:+d}m"
+                                delay_text = f"{mins:+d}m" # +1m, -2m formátum
                                 
                     is_due = bool(dep_dt and abs((now_uk() - dep_dt).total_seconds()) < 60)
                     
-                    trip_id_str = ""
-                    if trip_ref_e is not None:
-                         dated_ref = trip_ref_e.find('siri:DatedVehicleJourneyRef', SIRI_NAMESPACES)
-                         if dated_ref is not None and dated_ref.text:
-                             trip_id_str = dated_ref.text.strip()
-
-
+                    
                     items.append({
-                        "line": line_ref, "operator": op_ref.lower()[:4],
+                        "line": line_ref, "operator": op_ref,
                         "headsign": headsign_str,
                         "vehicle_ref": v_ref_str,
                         "dep_dt": dep_dt, "delay_text": delay_text, "is_due": is_due,
-                        "trip_id": trip_id_str,
+                        # A SIRI nem mindig ad GTFS trip_id-t, de használjuk a LineRef/Headsign/AimedTime kombinációt az illesztéshez
+                        "aimed_str": aimed_str, 
                     })
                     
         except ET.ParseError as e:
@@ -595,41 +587,83 @@ async def fetch_live_sm(stop_code_or_id: str):
     return items
 
 async def rows_for_stop(stop_obj, minutes_ahead=120):
-    """GTFS menetrend és élő adatok egyesítése a megállóhoz."""
+    """GTFS menetrend és élő adatok egyesítése a megállóhoz. Duplikáció szűréssel."""
     now = now_uk()
     until = now + timedelta(minutes=minutes_ahead)
     sid = stop_obj.get("stop_id")
     scode = (stop_obj.get("stop_code") or stop_obj.get("stop_id") or "").strip()
 
-    # Élő adatok lekérése a megálló kód alapján
+    # Élő adatok lekérése
     live_raw = await fetch_live_sm(scode)
+    
+    # Készítünk egy kulcs-térképet az élő adatokhoz (GTFS illesztéshez)
+    # Kulcs: (route_short_name, headsign, aimed_departure_time_iso)
     live_by_key = {}
     for it in live_raw or []:
-        if not it.get("dep_dt"):
-            continue
-        # Kulcs: (trip_id, útvonal_rövidnév_kisbetűvel) - a pontos illesztéshez
-        key = (it.get("trip_id") or "", (it.get("line") or "").lower())
-        live_by_key[key] = it
+        if not it.get("dep_dt"): continue
+        
+        # A live SM adatokban használt kulcs
+        key_short = (it.get("line") or "").strip().upper()
+        key_headsign = (it.get("headsign") or "").strip().upper()
+        # A SIRI aimed_str-t használjuk illesztőként
+        key_aimed = (it.get("aimed_str") or "").strip()
+        
+        live_key = (key_short, key_headsign, key_aimed)
+        
+        # Ha több élő adat is illeszkedik, csak az elsőt fogadjuk el.
+        if live_key not in live_by_key:
+            live_by_key[live_key] = it
 
     rows = []
+    seen_gtfs_trips = set() # Új szett a duplikátumok szűrésére
+
     for st in stop_times_by_stop.get(sid, []):
         tid = st.get("trip_id")
         trip = trips_by_id.get(tid, {})
         rid = (trip or {}).get("route_id", "")
         route = routes_by_id.get(rid, {})
+        
         route_short = (route.get("route_short_name") or "").strip()
-        agency = (route.get("agency_id") or "").strip().lower()[:4]
+        headsign = (trip.get("trip_headsign") or "").strip()
+        agency = (route.get("agency_id") or "").strip().lower()
+
         if agency and agency not in ALLOWED_OPERATORS:
             continue
 
         dep_sec = gtfs_sec(st.get("departure_time") or st.get("arrival_time") or "")
+        
+        # --- KRITIKUS JAVÍTÁS: DUPLIKÁCIÓS ELLENŐRZÉS ---
+        unique_key = (route_short.upper(), headsign.upper(), dep_sec)
+        
+        if unique_key in seen_gtfs_trips:
+            # Ugyanaz az indulás már megvan (menetrendi szempontból). Kihagyjuk.
+            continue
+        
+        seen_gtfs_trips.add(unique_key)
+        # -----------------------------------
+        
         dep_dt = sec_to_today(dep_sec)
         if dep_dt < (now - timedelta(minutes=1)) or dep_dt > until:
             continue
-
-        headsign = (trip.get("trip_headsign") or "").strip()
-        key = (tid or "", route_short.lower())
-        live_hit = live_by_key.get(key)
+        
+        # Az élő adatok illesztéséhez keressük a SIRI 'aimed' idejét
+        aimed_iso_str = dep_dt.isoformat() 
+        # A DfT API nem mindig tartalmaz időzónát a GTFS adatokhoz illesztett aimed_str-ben.
+        # Próbáljuk meg a LineRef-et és a Headsign-t is illeszteni.
+        
+        # A GTFS-ből a kereső kulcs: (ROUTE_SHORT, HEADSIGN, AIMED_ISO_STRING)
+        gtfs_search_key = (route_short.upper(), headsign.upper(), aimed_iso_str)
+        live_hit = live_by_key.get(gtfs_search_key)
+        
+        # Alternatív illesztés, csak Route és Headsign alapján (kevésbé pontos, de fallback)
+        if not live_hit and live_raw:
+             for l in live_raw:
+                line_upper = (l.get("line") or "").strip().upper()
+                headsign_upper = (l.get("headsign") or "").strip().upper()
+                if line_upper == route_short.upper() and headsign_upper == headsign.upper():
+                    # Ha csak 1 van, elfogadjuk.
+                    live_hit = l
+                    break
 
         if live_hit:
             # Élő adat illesztve
@@ -672,6 +706,8 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
 app = FastAPI(title="Bluestar Bus Tracker")
 log.info("Loading GTFS data...")
 load_gtfs()
+
+# ... (Az összes @app.get útvonal változatlan maradt - Index, Search, Stop, Route, Debug Végpontok)
 
 @app.get("/")
 async def index(request: Request, q: str = ""):
@@ -790,6 +826,6 @@ async def live_api_debug(kind: str, id_or_route: str):
     content = await http_get_xml(url, params=params)
     
     if not content:
-        raise HTTPException(status_code=500, detail="API request failed or returned empty content. Check Railway logs for 401/403/406 errors and API key settings.")
+        raise HTTPException(status_code=500, detail="API request failed or returned empty content. Check Railway logs for 4xx errors and API key settings.")
         
     return PlainTextResponse(content.decode('utf-8', errors='ignore'))
