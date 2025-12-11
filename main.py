@@ -193,9 +193,6 @@ input[type="text"]{background:#0b1220;border:1px solid #1f2937;color:var(--txt);
 </style>
 """
 
-# ... (TPL_INDEX, TPL_SEARCH, TPL_STOP, TPL_ROUTE sablonok változatlanok)
-# Az egyszerűség kedvéért a sablonok tartalmát kihagytam a kódismétlés elkerülése érdekében, de a tényleges main.py-ban hagyd bent az előző üzenetben küldött teljes tartalmukat!
-
 TPL_INDEX = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>bluestar</title>""" + STYLE + """
@@ -572,7 +569,7 @@ async def fetch_live_sm(stop_code_or_id: str):
                         "headsign": headsign_str,
                         "vehicle_ref": v_ref_str,
                         "dep_dt": dep_dt, "delay_text": delay_text, "is_due": is_due,
-                        # A SIRI nem mindig ad GTFS trip_id-t, de használjuk a LineRef/Headsign/AimedTime kombinációt az illesztéshez
+                        # A SIRI aimed_str-t használjuk illesztőként
                         "aimed_str": aimed_str, 
                     })
                     
@@ -633,6 +630,7 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
         dep_sec = gtfs_sec(st.get("departure_time") or st.get("arrival_time") or "")
         
         # --- KRITIKUS JAVÍTÁS: DUPLIKÁCIÓS ELLENŐRZÉS ---
+        # A duplikációt itt route_short_name, headsign és GTFS másodperc alapján szűrjük.
         unique_key = (route_short.upper(), headsign.upper(), dep_sec)
         
         if unique_key in seen_gtfs_trips:
@@ -648,9 +646,6 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
         
         # Az élő adatok illesztéséhez keressük a SIRI 'aimed' idejét
         aimed_iso_str = dep_dt.isoformat() 
-        # A DfT API nem mindig tartalmaz időzónát a GTFS adatokhoz illesztett aimed_str-ben.
-        # Próbáljuk meg a LineRef-et és a Headsign-t is illeszteni.
-        
         # A GTFS-ből a kereső kulcs: (ROUTE_SHORT, HEADSIGN, AIMED_ISO_STRING)
         gtfs_search_key = (route_short.upper(), headsign.upper(), aimed_iso_str)
         live_hit = live_by_key.get(gtfs_search_key)
@@ -706,8 +701,6 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
 app = FastAPI(title="Bluestar Bus Tracker")
 log.info("Loading GTFS data...")
 load_gtfs()
-
-# ... (Az összes @app.get útvonal változatlan maradt - Index, Search, Stop, Route, Debug Végpontok)
 
 @app.get("/")
 async def index(request: Request, q: str = ""):
