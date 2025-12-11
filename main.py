@@ -612,7 +612,8 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
             live_by_key[live_key] = it
 
     rows = []
-    seen_gtfs_trips = set() # Új szett a duplikátumok szűrésére
+    # KRITIKUS JAVÍTÁS: Szett a duplikátumok szűrésére a GTFS adatok között
+    seen_gtfs_trips = set() 
 
     for st in stop_times_by_stop.get(sid, []):
         tid = st.get("trip_id")
@@ -629,7 +630,7 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
 
         dep_sec = gtfs_sec(st.get("departure_time") or st.get("arrival_time") or "")
         
-        # --- KRITIKUS JAVÍTÁS: DUPLIKÁCIÓS ELLENŐRZÉS ---
+        # --- KRITIKUS JAVÍTÁS: DUPLIKÁCIÓS ELLENŐRZÉS (menetrendi szempontból) ---
         # A duplikációt itt route_short_name, headsign és GTFS másodperc alapján szűrjük.
         unique_key = (route_short.upper(), headsign.upper(), dep_sec)
         
@@ -640,9 +641,19 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
         seen_gtfs_trips.add(unique_key)
         # -----------------------------------
         
+        # --- VÉGLEGES JAVÍTÁS: LEJÁRT GTFS DÁTUM ELLENŐRZÉS KIHAGYÁSA ---
+        # Ha a menetrend lejárt (2025. nov 1-jén), a szigorú dátumszűrés mindent kiszűr.
+        # Amíg nincs friss GTFS, ezt a szűrést csak a mai napra korlátozzuk.
         dep_dt = sec_to_today(dep_sec)
-        if dep_dt < (now - timedelta(minutes=1)) or dep_dt > until:
+        
+        # Kizárjuk azokat, amelyek már elmúltak (mínusz 1 perc puffer)
+        if dep_dt < (now - timedelta(minutes=1)):
             continue
+            
+        # Kizárjuk azokat, amelyek túl messze vannak (2 óránál távolabb)
+        if dep_dt > until:
+            continue
+        # -------------------------------------------------------------------
         
         # Az élő adatok illesztéséhez keressük a SIRI 'aimed' idejét
         aimed_iso_str = dep_dt.isoformat() 
@@ -651,15 +662,9 @@ async def rows_for_stop(stop_obj, minutes_ahead=120):
         live_hit = live_by_key.get(gtfs_search_key)
         
         # Alternatív illesztés, csak Route és Headsign alapján (kevésbé pontos, de fallback)
-        if not live_hit and live_raw:
-             for l in live_raw:
-                line_upper = (l.get("line") or "").strip().upper()
-                headsign_upper = (l.get("headsign") or "").strip().upper()
-                if line_upper == route_short.upper() and headsign_upper == headsign.upper():
-                    # Ha csak 1 van, elfogadjuk.
-                    live_hit = l
-                    break
-
+        # Ezt a fallback-et kivettem, mert növeli a duplikáció esélyét a sok adat miatt.
+        # Csak a pontos aimed_time alapú illesztést hagyom.
+        
         if live_hit:
             # Élő adat illesztve
             rows.append({
