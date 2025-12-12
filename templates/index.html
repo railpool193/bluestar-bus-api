@@ -3,145 +3,158 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bluestar & Unilink Live Tracker</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-          crossorigin=""/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-            integrity="sha256-20n6a4jHW3P6T8m6tU6sXv2K3R5SDFn0JzE08C4I7F0="
-            crossorigin=""></script>
-
+    <title>BlueStar Bus Tracker (Statikus)</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <style>
-        /* A térkép teljes képernyős megjelenítéséhez */
-        #map { 
-            height: 100vh; 
-            width: 100%;
+        /* ================================================= */
+        /* CSS STÍLUSOK A VIDEÓBAN LÁTOTT MEGJELENÉSHEZ */
+        /* ================================================= */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            background-color: #f4f7f6;
+            display: flex;
+            height: 100vh;
         }
-        body { margin: 0; padding: 0; }
 
-        /* Egyedi busz ikon stílusa (a vonalszámnak) */
-        .bus-icon {
-            background-color: #005A9C; /* Bluestar kék */
+        /* Térkép konténer a bal oldalon, teljes magasságban */
+        #map {
+            width: 70%; 
+            height: 100%;
+            position: sticky; /* Vagy 'fixed', ha az egész oldalon marad */
+            top: 0;
+            border-right: 2px solid #ddd;
+            z-index: 1;
+        }
+
+        /* Információs panel a jobb oldalon (Menetrend) */
+        #info-panel {
+            width: 30%;
+            padding: 20px;
+            overflow-y: auto; /* Görgethetővé teszi, ha sok járat van */
+            background-color: #fff;
+            z-index: 2;
+        }
+
+        h2 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+
+        /* Busz járat kártya stílusa (a videóhoz hasonló megjelenés) */
+        .route-card {
+            display: flex;
+            align-items: center;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            padding: 15px;
+            margin-bottom: 15px;
+            transition: transform 0.2s;
+        }
+
+        .route-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        }
+
+        /* Vonal szám jelvény (badge) */
+        .line-badge {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%; /* Kör alakú */
+            background-color: #007bff; /* Kék alapszín */
             color: white;
-            border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            text-align: center;
-            line-height: 30px;
             font-weight: bold;
-            font-size: 14px;
-            border: 2px solid #fff;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.5);
-            /* Animáció hozzáadása a "pulzáló" hatáshoz */
-            animation: pulse 1.5s infinite;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2em;
+            margin-right: 15px;
+            flex-shrink: 0;
         }
 
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-            100% { transform: scale(1); }
+        /* Eltérő vonalszámokhoz eltérő színek (pl. 1-es vonal) */
+        .line-badge.line-1 { background-color: #e74c3c; } /* Piros */
+        .line-badge.line-2 { background-color: #2ecc71; } /* Zöld */
+
+        /* Részletek és Idő */
+        .details {
+            flex-grow: 1;
         }
+
+        .destination {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 5px;
+        }
+
+        /* Menetrendi (Scheduled) idő kiemelése */
+        .schedule-time {
+            font-size: 0.9em;
+            color: #999;
+        }
+
+        /* Élő előrejelzés (amikor működni fog) */
+        .live-prediction {
+            font-size: 1.6em;
+            font-weight: 900;
+            color: #2c3e50;
+            margin-left: auto; /* Jobb oldalra tolja */
+        }
+
+        /* Kiemelés (pl. busz éppen érkezik) */
+        .live-prediction.on-time { color: #27ae60; } /* Zöld */
+        .live-prediction.delayed { color: #e67e22; } /* Narancs */
+        /* ================================================= */
     </style>
 </head>
 <body>
 
-<div id="map"></div>
+    <div id="map"></div>
 
-<script>
-    // --- 1. TÉRKÉP BEÁLLÍTÁSA ---
-    
-    // Kezdeti középpont (Southampton, UK)
-    const SOUTHAMPTON_CENTER = [50.9097, -1.4044]; 
-    const INITIAL_ZOOM = 13;
+    <div id="info-panel">
+        <h2>Buszjáratok a környéken</h2>
+        <div id="live-departures">
+            <div class="route-card">
+                <div class="line-badge line-1">1</div>
+                <div class="details">
+                    <div class="destination">Southampton City Centre</div>
+                    <div class="schedule-time">Menetrendi idő: 14:30</div>
+                </div>
+                <div class="live-prediction">
+                    14:30
+                </div>
+            </div>
 
-    // Létrehozzuk a Leaflet térképet
-    const map = L.map('map').setView(SOUTHAMPTON_CENTER, INITIAL_ZOOM);
+            <div class="route-card">
+                <div class="line-badge line-2">2</div>
+                <div class="details">
+                    <div class="destination">Romsey (via Ampfield)</div>
+                    <div class="schedule-time">Menetrendi idő: 14:45</div>
+                </div>
+                <div class="live-prediction">
+                    14:45
+                </div>
+            </div>
+            </div>
+    </div>
 
-    // Hozzáadjuk az OpenStreetMap csempéket (Tiles)
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-    }).addTo(map);
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+        // IDE KÉNE BEILLESZTENI AZ AKTULIS JAVASCRIPT KÓDOT IS!
 
-    // Egy objektum a jelenlegi busz markerek tárolására
-    // Ez segít abban, hogy a frissítéskor ne hozzunk létre új markert, hanem csak frissítsük a pozíciót
-    let busMarkers = {}; 
+        // PÉLDA: Térkép inicializálása
+        var map = L.map('map').setView([50.9097, -1.4044], 13); // Southampton koordinátái
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
 
-    // --- 2. JELZŐK KEZELÉSE ---
-
-    /**
-     * Egyedi HTML alapú ikont hoz létre a vonalszámmal
-     * @param {string} routeId - A busz vonalának azonosítója (pl. "U1A").
-     * @returns {L.DivIcon}
-     */
-    function createBusIcon(routeId) {
-        // A vonalszámot kiszedjük a GTFS-RT adatból (pl. "Bluestar-1" -> "1")
-        const cleanRoute = routeId.split('-').pop();
-
-        return L.divIcon({
-            className: 'bus-icon',
-            html: `<div>${cleanRoute}</div>`,
-            iconSize: [30, 30], // méret beállítása
-            iconAnchor: [15, 15] // a marker közepe legyen a koordinátán
-        });
-    }
-
-    /**
-     * Lekérdezi és frissíti az élő buszpozíciókat.
-     */
-    async function updateLiveBuses() {
-        try {
-            const response = await fetch('/api/live_buses');
-            const newBuses = await response.json();
-
-            // Egy ideiglenes halmaz az újonnan beolvasott busz ID-k tárolására
-            const newBusIds = new Set();
-
-            newBuses.forEach(bus => {
-                newBusIds.add(bus.id);
-                const latLng = [bus.lat, bus.lon];
-
-                if (bus.id in busMarkers) {
-                    // A busz már létezik: csak a pozíciót frissítjük
-                    busMarkers[bus.id].setLatLng(latLng);
-                } else {
-                    // Új busz érkezett: új markert hozunk létre
-                    const icon = createBusIcon(bus.route);
-                    const marker = L.marker(latLng, { icon: icon }).addTo(map);
-
-                    // Popup hozzáadása a kattintáshoz
-                    marker.bindPopup(`
-                        <b>Vonal: ${bus.route}</b><br>
-                        Jármű azonosító: ${bus.label}<br>
-                        Utolsó frissítés: ${new Date().toLocaleTimeString()}
-                    `);
-                    
-                    busMarkers[bus.id] = marker;
-                }
-            });
-
-            // Eltávolítjuk azokat a buszokat, amelyek már nem szerepelnek az élő adatban
-            Object.keys(busMarkers).forEach(busId => {
-                if (!newBusIds.has(busId)) {
-                    map.removeLayer(busMarkers[busId]);
-                    delete busMarkers[busId];
-                }
-            });
-
-        } catch (error) {
-            console.error('Hiba az élő buszadatok frissítésekor:', error);
-            // Felhasználó felé történő hibaüzenet megjelenítése opcionális
-        }
-    }
-
-    // --- 3. FRISSÍTÉS INDÍTÁSA ---
-    
-    // Először frissítjük, amint betöltött az oldal
-    updateLiveBuses();
-
-    // Rendszeres frissítés beállítása (10 másodpercenként)
-    setInterval(updateLiveBuses, 10000); 
-
-</script>
-
+        // A Python kódja a járatokat és a megállókat beilleszti a JavaScriptbe, 
+        // ami ezeket a térképen elhelyezi.
+    </script>
 </body>
 </html>
