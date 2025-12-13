@@ -3,25 +3,49 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bluestar Élő Buszinfó</title>
+    <title>Dinamikus Buszinfó</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
           integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/SJPMe3/Jpm0a70yPTs="
           crossorigin=""/>
 
     <style>
-        body { margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f9; display: flex; }
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; display: flex; overflow: hidden; }
         #map-container { flex-grow: 1; height: 100vh; }
-        #sidebar { width: 350px; background-color: white; padding: 20px; box-shadow: -2px 0 5px rgba(0,0,0,0.1); overflow-y: auto; }
-        h2 { border-bottom: 2px solid #ddd; padding-bottom: 10px; margin-top: 0; color: #333; }
-        .departure-card { display: flex; align-items: center; margin-bottom: 15px; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); background-color: #fff; }
-        .line-badge { width: 40px; height: 40px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-weight: bold; color: white; margin-right: 15px; font-size: 18px; }
-        .line-1 { background-color: #D9534F; } /* Piros */
-        .line-2 { background-color: #5CB85C; } /* Zöld */
-        .details { flex-grow: 1; }
-        .destination { font-size: 1.1em; font-weight: bold; color: #333; }
-        .time { font-size: 1.5em; font-weight: bold; color: #007bff; }
-        .info { font-size: 0.8em; color: #777; }
+        #sidebar { width: 350px; background-color: #f4f4f9; padding: 10px; box-shadow: -2px 0 10px rgba(0,0,0,0.2); overflow-y: auto; height: 100vh; display: flex; flex-direction: column; }
+        
+        /* Keresőmező stílusa */
+        #search-container { margin-bottom: 15px; padding: 5px; background-color: white; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        #search-input { width: 100%; padding: 10px; border: none; font-size: 16px; outline: none; }
+        
+        /* Lapozható tartalom */
+        #content-area { flex-grow: 1; overflow-y: auto; padding-top: 5px; }
+        
+        /* Menetrendi elemek */
+        .route-badge { 
+            display: inline-block; padding: 5px 8px; margin: 3px; 
+            border-radius: 5px; color: white; font-weight: bold; 
+            cursor: pointer; font-size: 14px; text-align: center;
+        }
+        .route-badge:hover { opacity: 0.8; }
+        
+        /* Keresési eredmény kártyák */
+        .search-result-card {
+            padding: 12px; margin-bottom: 8px; background-color: white; 
+            border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            cursor: pointer;
+        }
+        .result-name { font-weight: bold; font-size: 1.1em; color: #333; }
+        .result-info { font-size: 0.9em; color: #666; }
+
+        /* Indulási lista (Departure List) */
+        .departure-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px dashed #eee; align-items: center; }
+        .dep-line { width: 30px; height: 30px; border-radius: 4px; background-color: #007bff; color: white; display: flex; justify-content: center; align-items: center; font-weight: bold; font-size: 1.1em; margin-right: 10px; }
+        .dep-time { font-weight: bold; font-size: 1.4em; color: #5CB85C; } /* Zöld a percekhez */
+        .dep-details { flex-grow: 1; }
+        
+        /* Nincs találat üzenet */
+        #no-results { padding: 20px; text-align: center; color: #777; }
     </style>
 </head>
 <body>
@@ -31,49 +55,60 @@
     </div>
 
     <div id="sidebar">
-        <h2>Buszjáratok a környéken</h2>
-        {% for dep in departures %}
-        <div class="departure-card">
-            <div class="line-badge {{ dep.badge_class }}">{{ dep.line }}</div>
-            <div class="details">
-                <div class="destination">{{ dep.destination }}</div>
-                <div class="info">Menetrendi idő: {{ dep.time }}</div>
-            </div>
-            <div class="time">{{ dep.time }}</div>
+        
+        <div id="search-container">
+            <input type="text" id="search-input" placeholder="Megálló vagy viszonylat keresése">
         </div>
-        {% endfor %}
+
+        <div id="content-area">
+            
+            <div id="highlighted-routes" style="margin-bottom: 15px;">
+                <h3>Kiemelt forgalmi változások</h3>
+                {% for route in routes %}
+                    <span class="route-badge" style="background-color: {{ route.color }};" 
+                          data-route-id="{{ route.id }}" 
+                          onclick="showRouteDetail('{{ route.id }}')">
+                        {{ route.short_name }}
+                    </span>
+                {% endfor %}
+            </div>
+
+            <div id="dynamic-results">
+                <div id="initial-message">Kezdje el a gépelést a kereséshez!</div>
+                <div id="departure-list" style="display: none;">
+                    </div>
+            </div>
+            
+        </div>
+
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-            integrity="sha256-20n6E9lQj6vF6zPqL5y6X5c7sNqH2t9mS0D3t9C3a5A="
+            integrity="sha256-20n6E9lQj6vF6zPqL5y6X5c7sNqH2t9mS0D3t9C3a5a="
             crossorigin=""></script>
 
     <script>
-        // Southampton koordinátái (az Ön által feltöltött térkép alapján)
+        // Térkép inicializálás
         const SOUTHAMPTON_CENTER = [50.9097, -1.4043]; 
-        const INITIAL_ZOOM = 13;
-        
-        // Térkép inicializálása
-        const map = L.map('map').setView(SOUTHAMPTON_CENTER, INITIAL_ZOOM);
-
-        // Mapbox/OpenStreetMap csempe réteg hozzáadása
+        const map = L.map('map').setView(SOUTHAMPTON_CENTER, 13);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
 
-        // Busz marker csoport és tároló a gyors frissítéshez
         const busMarkers = {};
         const busIcon = L.icon({
-            iconUrl: 'https://cdn-icons-png.flaticon.com/512/3671/3671754.png', // Busz ikon URL-je
+            iconUrl: 'https://cdn-icons-png.flaticon.com/512/3671/3671754.png', 
             iconSize: [32, 32],
-            iconAnchor: [16, 32],
-            popupAnchor: [0, -32]
+            iconAnchor: [16, 32]
         });
 
-        // Élő buszadatok lekérése
+        // --- VALÓS IDEJŰ BUSZ ADATOK ---
         function fetchBusData() {
             fetch('/api/live_data')
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    return response.json();
+                })
                 .then(data => {
                     updateBusMarkers(data);
                 })
@@ -81,7 +116,7 @@
                     console.error('Hiba az élő adatok lekérdezésekor:', error);
                 });
         }
-
+        
         function updateBusMarkers(liveBusData) {
             const currentBusIds = new Set();
             
@@ -89,27 +124,116 @@
                 const busId = bus.id;
                 currentBusIds.add(busId);
                 const latLng = [bus.lat, bus.lon];
-                const popupContent = `**Járat:** ${bus.line_ref}<br>(${bus.operator_ref})<br>Frissítve: ${new Date().toLocaleTimeString()}`;
+                const popupContent = `**Járat:** ${bus.line_ref}<br>**Cél:** ${bus.dest}`;
 
                 if (busId in busMarkers) {
-                    // Ha a marker létezik, csak frissítjük a pozíciót
                     busMarkers[busId].setLatLng(latLng);
-                    busMarkers[busId].bindPopup(popupContent).openPopup();
                 } else {
-                    // Ha új busz, létrehozzuk a markert
                     const marker = L.marker(latLng, { icon: busIcon }).addTo(map);
                     marker.bindPopup(popupContent);
                     busMarkers[busId] = marker;
                 }
             });
 
-            // Eltávolítjuk azokat a markereket, amik már nem szerepelnek az élő adatban
+            // Eltávolítja az inaktív buszokat
             Object.keys(busMarkers).forEach(id => {
                 if (!currentBusIds.has(id)) {
                     map.removeLayer(busMarkers[id]);
                     delete busMarkers[id];
                 }
             });
+        }
+        
+        // --- DINAMIKUS KERESÉS ÉS INDULÁSOK ---
+        const searchInput = document.getElementById('search-input');
+        const dynamicResults = document.getElementById('dynamic-results');
+        let searchTimeout;
+
+        // Keresés indítása gépelés közben
+        searchInput.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            const query = searchInput.value.trim();
+            
+            if (query.length > 1) {
+                searchTimeout = setTimeout(() => searchData(query), 300);
+            } else {
+                dynamicResults.innerHTML = '<div id="initial-message">Kezdje el a gépelést a kereséshez!</div>';
+            }
+        });
+        
+        function searchData(query) {
+            fetch(`/api/search?q=${query}`)
+                .then(response => response.json())
+                .then(results => {
+                    displaySearchResults(results);
+                })
+                .catch(error => {
+                    console.error('Keresési hiba:', error);
+                    dynamicResults.innerHTML = '<div id="no-results">Hiba történt a keresés közben.</div>';
+                });
+        }
+
+        function displaySearchResults(results) {
+            let html = '';
+            if (results.length === 0) {
+                html = '<div id="no-results">Nincs találat a megadott kifejezésre.</div>';
+            } else {
+                results.forEach(item => {
+                    if (item.type === 'route') {
+                        html += `
+                            <div class="search-result-card" onclick="showRouteDetail('${item.data.id}')">
+                                <span class="route-badge" style="background-color: ${item.data.color};">${item.data.short_name}</span>
+                                <div class="result-name">${item.data.long_name}</div>
+                                <div class="result-info">Viszonylat megtekintése a térképen</div>
+                            </div>
+                        `;
+                    } else if (item.type === 'stop') {
+                         html += `
+                            <div class="search-result-card" onclick="showDepartures('${item.data.id}')">
+                                <div class="result-name">${item.data.name}</div>
+                                <div class="result-info">Valós idejű indulások megtekintése</div>
+                            </div>
+                        `;
+                    }
+                });
+            }
+            dynamicResults.innerHTML = html;
+        }
+
+        function showRouteDetail(routeId) {
+            // Itt valósulna meg az útvonal kiemelése a térképen
+            alert(`A(z) ${routeId} vonal kiemelése a térképen (funkció még fejlesztés alatt)`);
+        }
+
+        function showDepartures(stopId) {
+            // Valós idejű indulások lekérése
+            fetch(`/api/departures/${stopId}`)
+                .then(response => response.json())
+                .then(data => {
+                    displayDepartures(data);
+                })
+                .catch(error => {
+                    console.error('Indulási adatok hiba:', error);
+                    dynamicResults.innerHTML = '<div id="no-results">Nem sikerült betölteni az indulási adatokat.</div>';
+                });
+        }
+        
+        function displayDepartures(data) {
+            let html = `<h3>Indulások: ${data.stop_id} (Szimulált)</h3>`;
+            data.departures.forEach(dep => {
+                const timeColor = dep.delay >= 0 ? '#D9534F' : '#5CB85C'; // Késés: Piros / Korai: Zöld
+                html += `
+                    <div class="departure-item">
+                        <div class="dep-line" style="background-color: ${timeColor};">${dep.line}</div>
+                        <div class="dep-details">
+                            <div class="result-name">${dep.destination}</div>
+                            <div class="result-info">Jármű: ${dep.vehicle_id}</div>
+                        </div>
+                        <div class="dep-time" style="color: ${timeColor};">${dep.time}</div>
+                    </div>
+                `;
+            });
+            dynamicResults.innerHTML = html;
         }
 
         // Adatlekérés indítása és rendszeres frissítés (5 másodpercenként)
