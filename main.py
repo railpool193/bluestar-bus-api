@@ -9,11 +9,12 @@ import time
 app = Flask(__name__)
 
 # --- XML NÉVTÉR DEFINÍCIÓJA (KRITIKUS A SIRI PARSZOLÁSHOZ) ---
+# A DfT SIRI XML formátumához szükséges
 NAMESPACES = {
     'siri': 'http://www.siri.org.uk/siri'
 }
 
-# --- ADATELÉRHETŐSÉG ÉS VÁLTOZÓK ELLENŐRZÉSE ---
+# --- KONFIGURÁCIÓS FÜGGVÉNY ---
 
 def get_config():
     """Lekéri a kritikus környezeti változókat a Railway-ről."""
@@ -22,23 +23,21 @@ def get_config():
         'realtime_feed_url': os.environ.get('DFTBUS_REALTIME_FEED_URL'),
         'operator_ref': os.environ.get('DFTBUS_OPERATOR_REF', 'BLUS')
     }
-    # Ideális esetben itt kellene lennie a statikus GTFS adatok betöltésének is
-    # (pl. megállólista, menetrendi vonalak)
     return config
 
-# --- ÉLŐ ADATOK LEKÉRÉSE ÉS FELDOLGOZÁSA ---
+# --- ÉLŐ ADATOK LEKÉRÉSE ÉS FELDOLGOZÁSA (A JAVÍTOTT RÉSZ) ---
 
 def fetch_realtime_data():
     """
-    Lekéri a nyers élő adatokat a DfT datafeed URL-jéről (GET kérés),
-    és kiszedi a buszok GPS pozícióit.
+    Lekéri a nyers élő adatokat a DfT datafeed URL-jéről,
+    és kiszedi a buszok GPS pozícióit az XML-ből.
     """
     config = get_config()
     REALTIME_FEED_URL = config['realtime_feed_url']
     OPERATOR_REF = config['operator_ref']
 
     if not REALTIME_FEED_URL:
-        print("Hiba: DFTBUS_REALTIME_FEED_URL hiányzik a Railway-ről.")
+        print("Hiba: DFTBUS_REALTIME_FEED_URL környezeti változó hiányzik.")
         return []
 
     try:
@@ -47,13 +46,15 @@ def fetch_realtime_data():
         response.raise_for_status() # Hibát dob, ha a státusz 4xx vagy 5xx
         
         # 2. XML PARSZOLÁS
+        # Az eltérő DfT XML formátumok kezelésére a 'strip_string' paramétert is használhatjuk,
+        # de a fromstring a leggyakoribb.
         root = ET.fromstring(response.content)
         
         live_data = []
 
         # 3. KIBÁNYÁSZÁS AZ ÖMLESZTETT XML-BŐL
-        # SIRI útvonal a járműpozíciókhoz
-        siri_path = 'siri:ServiceDelivery/siri:VehicleMonitoringDelivery/siri:VehicleActivity'
+        # JAVÍTÁS: A './' prefix hozzáadva az XPath-hez a névtérfeloldási hiba elkerülése érdekében!
+        siri_path = './siri:ServiceDelivery/siri:VehicleMonitoringDelivery/siri:VehicleActivity'
         
         # Iterálás a VehicleActivity elemeken (minden busz)
         for activity in root.findall(siri_path, NAMESPACES):
@@ -61,7 +62,7 @@ def fetch_realtime_data():
             journey_ref = activity.find('siri:MonitoredVehicleJourney', NAMESPACES)
             
             if journey_ref is not None:
-                # Szűrünk a saját operátorunkra (BLUS) a hatékonyság érdekében
+                # Szűrünk a saját operátorunkra (BLUS)
                 operator_el = journey_ref.find('siri:OperatorRef', NAMESPACES)
                 if operator_el is not None and operator_el.text == OPERATOR_REF:
                     
@@ -71,17 +72,17 @@ def fetch_realtime_data():
                     lon_el = loc_el.find('siri:Longitude', NAMESPACES) if loc_el is not None else None
                     
                     if lat_el is not None and lon_el is not None:
-                        # Kinyerjük a kulcsadatokat (járat azonosító, vonalszám)
+                        # Kinyerjük a kulcsadatokat
                         line_ref = journey_ref.find('siri:LineRef', NAMESPACES).text if journey_ref.find('siri:LineRef', NAMESPACES) is not None else 'N/A'
                         vehicle_ref = journey_ref.find('siri:VehicleRef', NAMESPACES).text if journey_ref.find('siri:VehicleRef', NAMESPACES) is not None else 'N/A'
                         
                         live_data.append({
-                            'id': vehicle_ref, # Egyedi azonosító
+                            'id': vehicle_ref, 
                             'line_ref': line_ref,
                             'operator_ref': OPERATOR_REF,
                             'lat': float(lat_el.text),
                             'lon': float(lon_el.text),
-                            'timestamp': time.time() # Segít a frissítésben
+                            'timestamp': time.time()
                         })
                         
         print(f"Sikeresen feldolgozva {len(live_data)} darab élő járatadat. Készen áll a térkép frissítésére.")
@@ -91,7 +92,7 @@ def fetch_realtime_data():
         print(f"Hiba a DfT feed lekérdezésekor: {e}")
         return []
     except ET.ParseError as e:
-        print(f"Hiba az XML feldolgozásakor (ellenőrizze a formátumot): {e}")
+        print(f"Hiba az XML feldolgozásakor (ellenőrizze, hogy az URL valóban XML-t küld-e): {e}")
         return []
     except Exception as e:
         print(f"Váratlan hiba történt az élő adatfeldolgozásban: {e}")
@@ -101,28 +102,27 @@ def fetch_realtime_data():
 
 @app.route('/')
 def index():
-    """Főoldal megjelenítése (statikus adatok és térkép)"""
-    # Ezen a ponton töltené be a statikus GTFS adatokat a sablonhoz
+    """Főoldal megjelenítése (ahol a statikus adatok és a térkép van)"""
     
-    # Helyettesítő statikus adatok a teszteléshez (ezt később a valós adatokra kell cserélnie)
+    # Helyettesítő statikus adatok (Ezeket a GTFS-ből kellene töltenie)
     static_departures = [
         {'line': '1', 'destination': 'Southampton City Centre', 'time': '14:30', 'badge_class': 'line-1'},
         {'line': '2', 'destination': 'Romsey (via Ampfield)', 'time': '14:45', 'badge_class': 'line-2'},
         {'line': 'U1', 'destination': 'University Campus', 'time': '15:00', 'badge_class': 'line-1'},
     ]
     
-    # A statikus megállókat és vonalakat is át kell adnia a template-nek!
+    # A statikus megállókat, útvonalakat (amelyeket a GTFS-ből töltött be) 
+    # is át kell adnia az index.html sablonnak!
     
     return render_template('index.html', departures=static_departures)
 
 @app.route('/api/live_data')
 def api_live_data():
-    """API végpont az élő buszpozíciókhoz (ezt hívja a JavaScript a térképen)"""
+    """API végpont az élő buszpozíciókhoz"""
     live_positions = fetch_realtime_data()
-    # Ezt a JSON-t használja a térképen lévő busz marker mozgatásához
     return jsonify(live_positions)
 
 # --- INDÍTÁS ---
 if __name__ == '__main__':
-    # A host=0.0.0.0 szükséges a Railway-en való futtatáshoz
+    # A host=0.0.0.0 beállítás szükséges a Railway-en való futtatáshoz
     app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000), debug=True)
