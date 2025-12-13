@@ -1,8 +1,5 @@
-fastapi
 python-multipart
 jinja2
-pytz
-httpx
 gunicorn
 Flask
 requests
