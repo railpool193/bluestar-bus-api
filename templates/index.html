@@ -4,97 +4,641 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Megállóhelyi Menetrend - Valós idejű</title>
-    <link rel="stylesheet" href="styles.css">
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
     <style>
-        /* Minimalista alap stílus a megjelenéshez (Ezt érdemes külön CSS fájlba tenni!) */
-        body { font-family: sans-serif; background-color: #2e2e2e; color: #ffffff; margin: 0; padding: 0; }
-        .header, .search-container { background-color: #1e1e1e; padding: 15px; }
-        .search-input { width: 100%; padding: 10px; border: none; border-radius: 4px; background-color: #444; color: #fff; }
-        .main-content { display: flex; height: 100vh; }
-        .map-container { flex: 2; background-color: #3e3e3e; } /* Ide jön a térkép */
-        .sidebar { flex: 1; background-color: #2e2e2e; padding: 10px; overflow-y: auto; }
-        .section-title { color: #ccc; margin-top: 20px; font-weight: bold; }
-        .fav-item { background-color: #444; padding: 10px; border-radius: 4px; margin-bottom: 8px; display: flex; align-items: center; }
-        .star { color: gold; margin-right: 10px; font-size: 1.2em; }
-        .line-tag { display: inline-block; background-color: #007bff; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; margin-right: 5px; }
-        .alert-tag { background-color: #ffc107; color: #2e2e2e; }
+        /* Alap beállítások, sötét téma, betűtípus */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            background-color: #2e2e2e;
+            color: #ffffff;
+            margin: 0;
+            padding: 0;
+            line-height: 1.4;
+            overflow: hidden; /* Megakadályozza a felesleges görgetősávot */
+        }
+
+        /* Fő alkalmazás konténer */
+        .app-container {
+            display: flex;
+            flex-direction: column; /* Alapértelmezetten mobil nézet (felül térkép, alul sidebar) */
+            height: 100vh;
+        }
+
+        /* Térkép konténer (alapértelmezett, mobilra igazítva) */
+        .map-container {
+            height: 40vh;
+            width: 100%;
+            order: 1; /* Mobil nézetben felül */
+        }
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+
+        /* Jobb oldali panel/Menetrendi panel */
+        .sidebar {
+            height: 60vh;
+            width: 100%;
+            background-color: #2e2e2e;
+            overflow-y: auto; /* Görgethetővé teszi a tartalmat */
+            padding-bottom: 50px; /* Hely a mobil billentyűzet alatt */
+            order: 2; /* Mobil nézetben alul */
+        }
+
+        /* Kereső fejléc (fix helyzetben) */
+        .search-header {
+            background-color: #1e1e1e;
+            padding: 10px;
+            display: flex;
+            gap: 10px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
+        }
+
+        #searchInput {
+            flex-grow: 1;
+            padding: 12px 15px;
+            border: none;
+            border-radius: 20px;
+            background-color: #383838;
+            color: #ffffff;
+            font-size: 1em;
+        }
+        .search-button {
+            background-color: #383838;
+            color: #ffffff;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            font-size: 1.1em;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Információs szekciók (Mind a listaelemekhez, mind a szekciókhoz) */
+        .section {
+            background-color: #222222;
+            padding: 10px;
+            margin-top: 10px;
+        }
+        .section h3 {
+            margin: 0 0 10px 0;
+            color: #ffffff;
+            font-weight: 600;
+        }
+        .subtitle {
+            font-size: 0.9em;
+            color: #ccc;
+            margin-bottom: 10px;
+        }
+
+        /* Járat címkék stílusai */
+        .line-tag {
+            display: inline-block;
+            padding: 4px 8px;
+            margin: 3px 3px 3px 0;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: bold;
+            text-align: center;
+            color: white;
+        }
+        /* Színek a videó és képek alapján (BKK Futár stílus) */
+        .tag-bus, .tag-blue { background-color: #007bff; }
+        .tag-metro { background-color: #e51d21; } /* Piros (M2) vagy Narancs (M4) */
+        .tag-h, .tag-fehervar { background-color: #7ab317; } /* Zöld (HÉV) */
+        .tag-trolley { background-color: #e6b325; } /* Troli */
+        .tag-night { background-color: #1a1a1a; border: 1px solid #999; }
+        .tag-alert { background-color: #ffc107; color: #333; } /* Sárga (Forgalmi változás) */
+        .tag-red { background-color: #dc3545; }
+
+        .tags-container {
+            padding: 5px 0;
+        }
+
+        /* Kedvenc listaelem és Keresési találat elemei */
+        .list-item {
+            background-color: #383838;
+            padding: 15px;
+            margin-top: 1px;
+            cursor: pointer;
+            border-radius: 0;
+            border-left: 5px solid transparent;
+        }
+        .list-item:hover {
+            background-color: #444;
+        }
+        .fav-item {
+            border-left-color: gold;
+        }
+        .list-item strong {
+            font-size: 1.1em;
+            display: block;
+        }
+        .list-item p {
+            margin: 5px 0 0 0;
+            font-size: 0.9em;
+            color: #ccc;
+        }
+        .star {
+            float: right;
+            color: gold;
+            font-size: 1.2em;
+        }
+
+        /* Érkezési lista és Jármű részletek (Detail View) */
+        .arrival-item, .trip-item {
+            padding: 12px 0;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .arrival-item:last-child, .trip-item:last-child {
+            border-bottom: none;
+        }
+
+        .arrival-info {
+            flex-grow: 1;
+            padding-left: 10px;
+        }
+        .delay-time {
+            font-weight: bold;
+            font-size: 1.2em;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+        /* Színek a videó alapján */
+        .delay-early { background-color: #dc3545; color: white; } /* Korai (Piros) */
+        .delay-late { background-color: #28a745; color: white; } /* Késik (Zöld) */
+        .delay-ontime { color: #ffc107; } /* Pontos (Sárga/Fehér) */
+
+        /* Trip (Jármű) nézet listaelem */
+        .trip-item .trip-time {
+            width: 60px;
+            text-align: right;
+            font-weight: 600;
+        }
+        .trip-item .trip-info {
+            flex-grow: 1;
+            padding: 0 15px;
+        }
+        .trip-item .trip-delay {
+            font-weight: bold;
+        }
+        .active-stop {
+            color: #007bff;
+            font-weight: bold;
+        }
+        .visited-stop {
+            color: #777;
+            text-decoration: line-through;
+        }
+
+        /* **Desktop (Nagyobb képernyő) optimalizáció** */
+        @media (min-width: 769px) {
+            .app-container {
+                flex-direction: row; /* Vízszintes elrendezés */
+            }
+            .map-container {
+                height: 100vh;
+                flex: 2; /* Térkép 2/3 szélesség */
+                order: 1;
+            }
+            .sidebar {
+                height: 100vh;
+                flex: 1; /* Sidebar 1/3 szélesség */
+                order: 2;
+            }
+        }
     </style>
 </head>
 <body>
 
-    <div class="header">
-        <div class="search-container">
-            <input type="text" class="search-input" placeholder="Megálló vagy viszonylat keresése">
-        </div>
-    </div>
-
-    <div class="main-content">
-        <div id="map" class="map-container">
-            <div style="padding: 20px; text-align: center; color: #aaa;">
-                Valós idejű térkép megjelenítés helye
-                <br>
-                (Szerver oldali/API integráció szükséges)
-            </div>
+    <div class="app-container">
+        
+        <div id="map-container" class="map-container">
+            <div id="map"></div>
         </div>
 
-        <div class="sidebar">
-            <h3 class="section-title">Kiemelt forgalmi változások</h3>
-            <div class="traffic-alerts">
-                <span class="line-tag alert-tag">3</span>
-                <span class="line-tag alert-tag">62</span>
-                <span class="line-tag alert-tag">62A</span>
-                </div>
-
-            <h3 class="section-title">Kedvenc megállók és viszonylatok</h3>
-            <div class="favourites-list">
-                <div class="fav-item">
-                    <span class="star">★</span>
-                    <div>
-                        <strong>Szent kereszt tér</strong>
-                        <br>
-                        <span class="line-tag">46</span>
-                        <span class="line-tag">97E</span>
-                        <span class="line-tag">161</span>
-                        </div>
-                </div>
-                <div class="fav-item">
-                    <span class="star">★</span>
-                    <div>
-                        <strong>Harmat utca</strong>
-                        <br>
-                        <span class="line-tag">162</span>
-                        <span class="line-tag">262</span>
-                        <span class="line-tag">909</span>
-                    </div>
-                </div>
-                </div>
-
-            <h3 class="section-title" id="search-results-title" style="display:none;">Találatok a "keleti" kifejezésre</h3>
+        <div class="sidebar" id="sidebar">
             
-            <div id="search-results">
-                <div style="background-color: #444; padding: 15px; margin-top: 10px; border-radius: 4px;">
-                    <strong>Keleti pályaudvar M (F01159)</strong>
-                    <p style="font-size: 0.9em; color: #ccc;">Új megálló</p>
-                    <div id="keleti-arrivals-list">
-                        <div style="padding: 5px 0; border-bottom: 1px solid #555;">
-                            <span class="line-tag">7E</span>
-                            <span style="float: right; color: green;">-1,5'</span>
-                            <br>
-                            <span style="font-size: 0.8em; color: #ccc;">Újpalota, Nyírpalota út - Volvo 7700A</span>
+            <header class="search-header">
+                <input type="text" id="searchInput" placeholder="Megálló vagy viszonylat keresése">
+                <button id="clearSearch" class="search-button" style="display:none;"><i class="fas fa-times"></i></button>
+            </header>
+
+            <div id="contentArea">
+                
+                <div id="alertsSection" class="section info-section">
+                    <h3>Kiemelt forgalmi változások</h3>
+                    <p class="subtitle">Fontosabb aktuális pótlások, terelések, járatkimaradások</p>
+                    <div class="tags-container" id="alertsTags">
                         </div>
-                        <div style="padding: 5px 0;">
-                            <span class="line-tag" style="background-color: #cc3333;">30A</span>
-                            <span style="float: right; color: green;">1'</span>
-                            <br>
-                            <span style="font-size: 0.8em; color: #ccc;">Megyer, Szondi utca - MERCEDES O530</span>
-                        </div>
-                    </div>
                 </div>
+
+                <div id="favouritesSection" class="section info-section">
+                    <h3>Kedvenc megállók és viszonylatok</h3>
+                    <div id="favouritesList">
+                        </div>
+                </div>
+
+                <div id="searchResultsSection" class="section" style="display:none;">
+                    <h3 id="searchResultsTitle">Találatok</h3>
+                    <div id="searchResultsList">
+                        </div>
+                </div>
+
+                <div id="detailViewSection" class="section" style="display:none;">
+                    </div>
+                
             </div>
             
         </div>
     </div>
 
-    <script src="script.js"></script>
-    </body>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- API VÉGPONT ALAP ---
+            const API_BASE_URL = '/api/'; 
+            
+            // DOM elemek gyors hivatkozásai
+            const searchInput = document.getElementById('searchInput');
+            const clearSearchButton = document.getElementById('clearSearch');
+            const searchResultsSection = document.getElementById('searchResultsSection');
+            const searchResultsList = document.getElementById('searchResultsList');
+            const detailViewSection = document.getElementById('detailViewSection');
+            
+            let map;
+            let busMarkers = L.layerGroup(); 
+
+            // --- INIT ---
+            initializeMap();
+            setupEventListeners();
+            loadInitialData(); 
+
+            // --- MAP FUNCTIONS ---
+            function initializeMap() {
+                // Southampton kezdő koordináták (mivel a mock adatok onnan származnak)
+                map = L.map('map').setView([50.93, -1.39], 13); 
+
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(map);
+                
+                busMarkers.addTo(map); 
+                
+                fetchLiveBusLocations();
+                setInterval(fetchLiveBusLocations, 10000); 
+            }
+            
+            async function fetchLiveBusLocations() {
+                try {
+                     const response = await fetch(`${API_BASE_URL}live_data`);
+                     const coords = await response.json();
+                     updateMapMarkers(coords); 
+                } catch (error) {
+                     console.error("Hiba a valós idejű koordináták lekérésekor:", error);
+                }
+            }
+            
+            function updateMapMarkers(busData) {
+                busMarkers.clearLayers();
+
+                busData.forEach(bus => {
+                    if (bus.lat && bus.lon) {
+                        const busIconHtml = `
+                            <div style="
+                                background-color: #${bus.route_color || '0057B8'}; 
+                                color: #${bus.route_text_color || 'FFFFFF'}; 
+                                border-radius: 50%; 
+                                width: 30px; 
+                                height: 30px; 
+                                text-align: center; 
+                                line-height: 30px; 
+                                font-weight: bold;
+                                font-size: 0.9em;
+                                border: 2px solid white;
+                                box-shadow: 0 0 5px rgba(0,0,0,0.5);"
+                            >
+                                ${bus.route_short_name}
+                            </div>
+                        `;
+                        
+                        const customIcon = L.divIcon({
+                            className: 'custom-bus-icon',
+                            html: busIconHtml,
+                            iconSize: [30, 30],
+                            iconAnchor: [15, 15]
+                        });
+                        
+                        const marker = L.marker([bus.lat, bus.lon], {icon: customIcon})
+                            .bindPopup(`<b>${bus.route_short_name}</b> - ${bus.dest} (ID: ${bus.id})`);
+                        
+                        busMarkers.addLayer(marker);
+                    }
+                });
+            }
+
+            // --- EVENT LISTENERS ---
+            function setupEventListeners() {
+                searchInput.addEventListener('input', (e) => {
+                    const query = e.target.value.trim();
+                    if (query.length > 0) {
+                        clearSearchButton.style.display = 'flex';
+                        if (query.length >= 2) { 
+                            performSearch(query);
+                        }
+                    } else {
+                        clearSearchButton.style.display = 'none';
+                        showSection('initial'); 
+                    }
+                });
+
+                clearSearchButton.addEventListener('click', () => {
+                    searchInput.value = '';
+                    clearSearchButton.style.display = 'none';
+                    showSection('initial');
+                });
+                
+                // Kattintás kezelése a kedvencekre (megállóra vagy útvonalra)
+                document.getElementById('favouritesList').addEventListener('click', (e) => {
+                    const item = e.target.closest('.list-item');
+                    if (item && item.dataset.stopId) {
+                        showStopArrivals(item.dataset.stopId);
+                    }
+                });
+            }
+
+            // --- DATA LOADING: INITIAL (Mock Adatok) ---
+            async function loadInitialData() {
+                const alertsTags = document.getElementById('alertsTags');
+                const favouritesList = document.getElementById('favouritesList');
+                
+                // Statikus adatok a videó/kép alapján (Alerts és Favourites)
+                alertsTags.innerHTML = `
+                    <span class="line-tag tag-alert">3</span>
+                    <span class="line-tag tag-alert">62</span>
+                    <span class="line-tag tag-alert">62A</span>
+                    <span class="line-tag tag-blue">35</span>
+                `;
+                
+                favouritesList.innerHTML = `
+                    <div class="list-item fav-item" data-stop-id="SzentKereszt">
+                        <span class="star"><i class="fas fa-star"></i></span>
+                        <div>
+                            <strong>Szent kereszt tér</strong>
+                            <p>46 → Bakancsos utca ... Újpalota, Nyírpalota út</p>
+                            <p><span class="line-tag tag-blue">46</span> <span class="line-tag tag-night">97E</span> <span class="line-tag tag-bus">161</span></p>
+                        </div>
+                    </div>
+                     <div class="list-item fav-item" data-stop-id="HarmatUtca">
+                        <span class="star"><i class="fas fa-star"></i></span>
+                        <div>
+                            <strong>Harmat utca</strong>
+                            <p>162 → Élessarok ... Maglód, Auchan áruház</p>
+                            <p><span class="line-tag tag-bus">162</span> <span class="line-tag tag-bus">262</span> <span class="line-tag tag-night">909</span></p>
+                        </div>
+                    </div>
+                `;
+                
+                showSection('initial');
+            }
+            
+            // --- SECTION MANAGEMENT ---
+            function showSection(sectionName) {
+                const sections = [
+                    document.getElementById('alertsSection'),
+                    document.getElementById('favouritesSection'),
+                    searchResultsSection,
+                    detailViewSection
+                ];
+                
+                sections.forEach(s => s.style.display = 'none');
+                
+                if (sectionName === 'initial') {
+                    document.getElementById('alertsSection').style.display = 'block';
+                    document.getElementById('favouritesSection').style.display = 'block';
+                } else if (sectionName === 'search') {
+                    searchResultsSection.style.display = 'block';
+                } else if (sectionName === 'detail') {
+                    detailViewSection.style.display = 'block';
+                }
+            }
+
+            // --- SEARCH FUNCTIONALITY (API hívás: /api/search) ---
+            async function performSearch(query) {
+                showSection('search');
+                searchResultsList.innerHTML = '<p style="text-align:center; color:#ccc;">Keresés...</p>';
+
+                try {
+                    const response = await fetch(`${API_BASE_URL}search?q=${encodeURIComponent(query)}`);
+                    const results = await response.json(); 
+                    
+                    document.getElementById('searchResultsTitle').textContent = `Találatok a "${query}" kifejezésre`;
+                    
+                    const allResults = [
+                        ...results.stops.map(s => ({
+                            type: 'stop',
+                            id: s.stop_id,
+                            name: s.stop_name,
+                            description: `Megálló azonosító: ${s.stop_id}`,
+                            lines: []
+                        })),
+                        ...results.routes.map(r => ({
+                            type: 'route',
+                            id: r.route_id,
+                            name: `${r.route_short_name} - ${r.route_long_name}`,
+                            description: r.route_type_desc,
+                            lines: [{name: r.route_short_name, color: r.route_color, textColor: r.route_text_color}]
+                        }))
+                    ];
+
+                    if (allResults.length > 0) {
+                        searchResultsList.innerHTML = allResults.map(item => {
+                            const lineTags = item.lines.map(line => 
+                                `<span class="line-tag" style="background-color: #${line.color || getLineColor(line.name)}; color: #${line.textColor || 'FFFFFF'};">${line.name}</span>`
+                            ).join('');
+
+                            const onClickAction = item.type === 'stop' 
+                                ? `showStopArrivals('${item.id}')` 
+                                : `showRoutePath('${item.id}')`;
+                            
+                            return `
+                                <div class="list-item" data-id="${item.id}" onclick="${onClickAction}">
+                                    <strong>${item.name}</strong>
+                                    <p>${item.description}</p>
+                                    <p>${lineTags}</p>
+                                </div>
+                            `;
+                        }).join('');
+                    } else {
+                        searchResultsList.innerHTML = '<p style="text-align:center; color:#ccc;">Nincs találat.</p>';
+                    }
+
+                } catch (error) {
+                    console.error('Keresési hiba:', error);
+                    searchResultsList.innerHTML = '<p style="text-align:center; color:red;">Hiba történt a keresés során.</p>';
+                }
+            }
+
+            // --- STOP ARRIVALS (API hívás: /api/departures) ---
+            window.showStopArrivals = async (stopId) => {
+                showSection('detail');
+                detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Érkezések betöltése...</p>';
+                
+                try {
+                    const response = await fetch(`${API_BASE_URL}departures/${stopId}`);
+                    const data = await response.json(); 
+                    
+                    const stopName = data.stopName || `Megálló ID: ${stopId}`;
+                    const headerHtml = `
+                        <header class="section" style="margin-top:0;">
+                            <h3>${stopName} <span style="font-size:0.8em; color:#999;">(${data.stop_id})</span></h3>
+                            <p class="subtitle">Valós idejű indulások (GTFS alapú szimuláció)</p>
+                        </header>
+                    `;
+
+                    const arrivalListHtml = data.departures.map((a, index) => {
+                        const tripId = a.vehicle_id || `TRIP_${a.line}_${index}`; 
+                        const delayDisplay = a.delay !== null ? formatDelay(a.delay, false) : a.time;
+                        const delayClass = a.delay !== null ? getDelayClass(a.delay) : 'delay-ontime';
+
+                        return `
+                            <div class="arrival-item" onclick="showTripDetails('${tripId}', '${a.line}', '${a.destination}')">
+                                <span class="line-tag" style="background-color: #${a.route_color || getLineColor(a.line)}; color: #${a.route_text_color || 'FFFFFF'};">${a.line}</span>
+                                <div class="arrival-info">
+                                    <p style="margin:0; font-weight:600;">${a.destination}</p>
+                                    <p style="margin:0; font-size:0.8em; color:#aaa;">${a.vehicle_id || 'GTFS menetrend'}</p>
+                                </div>
+                                <span class="delay-time ${delayClass}">${delayDisplay}</span>
+                            </div>
+                        `;
+                    }).join('');
+
+                    detailViewSection.innerHTML = headerHtml + `<div id="arrivalList">${arrivalListHtml}</div>`;
+                    
+                } catch (error) {
+                    console.error('Érkezések hiba:', error);
+                    detailViewSection.innerHTML = '<p style="text-align:center; color:red;">Hiba történt az érkezések betöltésekor.</p>';
+                }
+            }
+            
+            // --- ROUTE PATH (API hívás: /api/route_shapes) ---
+            window.showRoutePath = async (routeId) => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}route_shapes/${routeId}`);
+                    const coords = await response.json(); 
+                    
+                    if (coords && coords.length > 0) {
+                        showSection('initial'); 
+                        
+                        const routeLine = L.polyline(coords, {
+                            color: '#0057B8', 
+                            weight: 5, 
+                            opacity: 0.8
+                        }).addTo(map);
+
+                        map.fitBounds(routeLine.getBounds());
+                        
+                        // Eltávolítás 30 másodperc után
+                        setTimeout(() => map.removeLayer(routeLine), 30000);
+                    } else {
+                        alert(`Nincs útvonaladat a ${routeId} járathoz.`);
+                    }
+
+                } catch (error) {
+                    console.error('Útvonal kirajzolási hiba:', error);
+                }
+            }
+            
+            // --- TRIP / VEHICLE DETAIL VIEW (Mock: Mivel nincs Flask végpont) ---
+            window.showTripDetails = async (tripId, line, destination) => {
+                showSection('detail');
+                detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Útvonal betöltése...</p>';
+
+                // Mock adatok a videóban látott listához:
+                const mockTripData = {
+                    destination: destination,
+                    vehicle: tripId,
+                    trackingInfo: 'Simulált útvonal',
+                    totalDelay: 2,
+                    route: [
+                        { time: '12:45', name: 'Southampton Central', delay: 2, status: 'past' },
+                        { time: '12:50', name: 'University', delay: 3, status: 'current' },
+                        { time: '13:00', name: 'Bassett Green', delay: 4, status: 'future' }
+                    ]
+                };
+
+                const headerHtml = `
+                    <header class="section" style="margin-top:0;">
+                        <span class="line-tag ${getLineTagClass(line)}">${line}</span>
+                        <h3 style="display:inline-block; margin-left:10px;">${mockTripData.destination}</h3>
+                        <p class="subtitle">Jármű ID: ${mockTripData.vehicle}</p>
+                        <p style="float:right; font-size:1.5em; font-weight:bold; color: ${mockTripData.totalDelay > 0 ? '#28a745' : '#dc3545'};">${formatDelay(mockTripData.totalDelay)}</p>
+                    </header>
+                `;
+                
+                const routeHtml = mockTripData.route.map(stop => `
+                    <div class="trip-item ${stop.status === 'past' ? 'visited-stop' : ''} ${stop.status === 'current' ? 'active-stop' : ''}">
+                        <span class="trip-time">${stop.time}</span>
+                        <div class="trip-info">
+                            ${stop.name}
+                        </div>
+                        <span class="trip-delay ${getDelayClass(stop.delay)}">${formatDelay(stop.delay, true)}</span>
+                    </div>
+                `).join('');
+                
+                detailViewSection.innerHTML = headerHtml + routeHtml;
+            }
+
+            // --- UTILITY FUNCTIONS ---
+            function getLineColor(line) {
+                if (line.includes('M')) return 'E51D21';
+                if (line.includes('U')) return '007bff';
+                if (line.startsWith('9')) return '1a1a1a';
+                return '0057B8';
+            }
+            function getLineTagClass(line) {
+                if (line.includes('M')) return 'tag-metro';
+                if (line.includes('U')) return 'tag-blue';
+                if (line.startsWith('9')) return 'tag-night';
+                return 'tag-bus';
+            }
+
+            function formatDelay(delayInMinutes, short = false) {
+                const sign = delayInMinutes >= 0 ? '+' : '';
+                const absDelay = Math.abs(delayInMinutes);
+                
+                if (absDelay < 0.5 && delayInMinutes !== 0) { 
+                     return delayInMinutes > 0 ? '+0\'' : '-0\'';
+                }
+                
+                if (short) {
+                    return `${sign}${Math.round(absDelay)}'`; 
+                }
+                return `${sign}${absDelay.toFixed(1).replace('.', ',')}'`; 
+            }
+            
+            function getDelayClass(delayInMinutes) {
+                if (delayInMinutes < 0) return 'delay-early'; 
+                if (delayInMinutes > 0) return 'delay-late'; 
+                return 'delay-ontime';
+            }
+            
+            window.showStopArrivals = showStopArrivals;
+            window.showRoutePath = showRoutePath;
+            window.showTripDetails = showTripDetails;
+        });
+    </script>
+</body>
 </html>
