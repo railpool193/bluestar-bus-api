@@ -1,6 +1,6 @@
-python-multipart
-jinja2
-gunicorn
 Flask
 requests
+gunicorn
 pandas
+jinja2
+python-multipart
