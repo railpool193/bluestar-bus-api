@@ -6,10 +6,10 @@ import json
 import time
 
 # --- FLASK ALKALMAZÁS BEÁLLÍTÁSA ---
+# A Railway gunicorn parancsa ezt a változót fogja használni az app indításához: main:app
 app = Flask(__name__)
 
-# --- XML NÉVTÉR DEFINÍCIÓJA (KRITIKUS A SIRI PARSZOLÁSHOZ) ---
-# A DfT SIRI XML formátumához szükséges
+# --- XML NÉVTÉR DEFINÍCIÓJA ---
 NAMESPACES = {
     'siri': 'http://www.siri.org.uk/siri'
 }
@@ -25,7 +25,7 @@ def get_config():
     }
     return config
 
-# --- ÉLŐ ADATOK LEKÉRÉSE ÉS FELDOLGOZÁSA (A JAVÍTOTT RÉSZ) ---
+# --- ÉLŐ ADATOK LEKÉRÉSE ÉS FELDOLGOZÁSA ---
 
 def fetch_realtime_data():
     """
@@ -37,32 +37,29 @@ def fetch_realtime_data():
     OPERATOR_REF = config['operator_ref']
 
     if not REALTIME_FEED_URL:
+        # Ha nincs beállítva az URL, nem próbáljuk meg lekérni
         print("Hiba: DFTBUS_REALTIME_FEED_URL környezeti változó hiányzik.")
         return []
 
     try:
-        # 1. EGYSZERŰ GET LEKÉRDEZÉS az ömlesztett adatokhoz
+        # GET LEKÉRDEZÉS az ömlesztett adatokhoz
         response = requests.get(REALTIME_FEED_URL, timeout=15)
         response.raise_for_status() # Hibát dob, ha a státusz 4xx vagy 5xx
         
-        # 2. XML PARSZOLÁS
-        # Az eltérő DfT XML formátumok kezelésére a 'strip_string' paramétert is használhatjuk,
-        # de a fromstring a leggyakoribb.
+        # XML PARSZOLÁS
         root = ET.fromstring(response.content)
         
         live_data = []
 
-        # 3. KIBÁNYÁSZÁS AZ ÖMLESZTETT XML-BŐL
-        # JAVÍTÁS: A './' prefix hozzáadva az XPath-hez a névtérfeloldási hiba elkerülése érdekében!
+        # JAVÍTÁS: A './' prefix a névtérfeloldási hiba elkerülése érdekében
         siri_path = './siri:ServiceDelivery/siri:VehicleMonitoringDelivery/siri:VehicleActivity'
         
-        # Iterálás a VehicleActivity elemeken (minden busz)
         for activity in root.findall(siri_path, NAMESPACES):
             
             journey_ref = activity.find('siri:MonitoredVehicleJourney', NAMESPACES)
             
             if journey_ref is not None:
-                # Szűrünk a saját operátorunkra (BLUS)
+                # Szűrés a saját operátorunkra
                 operator_el = journey_ref.find('siri:OperatorRef', NAMESPACES)
                 if operator_el is not None and operator_el.text == OPERATOR_REF:
                     
@@ -72,7 +69,6 @@ def fetch_realtime_data():
                     lon_el = loc_el.find('siri:Longitude', NAMESPACES) if loc_el is not None else None
                     
                     if lat_el is not None and lon_el is not None:
-                        # Kinyerjük a kulcsadatokat
                         line_ref = journey_ref.find('siri:LineRef', NAMESPACES).text if journey_ref.find('siri:LineRef', NAMESPACES) is not None else 'N/A'
                         vehicle_ref = journey_ref.find('siri:VehicleRef', NAMESPACES).text if journey_ref.find('siri:VehicleRef', NAMESPACES) is not None else 'N/A'
                         
@@ -85,14 +81,14 @@ def fetch_realtime_data():
                             'timestamp': time.time()
                         })
                         
-        print(f"Sikeresen feldolgozva {len(live_data)} darab élő járatadat. Készen áll a térkép frissítésére.")
+        print(f"Sikeresen feldolgozva {len(live_data)} darab élő járatadat.")
         return live_data
 
     except requests.exceptions.RequestException as e:
         print(f"Hiba a DfT feed lekérdezésekor: {e}")
         return []
     except ET.ParseError as e:
-        print(f"Hiba az XML feldolgozásakor (ellenőrizze, hogy az URL valóban XML-t küld-e): {e}")
+        print(f"Hiba az XML feldolgozásakor: {e}")
         return []
     except Exception as e:
         print(f"Váratlan hiba történt az élő adatfeldolgozásban: {e}")
@@ -102,27 +98,21 @@ def fetch_realtime_data():
 
 @app.route('/')
 def index():
-    """Főoldal megjelenítése (ahol a statikus adatok és a térkép van)"""
+    """Főoldal megjelenítése."""
     
-    # Helyettesítő statikus adatok (Ezeket a GTFS-ből kellene töltenie)
+    # Helyettesítő statikus adatok
     static_departures = [
         {'line': '1', 'destination': 'Southampton City Centre', 'time': '14:30', 'badge_class': 'line-1'},
         {'line': '2', 'destination': 'Romsey (via Ampfield)', 'time': '14:45', 'badge_class': 'line-2'},
-        {'line': 'U1', 'destination': 'University Campus', 'time': '15:00', 'badge_class': 'line-1'},
     ]
-    
-    # A statikus megállókat, útvonalakat (amelyeket a GTFS-ből töltött be) 
-    # is át kell adnia az index.html sablonnak!
     
     return render_template('index.html', departures=static_departures)
 
 @app.route('/api/live_data')
 def api_live_data():
-    """API végpont az élő buszpozíciókhoz"""
+    """API végpont az élő buszpozíciókhoz."""
     live_positions = fetch_realtime_data()
     return jsonify(live_positions)
 
-# --- INDÍTÁS ---
-if __name__ == '__main__':
-    # A host=0.0.0.0 beállítás szükséges a Railway-en való futtatáshoz
-    app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000), debug=True)
+# --- A Konfliktust Okozó Rész TÖRÖLVE! ---
+# Ezt a részt (if __name__ == '__main__': app.run(...) ) a gunicorn/Railway veszi át.
