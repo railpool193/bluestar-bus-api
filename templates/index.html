@@ -264,387 +264,376 @@
 
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            
-            const API_BASE_URL = '/api/'; 
-            
-            const searchInput = document.getElementById('searchInput');
-            const clearSearchButton = document.getElementById('clearSearch');
-            const searchResultsSection = document.getElementById('searchResultsSection');
-            const searchResultsList = document.getElementById('searchResultsList');
-            const detailViewSection = document.getElementById('detailViewSection');
-            
-            let map;
-            let busMarkers = L.layerGroup(); 
-            let routePolyline; // A rajzolt útvonal tárolására
+document.addEventListener('DOMContentLoaded', () => {
 
-            // --- INIT ---
-            initializeMap();
-            setupEventListeners();
-            loadInitialData(); 
+  const API_BASE_URL = '/api/';
 
-            // --- MAP FUNCTIONS ---
-            function initializeMap() {
-                map = L.map('map').setView([50.93, -1.39], 13); 
+  const searchInput = document.getElementById('searchInput');
+  const clearSearchButton = document.getElementById('clearSearch');
+  const searchResultsSection = document.getElementById('searchResultsSection');
+  const searchResultsList = document.getElementById('searchResultsList');
+  const detailViewSection = document.getElementById('detailViewSection');
 
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
-                }).addTo(map);
-                
-                busMarkers.addTo(map); 
-                
-                // Valós idejű frissítés
-                fetchLiveBusLocations();
-                setInterval(fetchLiveBusLocations, 10000); 
-            }
-            
-            async function fetchLiveBusLocations() {
-                try {
-                     // Hívás a BŐVÍTETT mock adatokat adó végpontra
-                     const response = await fetch(`${API_BASE_URL}live_data`);
-                     const coords = await response.json();
-                     updateMapMarkers(coords); 
-                } catch (error) {
-                     console.error("Hiba a valós idejű koordináták lekérésekor:", error);
-                }
-            }
-            
-            function updateMapMarkers(busData) {
-                busMarkers.clearLayers();
+  let map;
+  let busMarkers = L.layerGroup();
+  let routePolyline = null;
 
-                busData.forEach(bus => {
-                    if (bus.lat && bus.lon) {
-                        const busIconHtml = `
-                            <div style="
-                                background-color: #${bus.route_color || '0057B8'}; 
-                                color: #${bus.route_text_color || 'FFFFFF'}; 
-                                border-radius: 50%; 
-                                width: 30px; 
-                                height: 30px; 
-                                text-align: center; 
-                                line-height: 30px; 
-                                font-weight: bold;
-                                font-size: 0.9em;
-                                border: 2px solid white;
-                                box-shadow: 0 0 5px rgba(0,0,0,0.5);"
-                            >
-                                ${bus.route_short_name}
-                            </div>
-                        `;
-                        
-                        const customIcon = L.divIcon({
-                            className: 'custom-bus-icon',
-                            html: busIconHtml,
-                            iconSize: [30, 30],
-                            iconAnchor: [15, 15]
-                        });
-                        
-                        const marker = L.marker([bus.lat, bus.lon], {icon: customIcon})
-                            .bindPopup(`<b>${bus.route_short_name}</b> - ${bus.dest} (ID: ${bus.id})`);
-                        
-                        busMarkers.addLayer(marker);
-                    }
-                });
-            }
+  // --- INIT ---
+  initializeMap();
+  setupEventListeners();
+  loadInitialData();
 
-            // --- EVENT LISTENERS ---
-            function setupEventListeners() {
-                searchInput.addEventListener('input', (e) => {
-                    const query = e.target.value.trim();
-                    if (query.length > 0) {
-                        clearSearchButton.style.display = 'flex';
-                        if (query.length >= 2) { 
-                            performSearch(query);
-                        }
-                    } else {
-                        clearSearchButton.style.display = 'none';
-                        showSection('initial'); 
-                    }
-                });
+  // --- MAP FUNCTIONS ---
+  function initializeMap() {
+    map = L.map('map').setView([50.93, -1.39], 13);
 
-                clearSearchButton.addEventListener('click', () => {
-                    searchInput.value = '';
-                    clearSearchButton.style.display = 'none';
-                    showSection('initial');
-                });
-            }
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
 
-            // --- DATA LOADING: INITIAL (Frissítések és Üres Kedvencek) ---
-            async function loadInitialData() {
-                const alertsTags = document.getElementById('alertsTags');
-                const favouritesList = document.getElementById('favouritesList');
-                
-                // 1. FORGALMI VÁLTOZÁSOK BETÖLTÉSE a Flask végpontról
-                try {
-                    const response = await fetch(`${API_BASE_URL}service_updates`);
-                    const updates = await response.json();
-                    
-                    if (updates.length > 0) {
-                        alertsTags.innerHTML = updates.map(u => {
-                            // Szín kiválasztása a back-end adatai alapján
-                            const bgColor = `#${u.route_color || 'ffc107'}`;
-                            const textColor = `#${u.route_text_color || '333'}`;
-                            return `<span class="line-tag" style="background-color: ${bgColor}; color: ${textColor};">${u.route_short_name}</span>`;
-                        }).join('');
-                    } else {
-                        alertsTags.innerHTML = '<p class="subtitle" style="text-align:center;">Nincs aktuális forgalmi változás.</p>';
-                    }
-                    
-                } catch (error) {
-                    console.warn("Hiba a szolgáltatási frissítések betöltésekor. Hálózati hiba.");
-                    alertsTags.innerHTML = '<p class="subtitle" style="text-align:center; color:red;">Hiba történt a frissítések betöltésekor.</p>';
-                }
+    busMarkers.addTo(map);
 
-                // 2. KEDVENCEK (ALAPÉRTELMEZETT ÜRES TARTALOM)
-                favouritesList.innerHTML = '<p class="subtitle" style="text-align:center; padding:10px;">Nincsenek kedvenc megállók vagy viszonylatok beállítva.</p>';
-                
-                showSection('initial');
-            }
-            
-            // --- SECTION MANAGEMENT ---
-            function showSection(sectionName) {
-                // Töröljük a korábbi útvonalat a térképről, ha volt
-                if (routePolyline && map.hasLayer(routePolyline)) {
-                    map.removeLayer(routePolyline);
-                    routePolyline = null;
-                }
-                
-                const sections = [
-                    document.getElementById('alertsSection'),
-                    document.getElementById('favouritesSection'),
-                    searchResultsSection,
-                    detailViewSection
-                ];
-                
-                sections.forEach(s => s.style.display = 'none');
-                
-                if (sectionName === 'initial') {
-                    document.getElementById('alertsSection').style.display = 'block';
-                    document.getElementById('favouritesSection').style.display = 'block';
-                } else if (sectionName === 'search') {
-                    searchResultsSection.style.display = 'block';
-                } else if (sectionName === 'detail') {
-                    detailViewSection.style.display = 'block';
-                }
-            }
+    fetchLiveBusLocations();
+    setInterval(fetchLiveBusLocations, 10000);
+  }
 
-            // --- SEARCH FUNCTIONALITY ---
-            async function performSearch(query) {
-                showSection('search');
-                searchResultsList.innerHTML = '<p style="text-align:center; color:#ccc;">Keresés...</p>';
+  async function fetchLiveBusLocations() {
+    try {
+      const response = await fetch(`${API_BASE_URL}live_data`);
+      const data = await response.json();
+      updateMapMarkers(data);
+    } catch (error) {
+      console.error("Hiba a valós idejű koordináták lekérésekor:", error);
+    }
+  }
 
-                try {
-                    const response = await fetch(`${API_BASE_URL}search?q=${encodeURIComponent(query)}`);
-                    const results = await response.json(); 
-                    
-                    document.getElementById('searchResultsTitle').textContent = `Találatok a "${query}" kifejezésre`;
-                    
-                    const allResults = [
-                        ...results.stops.map(s => ({
-                            type: 'stop',
-                            id: s.stop_id,
-                            name: s.stop_name,
-                            description: `Megálló azonosító: ${s.stop_id}`,
-                            lines: []
-                        })),
-                        ...results.routes.map(r => ({
-                            type: 'route',
-                            id: r.route_id,
-                            name: `${r.route_short_name} - ${r.route_long_name}`,
-                            description: r.route_type_desc,
-                            lines: [{name: r.route_short_name, color: r.route_color, textColor: r.route_text_color}]
-                        }))
-                    ];
+  function updateMapMarkers(busData) {
+    busMarkers.clearLayers();
 
-                    if (allResults.length > 0) {
-                        searchResultsList.innerHTML = allResults.map(item => {
-                            const lineTags = item.lines.map(line => 
-                                `<span class="line-tag" style="background-color: #${line.color || getLineColor(line.name)}; color: #${line.textColor || 'FFFFFF'};">${line.name}</span>`
-                            ).join('');
+    busData.forEach(bus => {
+      if (bus.lat && bus.lon) {
+        const busIconHtml = `
+          <div style="
+            background-color: #${bus.route_color || '0057B8'};
+            color: #${bus.route_text_color || 'FFFFFF'};
+            border-radius: 50%;
+            width: 30px; height: 30px;
+            text-align: center; line-height: 30px;
+            font-weight: bold; font-size: 0.9em;
+            border: 2px solid white;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);">
+            ${bus.route_short_name}
+          </div>`;
 
-                            const onClickAction = item.type === 'stop' 
-                                ? `showStopArrivals('${item.id}')` 
-                                : `showRoutePath('${item.id}')`;
-                            
-                            return `
-                                <div class="list-item" data-id="${item.id}" onclick="${onClickAction}">
-                                    <strong>${item.name}</strong>
-                                    <p>${item.description}</p>
-                                    <p>${lineTags}</p>
-                                </div>
-                            `;
-                        }).join('');
-                    } else {
-                        searchResultsList.innerHTML = '<p style="text-align:center; color:#ccc;">Nincs találat.</p>';
-                    }
-
-                } catch (error) {
-                    console.error('Keresési hiba:', error);
-                    searchResultsList.innerHTML = '<p style="text-align:center; color:red;">Hiba történt a keresés során.</p>';
-                }
-            }
-
-            // --- STOP ARRIVALS (Megálló nézet) ---
-            window.showStopArrivals = async (stopId) => {
-                showSection('detail');
-                detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Érkezések betöltése...</p>';
-                
-                try {
-                    // Hívás a Flask végpontra (GTFS alapú szimulált indulásokkal)
-                    const response = await fetch(`${API_BASE_URL}departures/${stopId}`);
-                    const data = await response.json(); 
-                    
-                    const stopName = data.stopName || `Megálló ID: ${stopId}`;
-                    const headerHtml = `
-                        <header class="section" style="margin-top:0;">
-                            <h3>${stopName} <span style="font-size:0.8em; color:#999;">(${data.stop_id})</span></h3>
-                            <p class="subtitle">Valós idejű indulások (GTFS alapú szimuláció)</p>
-                        </header>
-                    `;
-
-                    const arrivalListHtml = data.departures.map((a, index) => {
-                        // Trip ID-t használjuk az útvonal nézethez. A Flask kód most a "vehicle_id"-t adja vissza
-                        const tripId = a.vehicle_id || `MOCK_TRIP_${a.line}_${index}`; 
-                        const delayDisplay = a.delay !== null ? formatDelay(a.delay, false) : a.time;
-                        const delayClass = a.delay !== null ? getDelayClass(a.delay) : 'delay-ontime';
-
-                        return `
-                            <div class="arrival-item" onclick="showTripDetails('${tripId}', '${a.line}', '${a.destination}')">
-                                <span class="line-tag" style="background-color: #${a.route_color || getLineColor(a.line)}; color: #${a.route_text_color || 'FFFFFF'};">${a.line}</span>
-                                <div class="arrival-info">
-                                    <p style="margin:0; font-weight:600;">${a.destination}</p>
-                                    <p style="margin:0; font-size:0.8em; color:#aaa;">${a.vehicle_id || 'GTFS menetrend'}</p>
-                                </div>
-                                <span class="delay-time ${delayClass}">${delayDisplay}</span>
-                            </div>
-                        `;
-                    }).join('');
-
-                    detailViewSection.innerHTML = headerHtml + `<div id="arrivalList">${arrivalListHtml || '<p style="text-align:center; padding:10px; color:#999;">Nincs indulási adat a megállóhoz a jelenlegi idő után.</p>'}</div>`;
-                    
-                } catch (error) {
-                    console.error('Érkezések hiba:', error);
-                    detailViewSection.innerHTML = '<p style="text-align:center; color:red;">Hiba történt az érkezések betöltésekor.</p>';
-                }
-            }
-            
-            // --- ROUTE PATH (Útvonal kirajzolása térképre) ---
-            window.showRoutePath = async (routeId) => {
-                try {
-                    const response = await fetch(`${API_BASE_URL}route_shapes/${routeId}`);
-                    const coords = await response.json(); 
-                    
-                    if (coords && coords.length > 0) {
-                        showSection('initial'); 
-                        
-                        // Töröljük a korábbi vonalat, ha van
-                        if (routePolyline) {
-                             map.removeLayer(routePolyline);
-                        }
-                        
-                        routePolyline = L.polyline(coords, {
-                            color: '#0057B8', 
-                            weight: 5, 
-                            opacity: 0.8
-                        }).addTo(map);
-
-                        map.fitBounds(routePolyline.getBounds());
-                        
-                    } else {
-                        alert(`Nincs útvonaladat a ${routeId} járathoz.`);
-                    }
-
-                } catch (error) {
-                    console.error('Útvonal kirajzolási hiba:', error);
-                }
-            }
-            
-            // --- TRIP / VEHICLE DETAIL VIEW (Trip nézet) ---
-            window.showTripDetails = async (tripId, line, destination) => {
-                showSection('detail');
-                detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Útvonal betöltése...</p>';
-
-                try {
-                    // Hívás a Flask végpontra az út menti megállók lekérésére
-                    const response = await fetch(`${API_BASE_URL}trip_route/${tripId}`);
-                    const data = await response.json(); 
-
-                    if (data.route.length === 0) {
-                        detailViewSection.innerHTML = `<p style="text-align:center; color:#ccc;">Nincs részletes útvonaladat a(z) ${tripId} járathoz.</p>`;
-                        return;
-                    }
-
-                    const mockTripData = {
-                        destination: destination,
-                        vehicle: tripId, 
-                        totalDelay: data.total_delay, 
-                        route: data.route 
-                    };
-
-                    const headerHtml = `
-                        <header class="section" style="margin-top:0;">
-                            <span class="line-tag ${getLineTagClass(line)}">${line}</span>
-                            <h3 style="display:inline-block; margin-left:10px;">${mockTripData.destination}</h3>
-                            <p class="subtitle">Jármű ID: ${mockTripData.vehicle}</p>
-                            <p style="float:right; font-size:1.5em; font-weight:bold; color: ${mockTripData.totalDelay > 0 ? '#28a745' : '#dc3545'};">${formatDelay(mockTripData.totalDelay)}</p>
-                        </header>
-                    `;
-                    
-                    const routeHtml = mockTripData.route.map(stop => `
-                        <div class="trip-item ${stop.status === 'past' ? 'visited-stop' : ''} ${stop.status === 'current' ? 'active-stop' : ''}">
-                            <span class="trip-time">${stop.time}</span>
-                            <div class="trip-info">
-                                ${stop.name}
-                            </div>
-                            <span class="trip-delay ${getDelayClass(stop.delay)}">${formatDelay(stop.delay, true)}</span>
-                        </div>
-                    `).join('');
-                    
-                    detailViewSection.innerHTML = headerHtml + routeHtml;
-                } catch (error) {
-                    console.error('Útvonal betöltési hiba:', error);
-                    detailViewSection.innerHTML = '<p style="text-align:center; color:red;">Hiba történt az útvonal betöltésekor.</p>';
-                }
-            }
-
-            // --- UTILITY FUNCTIONS ---
-            function getLineColor(line) {
-                if (line.includes('M')) return 'E51D21';
-                if (line.includes('U')) return '007bff';
-                if (line.startsWith('9')) return '1a1a1a';
-                return '0057B8';
-            }
-            function getLineTagClass(line) {
-                if (line.includes('M')) return 'tag-metro';
-                if (line.includes('U')) return 'tag-blue';
-                if (line.startsWith('9')) return 'tag-night';
-                return 'tag-bus';
-            }
-
-            function formatDelay(delayInMinutes, short = false) {
-                const sign = delayInMinutes >= 0 ? '+' : '';
-                const absDelay = Math.abs(delayInMinutes);
-                
-                if (absDelay < 0.5 && delayInMinutes !== 0) { 
-                     return delayInMinutes > 0 ? '+0\'' : '-0\'';
-                }
-                
-                if (short) {
-                    return `${sign}${Math.round(absDelay)}'`; 
-                }
-                return `${sign}${absDelay.toFixed(1).replace('.', ',')}'`; 
-            }
-            
-            function getDelayClass(delayInMinutes) {
-                if (delayInMinutes < 0) return 'delay-early'; 
-                if (delayInMinutes > 0) return 'delay-late'; 
-                return 'delay-ontime';
-            }
-            
-            window.showStopArrivals = showStopArrivals;
-            window.showRoutePath = showRoutePath;
-            window.showTripDetails = showTripDetails;
+        const customIcon = L.divIcon({
+          className: 'custom-bus-icon',
+          html: busIconHtml,
+          iconSize: [30, 30],
+          iconAnchor: [15, 15]
         });
+
+        const marker = L.marker([bus.lat, bus.lon], {icon: customIcon})
+          .bindPopup(`<b>${bus.route_short_name}</b> - ${bus.dest} (ID: ${bus.id})`);
+
+        busMarkers.addLayer(marker);
+      }
+    });
+  }
+
+  // --- UI SECTIONS ---
+  function showSection(sectionName) {
+    if (routePolyline && map.hasLayer(routePolyline)) {
+      map.removeLayer(routePolyline);
+      routePolyline = null;
+    }
+
+    const sections = [
+      document.getElementById('alertsSection'),
+      document.getElementById('favouritesSection'),
+      searchResultsSection,
+      detailViewSection
+    ];
+    sections.forEach(s => s.style.display = 'none');
+
+    if (sectionName === 'initial') {
+      document.getElementById('alertsSection').style.display = 'block';
+      document.getElementById('favouritesSection').style.display = 'block';
+    } else if (sectionName === 'search') {
+      searchResultsSection.style.display = 'block';
+    } else if (sectionName === 'detail') {
+      detailViewSection.style.display = 'block';
+    }
+  }
+
+  // --- EVENT LISTENERS ---
+  function setupEventListeners() {
+    searchInput.addEventListener('input', (e) => {
+      const query = e.target.value.trim();
+      if (query.length > 0) {
+        clearSearchButton.style.display = 'flex';
+        if (query.length >= 2) performSearch(query);
+      } else {
+        clearSearchButton.style.display = 'none';
+        showSection('initial');
+      }
+    });
+
+    clearSearchButton.addEventListener('click', () => {
+      searchInput.value = '';
+      clearSearchButton.style.display = 'none';
+      showSection('initial');
+    });
+  }
+
+  // --- INITIAL DATA ---
+  async function loadInitialData() {
+    const alertsTags = document.getElementById('alertsTags');
+    const favouritesList = document.getElementById('favouritesList');
+
+    try {
+      const response = await fetch(`${API_BASE_URL}service_updates`);
+      const updates = await response.json();
+
+      if (updates.length > 0) {
+        alertsTags.innerHTML = updates.map(u => {
+          const bgColor = `#${u.route_color || 'ffc107'}`;
+          const textColor = `#${u.route_text_color || '333333'}`;
+          return `<span class="line-tag" title="${escapeHtml(u.update_text)}" style="background-color:${bgColor}; color:${textColor};">${escapeHtml(u.route_short_name)}</span>`;
+        }).join('');
+      } else {
+        alertsTags.innerHTML = '<p class="subtitle" style="text-align:center;">Nincs aktuális forgalmi változás.</p>';
+      }
+    } catch (error) {
+      alertsTags.innerHTML = '<p class="subtitle" style="text-align:center; color:red;">Hiba történt a frissítések betöltésekor.</p>';
+    }
+
+    favouritesList.innerHTML = '<p class="subtitle" style="text-align:center; padding:10px;">Nincsenek kedvenc megállók vagy viszonylatok beállítva.</p>';
+    showSection('initial');
+  }
+
+  // --- SEARCH ---
+  async function performSearch(query) {
+    showSection('search');
+    searchResultsList.innerHTML = '<p style="text-align:center; color:#ccc;">Keresés...</p>';
+
+    try {
+      const response = await fetch(`${API_BASE_URL}search?q=${encodeURIComponent(query)}`);
+      const results = await response.json();
+
+      document.getElementById('searchResultsTitle').textContent = `Találatok a "${query}" kifejezésre`;
+
+      const allResults = [
+        ...results.stops.map(s => ({
+          type: 'stop',
+          id: s.stop_id,
+          name: s.stop_name,
+          description: `Megálló azonosító: ${s.stop_id}`,
+          lines: []
+        })),
+        ...results.routes.map(r => ({
+          type: 'route',
+          id: r.route_id,
+          name: `${r.route_short_name} - ${r.route_long_name}`,
+          description: r.route_type_desc,
+          lines: [{name: r.route_short_name, color: r.route_color, textColor: r.route_text_color}]
+        }))
+      ];
+
+      if (allResults.length === 0) {
+        searchResultsList.innerHTML = '<p style="text-align:center; color:#ccc;">Nincs találat.</p>';
+        return;
+      }
+
+      // KATTINTÁS inline onclick nélkül (stabilabb)
+      searchResultsList.innerHTML = allResults.map((item, idx) => {
+        const lineTags = item.lines.map(line =>
+          `<span class="line-tag" style="background-color:#${line.color || '0057B8'}; color:#${line.textColor || 'FFFFFF'};">${escapeHtml(line.name)}</span>`
+        ).join('');
+
+        return `
+          <div class="list-item" data-idx="${idx}">
+            <strong>${escapeHtml(item.name)}</strong>
+            <p>${escapeHtml(item.description)}</p>
+            <p>${lineTags}</p>
+          </div>
+        `;
+      }).join('');
+
+      // felkötjük az eventeket
+      [...searchResultsList.querySelectorAll('.list-item')].forEach(el => {
+        const idx = Number(el.dataset.idx);
+        const item = allResults[idx];
+        el.addEventListener('click', () => {
+          if (item.type === 'stop') showStopArrivals(item.id);
+          else showRoutePath(item.id);
+        });
+      });
+
+    } catch (error) {
+      console.error('Keresési hiba:', error);
+      searchResultsList.innerHTML = '<p style="text-align:center; color:red;">Hiba történt a keresés során.</p>';
+    }
+  }
+
+  // --- STOP VIEW ---
+  async function showStopArrivals(stopId) {
+    showSection('detail');
+    detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Érkezések betöltése...</p>';
+
+    try {
+      const response = await fetch(`${API_BASE_URL}departures/${encodeURIComponent(stopId)}`);
+      const data = await response.json();
+
+      const headerHtml = `
+        <header class="section" style="margin-top:0;">
+          <h3>${escapeHtml(data.stop_name || `Megálló`)} <span style="font-size:0.8em; color:#999;">(${escapeHtml(data.stop_id)})</span></h3>
+          <p class="subtitle">Következő indulások</p>
+        </header>
+      `;
+
+      if (!data.departures || data.departures.length === 0) {
+        detailViewSection.innerHTML = headerHtml + `<p class="subtitle" style="text-align:center;">Nincs közelgő indulás.</p>`;
+        return;
+      }
+
+      const listHtml = data.departures.map((a) => {
+        const delayClass = a.delay !== null ? getDelayClass(a.delay) : 'delay-ontime';
+        const right = a.delay !== null ? formatDelay(a.delay) : a.time;
+
+        const lineTag = `
+          <span class="line-tag" style="background-color:#${a.route_color || '0057B8'}; color:#${a.route_text_color || 'FFFFFF'};">
+            ${escapeHtml(a.line)}
+          </span>
+        `;
+
+        // trip_id kell a trip nézethez
+        const tripId = a.trip_id || '';
+
+        return `
+          <div class="arrival-item" data-trip="${escapeHtml(tripId)}">
+            <div class="arrival-info">
+              ${lineTag}
+              <div><strong>${escapeHtml(a.destination || '')}</strong></div>
+              <div class="subtitle">${a.is_realtime ? 'valós idejű' : 'menetrendi'} • ${escapeHtml(a.time)}</div>
+            </div>
+            <div class="delay-time ${delayClass}">${escapeHtml(right)}</div>
+          </div>
+        `;
+      }).join('');
+
+      detailViewSection.innerHTML = headerHtml + `<div class="section">${listHtml}</div>`;
+
+      // kattintás: trip route megnyitása
+      [...detailViewSection.querySelectorAll('.arrival-item')].forEach(el => {
+        el.addEventListener('click', () => {
+          const tripId = el.dataset.trip;
+          if (tripId) showTripRoute(tripId);
+        });
+      });
+
+    } catch (error) {
+      console.error("Hiba az érkezések lekérésekor:", error);
+      detailViewSection.innerHTML = '<p style="text-align:center; color:red;">Hiba történt az érkezések betöltésekor.</p>';
+    }
+  }
+
+  // --- TRIP ROUTE VIEW ---
+  async function showTripRoute(tripId) {
+    showSection('detail');
+    detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Jármű útvonal betöltése...</p>';
+
+    try {
+      const response = await fetch(`${API_BASE_URL}trip_route/${encodeURIComponent(tripId)}`);
+      const data = await response.json();
+
+      const headerHtml = `
+        <header class="section" style="margin-top:0;">
+          <h3>Járat útvonala <span style="font-size:0.8em; color:#999;">(${escapeHtml(tripId)})</span></h3>
+          <p class="subtitle">Összes megálló a trip-hez</p>
+        </header>
+      `;
+
+      if (!data.route || data.route.length === 0) {
+        detailViewSection.innerHTML = headerHtml + `<p class="subtitle" style="text-align:center;">Nincs útvonal adat ehhez a trip-hez.</p>`;
+        return;
+      }
+
+      const routeHtml = data.route.map(s => {
+        const cls = s.status === 'current' ? 'active-stop' : (s.status === 'past' ? 'visited-stop' : '');
+        return `
+          <div class="trip-item">
+            <div class="trip-time">${escapeHtml(s.time)}</div>
+            <div class="trip-info ${cls}">${escapeHtml(s.name)}</div>
+            <div class="trip-delay">${escapeHtml(formatDelay(s.delay))}</div>
+          </div>
+        `;
+      }).join('');
+
+      detailViewSection.innerHTML = headerHtml + `<div class="section">${routeHtml}</div>`;
+
+    } catch (error) {
+      console.error("Trip route hiba:", error);
+      detailViewSection.innerHTML = '<p style="text-align:center; color:red;">Hiba történt a jármű útvonal betöltésekor.</p>';
+    }
+  }
+
+  // --- ROUTE PATH ON MAP ---
+  async function showRoutePath(routeId) {
+    showSection('detail');
+    detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Útvonal rajzolása...</p>';
+
+    try {
+      const response = await fetch(`${API_BASE_URL}route_shapes/${encodeURIComponent(routeId)}`);
+      const coords = await response.json();
+
+      if (!Array.isArray(coords) || coords.length === 0) {
+        detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Nincs shape adat ehhez az útvonalhoz.</p>';
+        return;
+      }
+
+      // coords: [[lat, lon], ...]
+      const latlngs = coords.map(c => [c[0], c[1]]);
+
+      if (routePolyline && map.hasLayer(routePolyline)) map.removeLayer(routePolyline);
+      routePolyline = L.polyline(latlngs).addTo(map);
+      map.fitBounds(routePolyline.getBounds());
+
+      detailViewSection.innerHTML = `
+        <header class="section" style="margin-top:0;">
+          <h3>Útvonal megjelenítve a térképen</h3>
+          <p class="subtitle">Route ID: ${escapeHtml(routeId)}</p>
+        </header>
+      `;
+    } catch (error) {
+      console.error("Route shape hiba:", error);
+      detailViewSection.innerHTML = '<p style="text-align:center; color:red;">Hiba történt az útvonal megjelenítésekor.</p>';
+    }
+  }
+
+  // --- HELPERS ---
+  function getDelayClass(delay) {
+    if (delay === 0) return 'delay-ontime';
+    if (delay > 0) return 'delay-late';
+    return 'delay-early';
+  }
+
+  function formatDelay(delay) {
+    if (delay === null || delay === undefined) return '';
+    if (delay === 0) return 'ONTIME';
+    if (delay > 0) return `+${delay}m`;
+    return `${delay}m`;
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+});
     </script>
 </body>
 </html>
