@@ -17,21 +17,21 @@
             margin: 0;
             padding: 0;
             line-height: 1.4;
-            overflow: hidden; /* Megakadályozza a felesleges görgetősávot */
+            overflow: hidden; 
         }
 
         /* Fő alkalmazás konténer */
         .app-container {
             display: flex;
-            flex-direction: column; /* Alapértelmezetten mobil nézet (felül térkép, alul sidebar) */
+            flex-direction: column; 
             height: 100vh;
         }
 
-        /* Térkép konténer (alapértelmezett, mobilra igazítva) */
+        /* Térkép konténer */
         .map-container {
             height: 40vh;
             width: 100%;
-            order: 1; /* Mobil nézetben felül */
+            order: 1; 
         }
         #map {
             height: 100%;
@@ -43,12 +43,12 @@
             height: 60vh;
             width: 100%;
             background-color: #2e2e2e;
-            overflow-y: auto; /* Görgethetővé teszi a tartalmat */
-            padding-bottom: 50px; /* Hely a mobil billentyűzet alatt */
-            order: 2; /* Mobil nézetben alul */
+            overflow-y: auto; 
+            padding-bottom: 50px; 
+            order: 2; 
         }
 
-        /* Kereső fejléc (fix helyzetben) */
+        /* Kereső fejléc */
         .search-header {
             background-color: #1e1e1e;
             padding: 10px;
@@ -83,7 +83,7 @@
             justify-content: center;
         }
 
-        /* Információs szekciók (Mind a listaelemekhez, mind a szekciókhoz) */
+        /* Információs szekciók */
         .section {
             background-color: #222222;
             padding: 10px;
@@ -110,16 +110,13 @@
             font-weight: bold;
             text-align: center;
             color: white;
+            white-space: nowrap;
         }
-        /* Színek a videó és képek alapján (BKK Futár stílus) */
+        /* Alapértelmezett színek */
         .tag-bus, .tag-blue { background-color: #007bff; }
-        .tag-metro { background-color: #e51d21; } /* Piros (M2) vagy Narancs (M4) */
-        .tag-h, .tag-fehervar { background-color: #7ab317; } /* Zöld (HÉV) */
-        .tag-trolley { background-color: #e6b325; } /* Troli */
+        .tag-metro { background-color: #e51d21; } 
         .tag-night { background-color: #1a1a1a; border: 1px solid #999; }
-        .tag-alert { background-color: #ffc107; color: #333; } /* Sárga (Forgalmi változás) */
-        .tag-red { background-color: #dc3545; }
-
+        .tag-alert { background-color: #ffc107; color: #333; } 
         .tags-container {
             padding: 5px 0;
         }
@@ -130,7 +127,6 @@
             padding: 15px;
             margin-top: 1px;
             cursor: pointer;
-            border-radius: 0;
             border-left: 5px solid transparent;
         }
         .list-item:hover {
@@ -176,7 +172,7 @@
             padding: 5px 10px;
             border-radius: 4px;
         }
-        /* Színek a videó alapján */
+        /* Késés jelölések */
         .delay-early { background-color: #dc3545; color: white; } /* Korai (Piros) */
         .delay-late { background-color: #28a745; color: white; } /* Késik (Zöld) */
         .delay-ontime { color: #ffc107; } /* Pontos (Sárga/Fehér) */
@@ -206,16 +202,16 @@
         /* **Desktop (Nagyobb képernyő) optimalizáció** */
         @media (min-width: 769px) {
             .app-container {
-                flex-direction: row; /* Vízszintes elrendezés */
+                flex-direction: row; 
             }
             .map-container {
                 height: 100vh;
-                flex: 2; /* Térkép 2/3 szélesség */
+                flex: 2; 
                 order: 1;
             }
             .sidebar {
                 height: 100vh;
-                flex: 1; /* Sidebar 1/3 szélesség */
+                flex: 1; 
                 order: 2;
             }
         }
@@ -242,7 +238,8 @@
                     <h3>Kiemelt forgalmi változások</h3>
                     <p class="subtitle">Fontosabb aktuális pótlások, terelések, járatkimaradások</p>
                     <div class="tags-container" id="alertsTags">
-                        </div>
+                        <p style="text-align:center; color:#999;">Frissítések betöltése...</p>
+                    </div>
                 </div>
 
                 <div id="favouritesSection" class="section info-section">
@@ -268,10 +265,9 @@
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            // --- API VÉGPONT ALAP ---
+            
             const API_BASE_URL = '/api/'; 
             
-            // DOM elemek gyors hivatkozásai
             const searchInput = document.getElementById('searchInput');
             const clearSearchButton = document.getElementById('clearSearch');
             const searchResultsSection = document.getElementById('searchResultsSection');
@@ -280,6 +276,7 @@
             
             let map;
             let busMarkers = L.layerGroup(); 
+            let routePolyline; // A rajzolt útvonal tárolására
 
             // --- INIT ---
             initializeMap();
@@ -288,7 +285,6 @@
 
             // --- MAP FUNCTIONS ---
             function initializeMap() {
-                // Southampton kezdő koordináták (mivel a mock adatok onnan származnak)
                 map = L.map('map').setView([50.93, -1.39], 13); 
 
                 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -297,12 +293,14 @@
                 
                 busMarkers.addTo(map); 
                 
+                // Valós idejű frissítés
                 fetchLiveBusLocations();
                 setInterval(fetchLiveBusLocations, 10000); 
             }
             
             async function fetchLiveBusLocations() {
                 try {
+                     // Hívás a BŐVÍTETT mock adatokat adó végpontra
                      const response = await fetch(`${API_BASE_URL}live_data`);
                      const coords = await response.json();
                      updateMapMarkers(coords); 
@@ -369,53 +367,48 @@
                     clearSearchButton.style.display = 'none';
                     showSection('initial');
                 });
-                
-                // Kattintás kezelése a kedvencekre (megállóra vagy útvonalra)
-                document.getElementById('favouritesList').addEventListener('click', (e) => {
-                    const item = e.target.closest('.list-item');
-                    if (item && item.dataset.stopId) {
-                        showStopArrivals(item.dataset.stopId);
-                    }
-                });
             }
 
-            // --- DATA LOADING: INITIAL (Mock Adatok) ---
+            // --- DATA LOADING: INITIAL (Frissítések és Üres Kedvencek) ---
             async function loadInitialData() {
                 const alertsTags = document.getElementById('alertsTags');
                 const favouritesList = document.getElementById('favouritesList');
                 
-                // Statikus adatok a videó/kép alapján (Alerts és Favourites)
-                alertsTags.innerHTML = `
-                    <span class="line-tag tag-alert">3</span>
-                    <span class="line-tag tag-alert">62</span>
-                    <span class="line-tag tag-alert">62A</span>
-                    <span class="line-tag tag-blue">35</span>
-                `;
-                
-                favouritesList.innerHTML = `
-                    <div class="list-item fav-item" data-stop-id="SzentKereszt">
-                        <span class="star"><i class="fas fa-star"></i></span>
-                        <div>
-                            <strong>Szent kereszt tér</strong>
-                            <p>46 → Bakancsos utca ... Újpalota, Nyírpalota út</p>
-                            <p><span class="line-tag tag-blue">46</span> <span class="line-tag tag-night">97E</span> <span class="line-tag tag-bus">161</span></p>
-                        </div>
-                    </div>
-                     <div class="list-item fav-item" data-stop-id="HarmatUtca">
-                        <span class="star"><i class="fas fa-star"></i></span>
-                        <div>
-                            <strong>Harmat utca</strong>
-                            <p>162 → Élessarok ... Maglód, Auchan áruház</p>
-                            <p><span class="line-tag tag-bus">162</span> <span class="line-tag tag-bus">262</span> <span class="line-tag tag-night">909</span></p>
-                        </div>
-                    </div>
-                `;
+                // 1. FORGALMI VÁLTOZÁSOK BETÖLTÉSE a Flask végpontról
+                try {
+                    const response = await fetch(`${API_BASE_URL}service_updates`);
+                    const updates = await response.json();
+                    
+                    if (updates.length > 0) {
+                        alertsTags.innerHTML = updates.map(u => {
+                            // Szín kiválasztása a back-end adatai alapján
+                            const bgColor = `#${u.route_color || 'ffc107'}`;
+                            const textColor = `#${u.route_text_color || '333'}`;
+                            return `<span class="line-tag" style="background-color: ${bgColor}; color: ${textColor};">${u.route_short_name}</span>`;
+                        }).join('');
+                    } else {
+                        alertsTags.innerHTML = '<p class="subtitle" style="text-align:center;">Nincs aktuális forgalmi változás.</p>';
+                    }
+                    
+                } catch (error) {
+                    console.warn("Hiba a szolgáltatási frissítések betöltésekor. Hálózati hiba.");
+                    alertsTags.innerHTML = '<p class="subtitle" style="text-align:center; color:red;">Hiba történt a frissítések betöltésekor.</p>';
+                }
+
+                // 2. KEDVENCEK (ALAPÉRTELMEZETT ÜRES TARTALOM)
+                favouritesList.innerHTML = '<p class="subtitle" style="text-align:center; padding:10px;">Nincsenek kedvenc megállók vagy viszonylatok beállítva.</p>';
                 
                 showSection('initial');
             }
             
             // --- SECTION MANAGEMENT ---
             function showSection(sectionName) {
+                // Töröljük a korábbi útvonalat a térképről, ha volt
+                if (routePolyline && map.hasLayer(routePolyline)) {
+                    map.removeLayer(routePolyline);
+                    routePolyline = null;
+                }
+                
                 const sections = [
                     document.getElementById('alertsSection'),
                     document.getElementById('favouritesSection'),
@@ -435,7 +428,7 @@
                 }
             }
 
-            // --- SEARCH FUNCTIONALITY (API hívás: /api/search) ---
+            // --- SEARCH FUNCTIONALITY ---
             async function performSearch(query) {
                 showSection('search');
                 searchResultsList.innerHTML = '<p style="text-align:center; color:#ccc;">Keresés...</p>';
@@ -491,12 +484,13 @@
                 }
             }
 
-            // --- STOP ARRIVALS (API hívás: /api/departures) ---
+            // --- STOP ARRIVALS (Megálló nézet) ---
             window.showStopArrivals = async (stopId) => {
                 showSection('detail');
                 detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Érkezések betöltése...</p>';
                 
                 try {
+                    // Hívás a Flask végpontra (GTFS alapú szimulált indulásokkal)
                     const response = await fetch(`${API_BASE_URL}departures/${stopId}`);
                     const data = await response.json(); 
                     
@@ -509,7 +503,8 @@
                     `;
 
                     const arrivalListHtml = data.departures.map((a, index) => {
-                        const tripId = a.vehicle_id || `TRIP_${a.line}_${index}`; 
+                        // Trip ID-t használjuk az útvonal nézethez. A Flask kód most a "vehicle_id"-t adja vissza
+                        const tripId = a.vehicle_id || `MOCK_TRIP_${a.line}_${index}`; 
                         const delayDisplay = a.delay !== null ? formatDelay(a.delay, false) : a.time;
                         const delayClass = a.delay !== null ? getDelayClass(a.delay) : 'delay-ontime';
 
@@ -525,7 +520,7 @@
                         `;
                     }).join('');
 
-                    detailViewSection.innerHTML = headerHtml + `<div id="arrivalList">${arrivalListHtml}</div>`;
+                    detailViewSection.innerHTML = headerHtml + `<div id="arrivalList">${arrivalListHtml || '<p style="text-align:center; padding:10px; color:#999;">Nincs indulási adat a megállóhoz a jelenlegi idő után.</p>'}</div>`;
                     
                 } catch (error) {
                     console.error('Érkezések hiba:', error);
@@ -533,7 +528,7 @@
                 }
             }
             
-            // --- ROUTE PATH (API hívás: /api/route_shapes) ---
+            // --- ROUTE PATH (Útvonal kirajzolása térképre) ---
             window.showRoutePath = async (routeId) => {
                 try {
                     const response = await fetch(`${API_BASE_URL}route_shapes/${routeId}`);
@@ -542,16 +537,19 @@
                     if (coords && coords.length > 0) {
                         showSection('initial'); 
                         
-                        const routeLine = L.polyline(coords, {
+                        // Töröljük a korábbi vonalat, ha van
+                        if (routePolyline) {
+                             map.removeLayer(routePolyline);
+                        }
+                        
+                        routePolyline = L.polyline(coords, {
                             color: '#0057B8', 
                             weight: 5, 
                             opacity: 0.8
                         }).addTo(map);
 
-                        map.fitBounds(routeLine.getBounds());
+                        map.fitBounds(routePolyline.getBounds());
                         
-                        // Eltávolítás 30 másodperc után
-                        setTimeout(() => map.removeLayer(routeLine), 30000);
                     } else {
                         alert(`Nincs útvonaladat a ${routeId} járathoz.`);
                     }
@@ -561,44 +559,52 @@
                 }
             }
             
-            // --- TRIP / VEHICLE DETAIL VIEW (Mock: Mivel nincs Flask végpont) ---
+            // --- TRIP / VEHICLE DETAIL VIEW (Trip nézet) ---
             window.showTripDetails = async (tripId, line, destination) => {
                 showSection('detail');
                 detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Útvonal betöltése...</p>';
 
-                // Mock adatok a videóban látott listához:
-                const mockTripData = {
-                    destination: destination,
-                    vehicle: tripId,
-                    trackingInfo: 'Simulált útvonal',
-                    totalDelay: 2,
-                    route: [
-                        { time: '12:45', name: 'Southampton Central', delay: 2, status: 'past' },
-                        { time: '12:50', name: 'University', delay: 3, status: 'current' },
-                        { time: '13:00', name: 'Bassett Green', delay: 4, status: 'future' }
-                    ]
-                };
+                try {
+                    // Hívás a Flask végpontra az út menti megállók lekérésére
+                    const response = await fetch(`${API_BASE_URL}trip_route/${tripId}`);
+                    const data = await response.json(); 
 
-                const headerHtml = `
-                    <header class="section" style="margin-top:0;">
-                        <span class="line-tag ${getLineTagClass(line)}">${line}</span>
-                        <h3 style="display:inline-block; margin-left:10px;">${mockTripData.destination}</h3>
-                        <p class="subtitle">Jármű ID: ${mockTripData.vehicle}</p>
-                        <p style="float:right; font-size:1.5em; font-weight:bold; color: ${mockTripData.totalDelay > 0 ? '#28a745' : '#dc3545'};">${formatDelay(mockTripData.totalDelay)}</p>
-                    </header>
-                `;
-                
-                const routeHtml = mockTripData.route.map(stop => `
-                    <div class="trip-item ${stop.status === 'past' ? 'visited-stop' : ''} ${stop.status === 'current' ? 'active-stop' : ''}">
-                        <span class="trip-time">${stop.time}</span>
-                        <div class="trip-info">
-                            ${stop.name}
+                    if (data.route.length === 0) {
+                        detailViewSection.innerHTML = `<p style="text-align:center; color:#ccc;">Nincs részletes útvonaladat a(z) ${tripId} járathoz.</p>`;
+                        return;
+                    }
+
+                    const mockTripData = {
+                        destination: destination,
+                        vehicle: tripId, 
+                        totalDelay: data.total_delay, 
+                        route: data.route 
+                    };
+
+                    const headerHtml = `
+                        <header class="section" style="margin-top:0;">
+                            <span class="line-tag ${getLineTagClass(line)}">${line}</span>
+                            <h3 style="display:inline-block; margin-left:10px;">${mockTripData.destination}</h3>
+                            <p class="subtitle">Jármű ID: ${mockTripData.vehicle}</p>
+                            <p style="float:right; font-size:1.5em; font-weight:bold; color: ${mockTripData.totalDelay > 0 ? '#28a745' : '#dc3545'};">${formatDelay(mockTripData.totalDelay)}</p>
+                        </header>
+                    `;
+                    
+                    const routeHtml = mockTripData.route.map(stop => `
+                        <div class="trip-item ${stop.status === 'past' ? 'visited-stop' : ''} ${stop.status === 'current' ? 'active-stop' : ''}">
+                            <span class="trip-time">${stop.time}</span>
+                            <div class="trip-info">
+                                ${stop.name}
+                            </div>
+                            <span class="trip-delay ${getDelayClass(stop.delay)}">${formatDelay(stop.delay, true)}</span>
                         </div>
-                        <span class="trip-delay ${getDelayClass(stop.delay)}">${formatDelay(stop.delay, true)}</span>
-                    </div>
-                `).join('');
-                
-                detailViewSection.innerHTML = headerHtml + routeHtml;
+                    `).join('');
+                    
+                    detailViewSection.innerHTML = headerHtml + routeHtml;
+                } catch (error) {
+                    console.error('Útvonal betöltési hiba:', error);
+                    detailViewSection.innerHTML = '<p style="text-align:center; color:red;">Hiba történt az útvonal betöltésekor.</p>';
+                }
             }
 
             // --- UTILITY FUNCTIONS ---
