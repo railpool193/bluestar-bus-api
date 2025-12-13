@@ -1,4 +1,5 @@
 fastapi
+uvicorn
 Flask
 requests
 gunicorn
