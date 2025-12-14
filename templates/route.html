@@ -1,21 +1,41 @@
-{% extends "base.html" %}{% block content %}
-<div class="h1">Route <span class="badge">{{ route.route_short_name or route.route_id }}</span></div>
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Járat {{ route_short }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="wrap">
 
-<h3>Élő járművek (Bluestar/Unilink)</h3>
-<div id="map" class="map"></div>
-<div class="tiny muted">Járművek: {{ veh_count }}</div>
+  <div class="topbar">
+    <a href="/" class="logo">★ bluestar</a>
+    <form action="/search">
+      <input name="q" placeholder="Keresés">
+    </form>
+    <div class="clock">UK: {{ now_uk }}</div>
+  </div>
 
-<script>
-  const vehicles = {{ vehicles | tojson }};
-  const map = L.map('map').setView([50.9, -1.4], 11);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
-  const group = L.featureGroup().addTo(map);
-  vehicles.forEach(v=>{
-    const m = L.marker([v.lat, v.lon]).addTo(group);
-    let txt = (v.headsign || "");
-    if (v.vehicle_ref) txt += "<br/><small>fleet: "+v.vehicle_ref+"</small>";
-    m.bindPopup(txt);
-  });
-  if (vehicles.length) map.fitBounds(group.getBounds().pad(0.2));
-</script>
-{% endblock %}
+  <h1>Járat {{ route_short }}</h1>
+
+  <h2>Élő járművek</h2>
+
+  {% if not live_vehicles %}
+    <div class="muted">Jelenleg nincs élő adat.</div>
+  {% endif %}
+
+  {% for v in live_vehicles %}
+    <div class="row live">
+      <div>
+        <strong>{{ v.fleet or "BUS" }}</strong><br>
+        <span class="muted">
+          {{ "%.5f"|format(v.lat) }}, {{ "%.5f"|format(v.lon) }}
+        </span>
+      </div>
+    </div>
+  {% endfor %}
+
+</div>
+</body>
+</html>
