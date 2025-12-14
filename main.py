@@ -1,629 +1,427 @@
-import os
 import csv
-import logging
-from collections import defaultdict
-from datetime import datetime, timedelta
+import os
+import time
+import math
+import html
+from dataclasses import dataclass
+from datetime import datetime, date, timedelta, timezone
+from typing import Dict, List, Optional, Tuple, Any
 
-import pytz
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+import httpx
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
 
-# httpx opcionális – ha nincs telepítve, a live egyszerűen üres lesz (de nem crashel)
-try:
-    import httpx
-except Exception:
-    httpx = None
-
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("bluestar")
-
-# ------------------------- Alapbeállítások -------------------------
+# ----------------------------
+# Config
+# ----------------------------
 DATA_DIR = os.getenv("DATA_DIR", "gtfs")
-UK_TZ = pytz.timezone("Europe/London")
-ALLOWED_OPERATORS = {"blus", "unil"}  # Bluestar / Unilink
 
-def now_uk() -> datetime:
-    return datetime.now(UK_TZ)
-
-def midnight_uk(dt: datetime | None = None) -> datetime:
-    dt = dt or now_uk()
-    return UK_TZ.localize(datetime(dt.year, dt.month, dt.day, 0, 0, 0))
-
-def gtfs_sec(hhmmss: str) -> int:
-    try:
-        h, m, s = (hhmmss or "00:00:00").split(":")
-        return int(h) * 3600 + int(m) * 60 + int(s)
-    except Exception:
-        return 0
-
-def sec_to_today(sec: int) -> datetime:
-    base = midnight_uk()
-    days = sec // 86400
-    rem = sec % 86400
-    return base + timedelta(days=days, seconds=rem)
-
-def fmt_hhmm(dt: datetime) -> str:
-    return dt.strftime("%H:%M")
-
-def mins_from_now(dt: datetime) -> int:
-    return int(round((dt - now_uk()).total_seconds() / 60))
-
-def operator_ok(op: str) -> bool:
-    return (op or "").strip().lower()[:4] in ALLOWED_OPERATORS
-
-# ------------------------- Live URL autodetekció -------------------------
-def _first_truthy(*vals):
-    for v in vals:
-        if v:
-            return v
-    return ""
-
-def _guess_url(kind: str) -> str:
-    cands = []
-    for k, v in os.environ.items():
-        kk = k.upper()
-        vv = str(v or "").strip()
-        if not vv.startswith(("http://", "https://")):
-            continue
-        if kind == "vm" and any(s in kk for s in ("VEHICLE", "VM")):
-            cands.append(vv)
-        if kind == "sm" and any(s in kk for s in ("STOP", "SM")):
-            cands.append(vv)
-    return cands[0] if cands else ""
-
-def _build_extra_headers() -> dict:
-    h = {}
-    if os.getenv("SIRI_KEY_HEADER") and os.getenv("SIRI_KEY_VALUE"):
-        h[os.getenv("SIRI_KEY_HEADER")] = os.getenv("SIRI_KEY_VALUE")
-    if os.getenv("SIRI_HEADER_NAME") and os.getenv("SIRI_HEADER_VALUE"):
-        h[os.getenv("SIRI_HEADER_NAME")] = os.getenv("SIRI_HEADER_VALUE")
-    if os.getenv("OCP_APIM_SUBSCRIPTION_KEY"):
-        h["Ocp-Apim-Subscription-Key"] = os.getenv("OCP_APIM_SUBSCRIPTION_KEY")
-    if os.getenv("X_API_KEY"):
-        h["X-API-Key"] = os.getenv("X_API_KEY")
-    return h
-
-SIRI_VM_URL_RAW = _first_truthy(
-    os.getenv("SIRI_API_VEHICLE_MONITORING"),
-    os.getenv("SIRI_VM_URL"),
-    _guess_url("vm"),
+# Your live feed URL (recommended to set as env on Railway)
+LIVE_FEED_URL = os.getenv(
+    "LIVE_FEED_URL",
+    "https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key=9d2f6818e2723996467fedb958ba682aa9860a93",
 )
-SIRI_SM_URL_RAW = _first_truthy(
-    os.getenv("SIRI_STOP_MONITORING"),
-    os.getenv("SIRI_SM_URL"),
-    _guess_url("sm"),
-)
-EXTRA_HEADERS = _build_extra_headers()
+LIVE_ENABLED = os.getenv("LIVE_ENABLED", "true").lower() == "true"
 
-def _format_vm_url(line_ref: str):
-    u = SIRI_VM_URL_RAW or ""
-    if not u:
-        return "", {}
-    if "{line_ref}" in u:
-        return u.replace("{line_ref}", str(line_ref)), {}
-    return u, {"LineRef": line_ref}
+LIVE_CACHE_TTL_SEC = int(os.getenv("LIVE_CACHE_TTL_SEC", "20"))
+NEAR_RADIUS_M = float(os.getenv("NEAR_RADIUS_M", "250"))
 
-def _format_sm_url(stop_id: str):
-    u = SIRI_SM_URL_RAW or ""
-    if not u:
-        return "", {}
-    if "{stop_id}" in u:
-        return u.replace("{stop_id}", str(stop_id)), {}
-    return u, {"MonitoringRef": stop_id, "MaximumStopVisits": "10"}
+app = FastAPI()
 
-# ------------------------- Beépített sötét sablonok -------------------------
-from jinja2 import Environment, BaseLoader, select_autoescape
-JINJA = Environment(loader=BaseLoader(), autoescape=select_autoescape(["html", "xml"]))
+# ----------------------------
+# Small helpers
+# ----------------------------
 
-STYLE = """
-<style>
-:root{--bg:#0f172a;--card:#111827;--muted:#94a3b8;--txt:#e5e7eb;--live:#10b981;--due:#22c55e;--link:#60a5fa;}
-*{box-sizing:border-box} body{margin:0;font:16px system-ui,Segoe UI,Roboto,Helvetica,Arial;color:var(--txt);background:var(--bg)}
-.wrap{max-width:980px;margin:0 auto;padding:16px}
-h1{font-size:40px;margin:16px 0 12px}
-h2{font-size:20px;color:var(--muted);margin:24px 0 8px}
-a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
-.card{background:var(--card);padding:14px 16px;border-radius:14px;box-shadow:0 1px 0 rgba(255,255,255,.05) inset}
-.badge{display:inline-block;background:#1f2937;border-radius:10px;padding:6px 10px;margin-right:8px}
-.row{display:flex;align-items:center;justify-content:space-between;background:var(--card);padding:14px 16px;border-radius:14px;margin:10px 0}
-.row .left{display:flex;gap:12px;align-items:center}
-.row .time{background:#1f2937;border-radius:12px;padding:8px 10px;min-width:62px;text-align:center;font-weight:600}
-.row.live{border:1px solid var(--live)}
-.row.live .time{background:rgba(16,185,129,.15)}
-.row .right{color:var(--muted)}
-.row.live .right{color:var(--live)}
-.row.live.due{animation:blink 1s steps(2,end) infinite;border-color:var(--due)}
-@keyframes blink{to{visibility:hidden}}
-.topbar{display:flex;align-items:center;gap:16px;margin:8px 0 16px;flex-wrap:wrap}
-input[type="text"]{background:#0b1220;border:1px solid #1f2937;color:var(--txt);border-radius:10px;padding:8px 10px;min-width:240px}
-.small{color:var(--muted);font-size:13px}
-</style>
-"""
-
-TPL_INDEX = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>bluestar</title>""" + STYLE + """
-</head><body><div class="wrap">
-<div class="topbar"><a href="/"><strong>★ bluestar</strong></a>
-<form action="/search"><input name="q" placeholder="Keresés: járat vagy megálló" value="{{ q or '' }}"></form>
-<div class="small">UK: {{ now_uk }}</div></div>
-
-<h1>Járatok</h1>
-<div class="grid">
-{% for r in routes %}
-  <div class="card">
-    <a href="/r/{{ r.key }}"><span class="badge">{{ r.short }}</span></a>
-    <div class="small">{{ r.operator or '' }}</div>
-  </div>
-{% endfor %}
-</div>
-</div></body></html>
-"""
-
-TPL_SEARCH = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Keresés</title>""" + STYLE + """
-</head><body><div class="wrap">
-<div class="topbar"><a href="/"><strong>★ bluestar</strong></a>
-<form action="/search"><input name="q" placeholder="Keresés: járat vagy megálló" value="{{ q or '' }}"></form>
-<div class="small">UK: {{ now_uk }}</div></div>
-
-<h1>Keresés: "{{ q }}"</h1>
-
-<h2>Járatok</h2>
-{% if not routes %}<div class="small">Nincs találat.</div>{% endif %}
-<div class="grid">
-{% for r in routes %}
-  <div class="card"><a href="/r/{{ r.key }}"><span class="badge">{{ r.short }}</span></a></div>
-{% endfor %}
-</div>
-
-<h2>Megállók</h2>
-{% if not stops %}<div class="small">Nincs találat.</div>{% endif %}
-<div>
-{% for s in stops %}
-  <div class="row">
-    <div class="left">
-      <div class="time">🔹</div>
-      <div>
-        <div><strong>{{ s.name }}</strong></div>
-        <div class="small">{{ s.code or s.id }}</div>
-      </div>
-    </div>
-    <div class="right"><a href="/stop/{{ s.code or s.id }}">Megnyitás</a></div>
-  </div>
-{% endfor %}
-</div>
-</div></body></html>
-"""
-
-TPL_STOP = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Megálló</title>""" + STYLE + """
-</head><body><div class="wrap">
-<div class="topbar"><a href="/"><strong>★ bluestar</strong></a>
-<form action="/search"><input name="q" placeholder="Keresés: járat vagy megálló"></form>
-<div class="small">UK: {{ now_uk }}</div></div>
-
-<h1>Megálló</h1>
-<div class="small">{{ stop.stop_name }}{% if stop.stop_code %} [{{ stop.stop_code }}]{% endif %}</div>
-
-<h2>Indulások</h2>
-{% if not rows %}<div class="small">Nincs közelgő indulás.</div>{% endif %}
-{% for r in rows %}
-  <div class="row {{ r.row_class }}">
-    <div class="left">
-      <div class="time">{{ r.time_str }}</div>
-      <div>
-        <div><a href="/r/{{ r.route_key }}"><strong>{{ r.headsign or r.route_short }}</strong></a></div>
-        <div class="small">
-          {{ r.route_short }}
-          {% if r.fleet %} • fleet {{ r.fleet }}{% endif %}
-          {% if r.is_live %} • <span style="color:var(--live)">LIVE</span>{% else %} • <span class="small">menetrendi</span>{% endif %}
-        </div>
-      </div>
-    </div>
-    <div class="right">
-      {% if r.delay_text %}{{ r.delay_text }} • {% endif %}
-      {% if r.is_live %}
-        {% if r.wait_mins <= 0 %}due{% else %}{{ r.wait_mins }} perc{% endif %}
-      {% else %}
-        {{ r.wait_mins }} perc
-      {% endif %}
-    </div>
-  </div>
-{% endfor %}
-</div></body></html>
-"""
-
-TPL_ROUTE = """
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Route {{ route_short }}</title>""" + STYLE + """
-</head><body><div class="wrap">
-<div class="topbar"><a href="/"><strong>★ bluestar</strong></a>
-<form action="/search"><input name="q" placeholder="Keresés: járat vagy megálló"></form>
-<div class="small">UK: {{ now_uk }}</div></div>
-
-<h1>Route <span class="badge">{{ route_short }}</span></h1>
-<h2>Élő járművek (Bluestar/Unilink)</h2>
-
-{% if not live_vehicles %}<div class="small">Jelenleg nincs élő jármű.</div>{% endif %}
-{% for v in live_vehicles %}
-  <div class="row live">
-    <div class="left">
-      <div class="time">BUS</div>
-      <div>
-        <div><strong>{{ v.fleet or "—" }}</strong></div>
-        <div class="small">lat {{ '%.5f'|format(v.lat) }}, lon {{ '%.5f'|format(v.lon) }}</div>
-      </div>
-    </div>
-    <div class="right">{{ route_short }}</div>
-  </div>
-{% endfor %}
-</div></body></html>
-"""
-
-def render(tpl_src: str, **ctx) -> HTMLResponse:
-    tpl = JINJA.from_string(tpl_src)
-    return HTMLResponse(tpl.render(**ctx))
-
-# ------------------------- GTFS betöltés -------------------------
-routes = []
-stops = []
-trips = []
-stop_times = []
-
-routes_by_id = {}
-routes_by_short = defaultdict(list)
-
-stops_by_id = {}
-stops_by_code = {}
-
-trips_by_id = {}
-trips_by_route = defaultdict(list)
-
-stop_times_by_stop = defaultdict(list)
-stop_times_by_trip = defaultdict(list)
-
-def _read_csv(path: str):
-    if not os.path.exists(path):
-        return []
+def read_csv(path: str) -> List[Dict[str, str]]:
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
 
-def load_gtfs():
-    rp = os.path.join(DATA_DIR, "routes.txt")
-    sp = os.path.join(DATA_DIR, "stops.txt")
-    tp = os.path.join(DATA_DIR, "trips.txt")
-    stp = os.path.join(DATA_DIR, "stop_times.txt")
+def now_uk() -> datetime:
+    # You used "UK:" in UI; use UTC for logic (safe), display local string simply.
+    return datetime.now(timezone.utc)
 
-    routes[:] = _read_csv(rp)
-    stops[:] = _read_csv(sp)
-    trips[:] = _read_csv(tp)
-    stop_times[:] = _read_csv(stp)
+def parse_gtfs_time_to_dt(d: date, hhmmss: str) -> datetime:
+    # GTFS can exceed 24:00:00 (e.g. 25:10:00)
+    parts = hhmmss.strip().split(":")
+    if len(parts) != 3:
+        raise ValueError(f"Bad GTFS time: {hhmmss}")
+    hh = int(parts[0])
+    mm = int(parts[1])
+    ss = int(parts[2])
+    base = datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=timezone.utc)
+    return base + timedelta(hours=hh, minutes=mm, seconds=ss)
 
-    routes_by_id.clear()
-    routes_by_short.clear()
-    for r in routes:
-        rid = (r.get("route_id") or "").strip()
-        routes_by_id[rid] = r
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    R = 6371000.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+    return 2 * R * math.asin(math.sqrt(a))
+
+def esc(s: str) -> str:
+    return html.escape(s or "")
+
+# ----------------------------
+# GTFS in-memory store
+# ----------------------------
+
+routes: Dict[str, Dict[str, str]] = {}
+stops: Dict[str, Dict[str, str]] = {}
+trips: Dict[str, Dict[str, str]] = {}
+stop_times_by_stop: Dict[str, List[Dict[str, str]]] = {}
+stop_times_by_trip: Dict[str, List[Dict[str, str]]] = {}
+
+# calendar service_id -> weekday flags + start/end
+calendar: Dict[str, Dict[str, str]] = {}
+# calendar_dates: service_id -> {YYYYMMDD: exception_type}
+calendar_dates: Dict[str, Dict[str, str]] = {}
+
+# quick search indices
+routes_search: List[Tuple[str, str, str]] = []  # (route_id, short, long)
+stops_search: List[Tuple[str, str]] = []        # (stop_id, stop_name)
+
+def load_gtfs() -> None:
+    global routes, stops, trips, stop_times_by_stop, stop_times_by_trip, calendar, calendar_dates, routes_search, stops_search
+
+    def p(name: str) -> str:
+        return os.path.join(DATA_DIR, name)
+
+    if not os.path.isdir(DATA_DIR):
+        raise RuntimeError(f"DATA_DIR not found: {DATA_DIR}")
+
+    routes_list = read_csv(p("routes.txt"))
+    stops_list = read_csv(p("stops.txt"))
+    trips_list = read_csv(p("trips.txt"))
+    stop_times_list = read_csv(p("stop_times.txt"))
+
+    routes = {r["route_id"]: r for r in routes_list}
+    stops = {s["stop_id"]: s for s in stops_list}
+    trips = {t["trip_id"]: t for t in trips_list}
+
+    stop_times_by_stop = {}
+    stop_times_by_trip = {}
+
+    for st in stop_times_list:
+        sid = st.get("stop_id", "")
+        tid = st.get("trip_id", "")
+        stop_times_by_stop.setdefault(sid, []).append(st)
+        stop_times_by_trip.setdefault(tid, []).append(st)
+
+    # sort for stable output
+    for sid, lst in stop_times_by_stop.items():
+        lst.sort(key=lambda x: (x.get("arrival_time",""), x.get("departure_time",""), x.get("trip_id","")))
+    for tid, lst in stop_times_by_trip.items():
+        lst.sort(key=lambda x: int(x.get("stop_sequence","0") or 0))
+
+    # calendar optional
+    calendar = {}
+    calendar_dates = {}
+    if os.path.exists(p("calendar.txt")):
+        for row in read_csv(p("calendar.txt")):
+            calendar[row["service_id"]] = row
+    if os.path.exists(p("calendar_dates.txt")):
+        for row in read_csv(p("calendar_dates.txt")):
+            sid = row["service_id"]
+            dt = row["date"]
+            calendar_dates.setdefault(sid, {})[dt] = row["exception_type"]
+
+    # search lists
+    routes_search = []
+    for rid, r in routes.items():
         short = (r.get("route_short_name") or "").strip()
-        if short:
-            routes_by_short[short.lower()].append(r)
+        longn = (r.get("route_long_name") or "").strip()
+        if not short and not longn:
+            short = rid
+        routes_search.append((rid, short, longn))
+    routes_search.sort(key=lambda x: (x[1] or x[2] or x[0]))
 
-    stops_by_id.clear()
-    stops_by_code.clear()
-    for s in stops:
-        sid = (s.get("stop_id") or "").strip()
-        sc = (s.get("stop_code") or "").strip()
-        if sid:
-            stops_by_id[sid] = s
-        if sc:
-            stops_by_code[sc] = s
+    stops_search = []
+    for sid, s in stops.items():
+        nm = (s.get("stop_name") or "").strip()
+        if nm:
+            stops_search.append((sid, nm))
+    stops_search.sort(key=lambda x: x[1].lower())
 
-    trips_by_id.clear()
-    trips_by_route.clear()
-    for t in trips:
-        tid = (t.get("trip_id") or "").strip()
-        rid = (t.get("route_id") or "").strip()
-        if tid:
-            trips_by_id[tid] = t
-        if rid:
-            trips_by_route[rid].append(t)
+def service_active_today(service_id: str, d: date) -> bool:
+    ymd = d.strftime("%Y%m%d")
+    # exceptions override base
+    if service_id in calendar_dates and ymd in calendar_dates[service_id]:
+        return calendar_dates[service_id][ymd] == "1"  # 1=added, 2=removed
 
-    stop_times_by_stop.clear()
-    stop_times_by_trip.clear()
-    for st in stop_times:
-        sid = (st.get("stop_id") or "").strip()
-        tid = (st.get("trip_id") or "").strip()
-        if sid:
-            stop_times_by_stop[sid].append(st)
-        if tid:
-            stop_times_by_trip[tid].append(st)
+    cal = calendar.get(service_id)
+    if not cal:
+        # If no calendar.txt, assume active (some feeds rely only on calendar_dates)
+        return True
 
-    for tid, arr in stop_times_by_trip.items():
-        arr.sort(key=lambda x: gtfs_sec(x.get("departure_time") or x.get("arrival_time") or ""))
+    start = cal.get("start_date", "19000101")
+    end = cal.get("end_date", "29991231")
+    if not (start <= ymd <= end):
+        return False
 
-# ------------------------- Live hívások + cache -------------------------
-LIVE_CACHE = {}
-LIVE_TTL = 20  # sec
+    weekday = d.weekday()  # Mon=0
+    key = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"][weekday]
+    return cal.get(key, "0") == "1"
 
-def cache_get(k):
-    v = LIVE_CACHE.get(k)
-    if not v:
-        return None
-    if v["exp"] < datetime.utcnow().timestamp():
-        LIVE_CACHE.pop(k, None)
-        return None
-    return v["val"]
+# ----------------------------
+# LIVE cache + parser (SIRI-ish)
+# ----------------------------
 
-def cache_set(k, val):
-    LIVE_CACHE[k] = {"val": val, "exp": datetime.utcnow().timestamp() + LIVE_TTL}
+_live_cache: Dict[str, Any] = {"ts": 0.0, "vehicles": [], "stop_departures": {}}
 
-async def http_get_json(url: str, params=None):
-    if not url or httpx is None:
-        return None
+def _xml_find_text(elem, path: str) -> str:
+    # namespace-agnostic: check localname suffix
+    parts = path.split("/")
+    cur = elem
+    for p in parts:
+        found = None
+        for ch in list(cur):
+            if ch.tag.split("}")[-1] == p:
+                found = ch
+                break
+        if found is None:
+            return ""
+        cur = found
+    return (cur.text or "").strip()
+
+def parse_siri(xml_bytes: bytes) -> Tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
+    """
+    Tries to parse SIRI VehicleMonitoring + StopMonitoring.
+    Returns:
+      vehicles: [{lat, lon, line, operator, vehicle_ref(fleet), trip_ref, aimed, expected, delay_min}]
+      stop_departures: {stop_id: [{line, destination, aimed, expected, delay_min, vehicle_ref, is_due}]}
+    """
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml_bytes)
+
+    vehicles: List[Dict[str, Any]] = []
+    stop_deps: Dict[str, List[Dict[str, Any]]] = {}
+
+    # VehicleActivity nodes
+    for va in root.iter():
+        if va.tag.split("}")[-1] != "VehicleActivity":
+            continue
+
+        mvj = None
+        loc = None
+        for ch in list(va):
+            ln = ch.tag.split("}")[-1]
+            if ln == "MonitoredVehicleJourney":
+                mvj = ch
+        if mvj is None:
+            continue
+
+        # location
+        veh_loc = None
+        for ch in list(mvj):
+            if ch.tag.split("}")[-1] == "VehicleLocation":
+                veh_loc = ch
+        lat = lon = None
+        if veh_loc is not None:
+            lat_s = _xml_find_text(veh_loc, "Latitude")
+            lon_s = _xml_find_text(veh_loc, "Longitude")
+            try:
+                lat = float(lat_s); lon = float(lon_s)
+            except Exception:
+                pass
+
+        line = _xml_find_text(mvj, "LineRef") or _xml_find_text(mvj, "PublishedLineName")
+        operator_ref = _xml_find_text(mvj, "OperatorRef")
+        vehicle_ref = _xml_find_text(mvj, "VehicleRef") or _xml_find_text(mvj, "VehicleMonitoringRef")
+        trip_ref = _xml_find_text(mvj, "DatedVehicleJourneyRef") or _xml_find_text(mvj, "FramedVehicleJourneyRef/DatedVehicleJourneyRef")
+
+        # calls: try to compute delay from aimed/expected at next call
+        aimed = expected = ""
+        mc = None
+        for ch in list(mvj):
+            if ch.tag.split("}")[-1] == "MonitoredCall":
+                mc = ch
+        if mc is not None:
+            aimed = _xml_find_text(mc, "AimedDepartureTime") or _xml_find_text(mc, "AimedArrivalTime")
+            expected = _xml_find_text(mc, "ExpectedDepartureTime") or _xml_find_text(mc, "ExpectedArrivalTime")
+
+            stop_point = _xml_find_text(mc, "StopPointRef")
+            if stop_point:
+                dep = {
+                    "line": line,
+                    "destination": _xml_find_text(mvj, "DestinationName") or _xml_find_text(mvj, "DestinationRef"),
+                    "aimed": aimed,
+                    "expected": expected,
+                    "vehicle_ref": vehicle_ref,
+                    "operator": operator_ref,
+                    "trip_ref": trip_ref,
+                    "delay_min": None,
+                    "is_due": False,
+                }
+                try:
+                    if aimed and expected:
+                        a = datetime.fromisoformat(aimed.replace("Z","+00:00"))
+                        e = datetime.fromisoformat(expected.replace("Z","+00:00"))
+                        dep["delay_min"] = int(round((e - a).total_seconds() / 60.0))
+                        # due if expected within ~1 minute
+                        dep["is_due"] = abs((e - now_uk()).total_seconds()) <= 60
+                except Exception:
+                    pass
+                stop_deps.setdefault(stop_point, []).append(dep)
+
+        delay_min = None
+        try:
+            if aimed and expected:
+                a = datetime.fromisoformat(aimed.replace("Z","+00:00"))
+                e = datetime.fromisoformat(expected.replace("Z","+00:00"))
+                delay_min = int(round((e - a).total_seconds() / 60.0))
+        except Exception:
+            pass
+
+        if lat is not None and lon is not None:
+            vehicles.append({
+                "lat": lat,
+                "lon": lon,
+                "line": line,
+                "operator": operator_ref,
+                "vehicle_ref": vehicle_ref,
+                "trip_ref": trip_ref,
+                "aimed": aimed,
+                "expected": expected,
+                "delay_min": delay_min,
+            })
+
+    # sort stop departures
+    for sid, lst in stop_deps.items():
+        def key(x):
+            t = x.get("expected") or x.get("aimed") or ""
+            return t
+        lst.sort(key=key)
+
+    return vehicles, stop_deps
+
+async def get_live() -> Dict[str, Any]:
+    if not LIVE_ENABLED:
+        return {"vehicles": [], "stop_departures": {}, "enabled": False}
+
+    t = time.time()
+    if (t - float(_live_cache["ts"])) < LIVE_CACHE_TTL_SEC:
+        return {"vehicles": _live_cache["vehicles"], "stop_departures": _live_cache["stop_departures"], "enabled": True}
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(url, params=params or {}, headers=EXTRA_HEADERS)
+            r = await client.get(LIVE_FEED_URL, headers={"User-Agent": "bluestar-bus-api/1.0"})
             r.raise_for_status()
-            return r.json()
+            content = r.content
     except Exception as e:
-        log.warning("live request failed: %s", e)
-        return None
+        # keep old cache if exists
+        return {
+            "vehicles": _live_cache.get("vehicles", []),
+            "stop_departures": _live_cache.get("stop_departures", {}),
+            "enabled": True,
+            "error": str(e),
+        }
 
-def _parse_iso(dt_str: str):
+    # Parse (SIRI XML expected)
     try:
-        if not dt_str:
-            return None
-        ds = dt_str.replace("Z", "+00:00")
-        return datetime.fromisoformat(ds).astimezone(UK_TZ)
-    except Exception:
-        return None
+        vehicles, stop_deps = parse_siri(content)
+    except Exception as e:
+        # If your feed is not XML, this is where we adapt.
+        return {
+            "vehicles": [],
+            "stop_departures": {},
+            "enabled": True,
+            "error": f"Live parse failed (expected SIRI XML). {e}",
+        }
 
-async def fetch_live_vm(route_short: str):
-    if not route_short:
-        return []
-    ck = ("vm", route_short.lower())
-    c = cache_get(ck)
-    if c is not None:
-        return c
+    _live_cache["ts"] = t
+    _live_cache["vehicles"] = vehicles
+    _live_cache["stop_departures"] = stop_deps
+    return {"vehicles": vehicles, "stop_departures": stop_deps, "enabled": True}
 
-    out = []
-    url, params = _format_vm_url(route_short)
-    if url:
-        data = await http_get_json(url, params=params)
-        try:
-            deliveries = (data or {}).get("Siri", {}).get("ServiceDelivery", {}).get("VehicleMonitoringDelivery", []) or []
-            for d in deliveries:
-                for a in (d.get("VehicleActivity") or []):
-                    j = a.get("MonitoredVehicleJourney", {}) or {}
-                    line = (j.get("LineRef") or j.get("PublishedLineName") or "").strip()
-                    op = (j.get("OperatorRef") or "").strip()
-                    if route_short and line and route_short.lower() != str(line).lower():
-                        continue
-                    if op and not operator_ok(op):
-                        continue
-                    loc = j.get("VehicleLocation") or {}
-                    lat = loc.get("Latitude")
-                    lon = loc.get("Longitude")
-                    if lat is None or lon is None:
-                        continue
-                    out.append({
-                        "lat": float(lat),
-                        "lon": float(lon),
-                        "fleet": str(j.get("VehicleRef") or a.get("VehicleRef") or ""),
-                        "line": str(line),
-                        "operator": (op or "").lower()[:4],
-                    })
-        except Exception as e:
-            log.warning("parse VM failed: %s", e)
-            out = []
+# ----------------------------
+# HTML (single-file UI)
+# ----------------------------
 
-    cache_set(ck, out)
-    return out
+CSS = """
+:root{--bg:#0b1220;--card:#0f1b33;--txt:#e8eefc;--mut:#9fb0d0;--blue:#6aa9ff;--green:#24d26a;--white:#ffffff;}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;background:var(--bg);color:var(--txt)}
+a{color:var(--blue);text-decoration:none}
+.top{position:sticky;top:0;background:rgba(11,18,32,.92);backdrop-filter: blur(6px);padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);z-index:10}
+.brand{font-weight:800;letter-spacing:.2px}
+.search{margin-top:8px;display:flex;gap:8px}
+.search input{flex:1;background:#0b1730;border:1px solid rgba(255,255,255,.12);color:var(--txt);padding:10px;border-radius:10px}
+.container{padding:14px;max-width:980px;margin:0 auto}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:700px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:14px}
+.h1{font-size:36px;margin:10px 0 6px}
+.h2{font-size:22px;margin:14px 0 8px}
+.small{color:var(--mut);font-size:13px}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid rgba(255,255,255,.14);color:var(--mut)}
+.badge.live{color:var(--green);border-color:rgba(36,210,106,.35)}
+.badge.err{color:#ff8a8a;border-color:rgba(255,138,138,.35)}
+.list{display:flex;flex-direction:column;gap:10px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px;border-radius:14px;background:rgba(0,0,0,.12);border:1px solid rgba(255,255,255,.06)}
+.left{display:flex;align-items:center;gap:12px}
+.time{min-width:64px;text-align:center;background:rgba(255,255,255,.08);padding:8px 10px;border-radius:12px;font-weight:700}
+.title{font-weight:800}
+.sub{font-size:12px;color:var(--mut);margin-top:2px}
+.right{color:var(--mut)}
+.tag{font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.14)}
+.tag.tt{color:var(--white)}
+.tag.lv{color:var(--green);border-color:rgba(36,210,106,.35)}
+.tag.due{color:var(--green);border-color:rgba(36,210,106,.55);animation: blink 1s infinite}
+@keyframes blink{0%,50%{opacity:1}51%,100%{opacity:.25}}
+.map{height:280px;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+.kv{display:flex;gap:10px;flex-wrap:wrap}
+.kv .k{color:var(--mut)}
+.kv .v{font-weight:700}
+.corner{position:relative}
+.corner .cornerBadge{position:absolute;top:12px;right:12px}
+"""
 
-async def fetch_live_sm(stop_code_or_id: str):
-    ck = ("sm", stop_code_or_id)
-    c = cache_get(ck)
-    if c is not None:
-        return c
+LEAFLET = """
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+"""
 
-    items = []
-    url, params = _format_sm_url(stop_code_or_id)
-    if url:
-        data = await http_get_json(url, params=params)
-        try:
-            deliveries = (data or {}).get("Siri", {}).get("ServiceDelivery", {}).get("StopMonitoringDelivery", []) or []
-            for d in deliveries:
-                for v in (d.get("MonitoredStopVisit") or []):
-                    j = v.get("MonitoredVehicleJourney", {}) or {}
-                    line = (j.get("LineRef") or j.get("PublishedLineName") or "").strip()
-                    op = (j.get("OperatorRef") or "").strip()
-                    if op and not operator_ok(op):
-                        continue
+def page_shell(title: str, body: str, q: str = "") -> str:
+    uk = now_uk().strftime("%H:%M:%S")
+    return f"""<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>{esc(title)}</title>
+<style>{CSS}</style>
+{LEAFLET}
+</head>
+<body>
+  <div class="top">
+    <div class="brand">★ bluestar</div>
+    <div class="search">
+      <form action="/search" method="get" style="display:flex;gap:8px;width:100%">
+        <input name="q" value="{esc(q)}" placeholder="Keresés: járat vagy megálló"/>
+      </form>
+    </div>
+    <div class="small">UK: {uk}</div>
+  </div>
+  <div class="container">
+    {body}
+  </div>
+</body>
+</html>"""
 
-                    call = j.get("MonitoredCall") or {}
-                    aimed = call.get("AimedDepartureTime") or call.get("AimedArrivalTime")
-                    exp = call.get("ExpectedDepartureTime") or call.get("ExpectedArrivalTime")
-                    dep_dt = _parse_iso(exp) or _parse_iso(aimed)
-
-                    delay_text = ""
-                    if aimed and exp:
-                        a = _parse_iso(aimed)
-                        e = _parse_iso(exp)
-                        if a and e:
-                            mins = round((e - a).total_seconds() / 60.0)
-                            if mins != 0:
-                                delay_text = f"{mins:+d}m"
-
-                    is_due = bool(dep_dt and abs((now_uk() - dep_dt).total_seconds()) < 60)
-
-                    items.append({
-                        "line": line,
-                        "operator": (op or "").lower()[:4],
-                        "headsign": j.get("DestinationName") or "",
-                        "vehicle_ref": j.get("VehicleRef") or "",
-                        "dep_dt": dep_dt,
-                        "delay_text": delay_text,
-                        "is_due": is_due,
-                        # ha nincs jó trip_id, akkor is működjön a dedup route+time alapján
-                        "trip_id": (j.get("FramedVehicleJourneyRef", {}) or {}).get("DatedVehicleJourneyRef") or "",
-                    })
-        except Exception as e:
-            log.warning("parse SM failed: %s", e)
-            items = []
-
-    cache_set(ck, items)
-    return items
-
-# ------------------------- Segédek -------------------------
-def stop_by_any(id_or_code: str):
-    return stops_by_id.get(id_or_code) or stops_by_code.get(id_or_code)
-
-def routes_for_short(short_lower: str):
-    lst = routes_by_short.get(short_lower, [])
-    if not lst:
-        return []
-    res = []
-    for r in lst:
-        ag = (r.get("agency_id") or "").strip().lower()[:4]
-        if ag and ag not in ALLOWED_OPERATORS:
-            continue
-        res.append(r)
-    return res or lst
-
-def _dedup_key_live(it):
-    # prefer trip_id, de ha üres, akkor line+dep_dt perc pontossággal
-    tid = (it.get("trip_id") or "").strip()
-    line = (it.get("line") or "").strip().lower()
-    dep = it.get("dep_dt")
-    if tid:
-        return ("tid", tid, line)
-    if dep:
-        return ("fallback", line, dep.replace(second=0, microsecond=0))
-    return ("fallback", line, None)
-
-async def rows_for_stop(stop_obj, minutes_ahead=120):
-    now = now_uk()
-    until = now + timedelta(minutes=minutes_ahead)
-    sid = stop_obj.get("stop_id")
-    scode = (stop_obj.get("stop_code") or stop_obj.get("stop_id") or "").strip()
-
-    live_raw = await fetch_live_sm(scode)
-    live_index = {}
-    for it in live_raw or []:
-        if not it.get("dep_dt"):
-            continue
-        live_index[_dedup_key_live(it)] = it
-
-    rows = []
-
-    # menetrendi sorok -> ha van élő, menetrendit elnyomjuk ugyanarra
-    for st in stop_times_by_stop.get(sid, []):
-        tid = st.get("trip_id")
-        trip = trips_by_id.get(tid, {}) or {}
-        rid = (trip.get("route_id") or "").strip()
-        route = routes_by_id.get(rid, {}) or {}
-
-        route_short = (route.get("route_short_name") or "").strip()
-        agency = (route.get("agency_id") or "").strip().lower()[:4]
-        if agency and agency not in ALLOWED_OPERATORS:
-            continue
-
-        dep_sec = gtfs_sec(st.get("departure_time") or st.get("arrival_time") or "")
-        dep_dt = sec_to_today(dep_sec)
-        if dep_dt < (now - timedelta(minutes=1)) or dep_dt > until:
-            continue
-
-        headsign = (trip.get("trip_headsign") or "").strip()
-
-        # matching: először trip_id+line, ha nem jó, akkor line+dep idő perc pontossággal
-        fake_live = {"trip_id": tid or "", "line": route_short, "dep_dt": dep_dt}
-        lk1 = _dedup_key_live(fake_live)
-        lk2 = ("fallback", (route_short or "").lower(), dep_dt.replace(second=0, microsecond=0))
-        live_hit = live_index.get(lk1) or live_index.get(lk2)
-
-        if live_hit:
-            d = live_hit["dep_dt"]
-            wait = mins_from_now(d)
-            rows.append({
-                "time_str": fmt_hhmm(d),
-                "time_dt": d,
-                "headsign": (live_hit.get("headsign") or headsign),
-                "route_short": route_short or live_hit.get("line") or "",
-                "route_key": (route_short or live_hit.get("line") or "").lower(),
-                "wait_mins": wait,
-                "is_live": True,
-                "row_class": "live due" if live_hit.get("is_due") or wait <= 0 else "live",
-                "trip_id": tid or "",
-                "fleet": live_hit.get("vehicle_ref") or "",
-                "delay_text": live_hit.get("delay_text") or "",
-            })
-        else:
-            wait = mins_from_now(dep_dt)
-            rows.append({
-                "time_str": fmt_hhmm(dep_dt),
-                "time_dt": dep_dt,
-                "headsign": headsign,
-                "route_short": route_short,
-                "route_key": route_short.lower(),
-                "wait_mins": wait,
-                "is_live": False,
-                "row_class": "timetable",
-                "trip_id": tid or "",
-                "fleet": "",
-                "delay_text": "",
-            })
-
-    # olyan LIVE indulások, amikhez nincs menetrendi sor
-    for it in (live_raw or []):
-        d = it.get("dep_dt")
-        if not d:
-            continue
-        if d < (now - timedelta(minutes=1)) or d > until:
-            continue
-
-        # ha már bekerült menetrendi sor live-ként, ne duplázzuk
-        key = _dedup_key_live(it)
-        if any((_dedup_key_live({"trip_id": r["trip_id"], "line": r["route_short"], "dep_dt": r["time_dt"]}) == key) for r in rows if r["is_live"]):
-            continue
-
-        wait = mins_from_now(d)
-        rows.append({
-            "time_str": fmt_hhmm(d),
-            "time_dt": d,
-            "headsign": it.get("headsign") or "",
-            "route_short": it.get("line") or "",
-            "route_key": (it.get("line") or "").lower(),
-            "wait_mins": wait,
-            "is_live": True,
-            "row_class": "live due" if it.get("is_due") or wait <= 0 else "live",
-            "trip_id": it.get("trip_id") or "",
-            "fleet": it.get("vehicle_ref") or "",
-            "delay_text": it.get("delay_text") or "",
-        })
-
-    # rendezés: idő szerint, ha egyező, live előre
-    rows.sort(key=lambda x: (x["time_dt"], 0 if x["is_live"] else 1))
-    return rows
-
-# ------------------------- FastAPI -------------------------
-app = FastAPI()
+# ----------------------------
+# Routes
+# ----------------------------
 
 @app.on_event("startup")
-def _startup():
+async def _startup():
     load_gtfs()
-    log.info("GTFS loaded: routes=%d stops=%d", len(routes), len(stops))
 
-@app.get("/healthz")
-def healthz():
-    return PlainTextResponse("ok")
-
-@app.get("/c")
-def diag():
-    return JSONResponse({
+@app.get("/health")
+async def health():
+    live = await get_live()
+    return {
         "DATA_DIR": DATA_DIR,
         "routes.txt": os.path.exists(os.path.join(DATA_DIR, "routes.txt")),
         "stops.txt": os.path.exists(os.path.join(DATA_DIR, "stops.txt")),
@@ -631,104 +429,411 @@ def diag():
         "stop_times.txt": os.path.exists(os.path.join(DATA_DIR, "stop_times.txt")),
         "routes_count": len(routes),
         "stops_count": len(stops),
-        "live_enabled": bool(SIRI_VM_URL_RAW or SIRI_SM_URL_RAW),
-        "requests_available": httpx is not None,
-        "vm_url": SIRI_VM_URL_RAW,
-        "sm_url": SIRI_SM_URL_RAW,
-        "extra_headers": list(EXTRA_HEADERS.keys()),
-    })
+        "live_enabled": LIVE_ENABLED,
+        "live_cache_ok": True,
+        "live_cache_err": live.get("error", ""),
+        "vm_url": LIVE_FEED_URL if LIVE_ENABLED else "",
+    }
 
 @app.get("/", response_class=HTMLResponse)
-def index():
-    seen = set()
-    items = []
-    for r in routes:
-        short = (r.get("route_short_name") or "").strip()
-        if not short:
-            continue
-        ag = (r.get("agency_id") or "").strip().lower()[:4]
-        if ag and ag not in ALLOWED_OPERATORS:
-            continue
-        key = short.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        items.append({"short": short, "key": key, "operator": ag or ""})
-
-    def sort_key(x):
-        s = x["short"]
-        num = ""
-        suf = ""
-        for ch in s:
-            if ch.isdigit():
-                num += ch
-            else:
-                suf += ch
-        return (int(num or 0), suf.lower())
-
-    items.sort(key=sort_key)
-    return render(TPL_INDEX, routes=items, q="", now_uk=now_uk().strftime("%H:%M:%S"))
+async def home():
+    body = """
+    <div class="h1">Járatok</div>
+    <div class="small">Válassz járatot vagy keress megállót.</div>
+    <div class="grid" style="margin-top:14px">
+    """
+    # show top 24 routes
+    for rid, short, longn in routes_search[:24]:
+        op = routes[rid].get("agency_id","")
+        label = esc(short or rid)
+        body += f"""
+          <a class="card" href="/r/{esc(rid)}">
+            <div class="title">{label}</div>
+            <div class="small">{esc(op)}</div>
+          </a>
+        """
+    body += "</div>"
+    return page_shell("bluestar", body)
 
 @app.get("/search", response_class=HTMLResponse)
-def search(q: str = ""):
-    q = (q or "").strip()
-    routes_found = []
-    stops_found = []
-    if q:
-        for short, arr in routes_by_short.items():
-            if q.lower() in short:
-                r = arr[0]
-                ag = (r.get("agency_id") or "").strip().lower()[:4]
-                if ag and ag not in ALLOWED_OPERATORS:
-                    continue
-                routes_found.append({"short": r.get("route_short_name"), "key": short})
-        for s in stops:
-            name = s.get("stop_name") or ""
-            if q.lower() in name.lower():
-                stops_found.append({"id": s.get("stop_id"), "code": s.get("stop_code"), "name": name})
+async def search(q: str = Query(default="")):
+    qn = (q or "").strip().lower()
+    matched_routes = []
+    matched_stops = []
 
-    return render(TPL_SEARCH, q=q, routes=routes_found, stops=stops_found, now_uk=now_uk().strftime("%H:%M:%S"))
+    if qn:
+        for rid, short, longn in routes_search:
+            s = f"{short} {longn} {rid}".lower()
+            if qn in s:
+                matched_routes.append((rid, short, longn))
+        for sid, nm in stops_search:
+            if qn in nm.lower():
+                matched_stops.append((sid, nm))
+    else:
+        matched_routes = routes_search[:30]
+        matched_stops = stops_search[:30]
 
-@app.get("/stop", response_class=HTMLResponse)
-def stop_missing():
-    # ne 404/500 legyen, ha valaki /stop-ot nyit meg
-    return RedirectResponse("/")
+    body = f'<div class="h1">Keresés: "{esc(q)}"</div>'
 
-@app.get("/stop/{sid_or_code}", response_class=HTMLResponse)
-async def stop_view(sid_or_code: str):
-    s = stop_by_any(sid_or_code)
-    if not s:
-        raise HTTPException(status_code=404, detail="Stop not found")
-    rows = await rows_for_stop(s)
-    return render(TPL_STOP, stop=s, rows=rows, now_uk=now_uk().strftime("%H:%M:%S"))
+    body += '<div class="h2">Járatok</div>'
+    if not matched_routes:
+        body += '<div class="small">Nincs találat.</div>'
+    else:
+        body += '<div class="card"><div class="kv">'
+        for rid, short, longn in matched_routes[:80]:
+            label = esc(short or rid)
+            body += f'<a href="/r/{esc(rid)}" style="margin-right:10px">{label}</a>'
+        body += '</div></div>'
 
-@app.get("/s/{sid_or_code}", response_class=HTMLResponse)
-async def stop_alias(sid_or_code: str):
-    return await stop_view(sid_or_code)
+    body += '<div class="h2">Megállók</div>'
+    if not matched_stops:
+        body += '<div class="small">Nincs találat.</div>'
+    else:
+        body += '<div class="list">'
+        for sid, nm in matched_stops[:40]:
+            body += f'''
+            <a class="row" href="/stop/{esc(sid)}">
+              <div class="left">
+                <div class="title">{esc(nm)}</div>
+                <div class="sub">{esc(sid)}</div>
+              </div>
+              <div class="right">Megnyitás</div>
+            </a>'''
+        body += '</div>'
 
-@app.get("/r", response_class=HTMLResponse)
-def route_missing():
-    # ne 404/500 legyen, ha valaki /r-t nyit meg
-    return RedirectResponse("/")
+    return page_shell("Keresés", body, q=q)
 
-@app.get("/r/{route_key}", response_class=HTMLResponse)
-async def route_view(route_key: str):
-    key = (route_key or "").lower()
-    rlist = routes_for_short(key)
-    if not rlist:
-        # próbáljuk route_id-val
-        r = routes_by_id.get(route_key)
-        if r:
-            rlist = [r]
-            key = (r.get("route_short_name") or "").strip().lower()
-    if not rlist:
+@app.get("/r/{route_id}", response_class=HTMLResponse)
+async def route_page(route_id: str):
+    r = routes.get(route_id)
+    if not r:
         raise HTTPException(status_code=404, detail="Route not found")
 
-    short = (rlist[0].get("route_short_name") or "").strip()
-    live = await fetch_live_vm(short)
-    live = [v for v in (live or []) if (v.get("operator") or "") in ALLOWED_OPERATORS]
-    return render(TPL_ROUTE, route_short=short, live_vehicles=live, now_uk=now_uk().strftime("%H:%M:%S"))
+    live = await get_live()
+    vehicles = live.get("vehicles", [])
+    # filter vehicles by line if possible
+    short = (r.get("route_short_name") or route_id).strip()
+    vehicles_line = [v for v in vehicles if (v.get("line") or "").strip() == short]
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    # find some stops on this route from trips -> stop_times
+    # pick up to 2 trips for this route, then list unique stops
+    route_trip_ids = [tid for tid, t in trips.items() if t.get("route_id") == route_id][:6]
+    stop_ids = []
+    seen = set()
+    for tid in route_trip_ids:
+        for st in stop_times_by_trip.get(tid, [])[:999]:
+            sid = st.get("stop_id","")
+            if sid and sid in stops and sid not in seen:
+                seen.add(sid)
+                stop_ids.append(sid)
+            if len(stop_ids) >= 30:
+                break
+        if len(stop_ids) >= 30:
+            break
+
+    # map center: first stop or default
+    center_lat, center_lon = 50.91, -1.40
+    if stop_ids:
+        s0 = stops[stop_ids[0]]
+        try:
+            center_lat = float(s0.get("stop_lat","50.91"))
+            center_lon = float(s0.get("stop_lon","-1.40"))
+        except Exception:
+            pass
+
+    badge = '<span class="badge live">Live: ON</span>' if LIVE_ENABLED else '<span class="badge">Live: OFF</span>'
+    if live.get("error"):
+        badge = f'<span class="badge err">Live hiba: {esc(live["error"])}</span>'
+
+    body = f"""
+    <div class="h1">Járat {esc(short)}</div>
+    <div class="kv">{badge}</div>
+
+    <div class="h2">Élő járművek (térkép)</div>
+    <div id="map" class="map"></div>
+
+    <div class="h2">Megállók (minták)</div>
+    <div class="list">
+    """
+    for sid in stop_ids[:20]:
+        s = stops[sid]
+        body += f'''
+          <a class="row" href="/stop/{esc(sid)}">
+            <div class="left">
+              <div class="title">{esc(s.get("stop_name",""))}</div>
+              <div class="sub">{esc(sid)}</div>
+            </div>
+            <div class="right">Megnyitás</div>
+          </a>
+        '''
+    body += "</div>"
+
+    # map JS
+    body += f"""
+<script>
+const map = L.map('map').setView([{center_lat},{center_lon}], 12);
+L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+  maxZoom: 19, attribution: '&copy; OpenStreetMap'
+}}).addTo(map);
+
+function popupHtml(v){{
+  const line = v.line || '';
+  const fleet = v.vehicle_ref || '';
+  const op = v.operator || '';
+  const dm = (v.delay_min === null || v.delay_min === undefined) ? '' : (v.delay_min>0?('+'+v.delay_min):(''+v.delay_min));
+  return `<div style="min-width:180px">
+    <div style="font-weight:800">Line: ${{
+      line
+    }}</div>
+    <div>Fleet: <b>${{fleet}}</b></div>
+    <div class="small">Op: ${{op}}</div>
+    <div class="small">Δ: ${{dm}} min</div>
+  </div>`;
+}}
+
+async function loadVehicles(){{
+  const res = await fetch('/api/live/vehicles');
+  const data = await res.json();
+  const vs = data.vehicles || [];
+  vs.forEach(v => {{
+    if(!v.lat || !v.lon) return;
+    const m = L.circleMarker([v.lat, v.lon], {{radius:7}});
+    m.addTo(map).bindPopup(popupHtml(v));
+  }});
+}}
+
+map.on('click', async (e) => {{
+  const url = `/api/vehicles/near?lat=${{e.latlng.lat}}&lon=${{e.latlng.lng}}&r={NEAR_RADIUS_M}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  const list = (data.vehicles||[]).map(v => `${{v.line||''}} / fleet=${{v.vehicle_ref||''}}`).join('<br/>') || 'Nincs a közelben.';
+  L.popup().setLatLng(e.latlng).setContent(`<b>Közeli buszok</b><br/>${{list}}`).openOn(map);
+}});
+
+loadVehicles();
+</script>
+"""
+    return page_shell(f"Járat {short}", body)
+
+@app.get("/stop/{stop_id}", response_class=HTMLResponse)
+async def stop_page(stop_id: str):
+    s = stops.get(stop_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Stop not found")
+
+    live = await get_live()
+    live_deps = (live.get("stop_departures") or {}).get(stop_id, [])
+
+    # Build timetable list (today, next 2 hours)
+    d = now_uk().date()
+    nowdt = now_uk()
+    timetable = []
+    for st in stop_times_by_stop.get(stop_id, []):
+        tid = st.get("trip_id","")
+        trip = trips.get(tid) or {}
+        service_id = trip.get("service_id","")
+        if service_id and not service_active_today(service_id, d):
+            continue
+
+        dep = st.get("departure_time") or st.get("arrival_time") or ""
+        if not dep:
+            continue
+        try:
+            dep_dt = parse_gtfs_time_to_dt(d, dep)
+        except Exception:
+            continue
+
+        if dep_dt < nowdt - timedelta(minutes=2):
+            continue
+        if dep_dt > nowdt + timedelta(hours=2):
+            continue
+
+        route_id = trip.get("route_id","")
+        route = routes.get(route_id) or {}
+        line = (route.get("route_short_name") or route_id).strip()
+        dest = trip.get("trip_headsign") or ""
+        timetable.append({
+            "line": line,
+            "destination": dest,
+            "dt": dep_dt,
+            "display": dep_dt.strftime("%H:%M"),
+        })
+
+    timetable.sort(key=lambda x: x["dt"])
+
+    # Dedup rule:
+    # If there is live data for this stop => show ONLY live
+    # Else => show ONLY timetable
+    show_live_only = len(live_deps) > 0
+
+    badge = '<span class="badge live">Live: ON</span>' if LIVE_ENABLED else '<span class="badge">Live: OFF</span>'
+    if live.get("error"):
+        badge = f'<span class="badge err">Live hiba: {esc(live["error"])}</span>'
+
+    body = f"""
+    <div class="h1">Megálló</div>
+    <div class="card">
+      <div class="title">{esc(s.get("stop_name",""))}</div>
+      <div class="small">{esc(stop_id)}</div>
+      <div class="kv" style="margin-top:10px">{badge}</div>
+    </div>
+
+    <div class="h2">Indulások</div>
+    <div class="list">
+    """
+
+    if show_live_only:
+        for dep in live_deps[:30]:
+            line = dep.get("line","")
+            mins = ""
+            # show minutes to expected if possible
+            try:
+                ex = dep.get("expected") or dep.get("aimed") or ""
+                if ex:
+                    exdt = datetime.fromisoformat(ex.replace("Z","+00:00"))
+                    m = int(round((exdt - now_uk()).total_seconds()/60.0))
+                    mins = f"{m} perc"
+            except Exception:
+                pass
+
+            t_disp = ""
+            try:
+                ex = dep.get("expected") or dep.get("aimed") or ""
+                if ex:
+                    exdt = datetime.fromisoformat(ex.replace("Z","+00:00"))
+                    t_disp = exdt.strftime("%H:%M")
+            except Exception:
+                t_disp = ""
+
+            tag_cls = "tag lv"
+            if dep.get("is_due"):
+                tag_cls = "tag due"
+
+            body += f"""
+            <div class="row">
+              <div class="left">
+                <div class="time">{esc(t_disp or "--:--")}</div>
+                <div>
+                  <div class="title">{esc(line or "?")}</div>
+                  <div class="sub">{esc(dep.get("destination",""))}</div>
+                  <div class="sub">Fleet: <b>{esc(dep.get("vehicle_ref",""))}</b></div>
+                </div>
+              </div>
+              <div class="right">
+                <span class="{tag_cls}">Live</span>
+                <div class="small">{esc(mins)}</div>
+              </div>
+            </div>
+            """
+    else:
+        for t in timetable[:30]:
+            body += f"""
+            <div class="row">
+              <div class="left">
+                <div class="time">{esc(t["display"])}</div>
+                <div>
+                  <div class="title">{esc(t["line"] or "?")}</div>
+                  <div class="sub">{esc(t["destination"])}</div>
+                </div>
+              </div>
+              <div class="right">
+                <span class="tag tt">Menetrend</span>
+              </div>
+            </div>
+            """
+
+    if (not show_live_only) and (len(timetable) == 0):
+        body += '<div class="small">Nincs közeli indulás a menetrendben.</div>'
+    if show_live_only and (len(live_deps) == 0):
+        body += '<div class="small">Nincs élő indulás adat ehhez a megállóhoz.</div>'
+
+    body += "</div>"
+    return page_shell(f"Stop {stop_id}", body)
+
+@app.get("/trip/{trip_id}", response_class=HTMLResponse)
+async def trip_page(trip_id: str):
+    t = trips.get(trip_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    # Build stop list from GTFS
+    seq = stop_times_by_trip.get(trip_id, [])
+    if not seq:
+        raise HTTPException(status_code=404, detail="No stop_times for trip")
+
+    live = await get_live()
+    # Best-effort: match by trip_ref if present in vehicles
+    delay_badge = ""
+    for v in (live.get("vehicles") or []):
+        if v.get("trip_ref") and str(v["trip_ref"]).strip() == str(trip_id).strip():
+            dm = v.get("delay_min")
+            if dm is not None:
+                if dm > 0:
+                    delay_badge = f'<span class="badge live cornerBadge">Késés: +{dm} perc</span>'
+                elif dm < 0:
+                    delay_badge = f'<span class="badge live cornerBadge">Siet: {dm} perc</span>'
+                else:
+                    delay_badge = f'<span class="badge live cornerBadge">Pontos</span>'
+            break
+
+    headsign = t.get("trip_headsign","")
+    route_id = t.get("route_id","")
+    route = routes.get(route_id) or {}
+    line = (route.get("route_short_name") or route_id).strip()
+
+    body = f"""
+    <div class="h1 corner">Trip</div>
+    {delay_badge}
+    <div class="card">
+      <div class="title">{esc(line)} — {esc(headsign)}</div>
+      <div class="small">{esc(trip_id)}</div>
+    </div>
+
+    <div class="h2">Megállók</div>
+    <div class="list">
+    """
+    for st in seq[:120]:
+        sid = st.get("stop_id","")
+        s = stops.get(sid) or {}
+        body += f"""
+        <a class="row" href="/stop/{esc(sid)}">
+          <div class="left">
+            <div class="title">{esc(s.get("stop_name",""))}</div>
+            <div class="sub">{esc(sid)}</div>
+          </div>
+          <div class="right">Megnyitás</div>
+        </a>
+        """
+    body += "</div>"
+    return page_shell(f"Trip {trip_id}", body)
+
+# ----------------------------
+# API endpoints for frontend
+# ----------------------------
+
+@app.get("/api/live/vehicles")
+async def api_live_vehicles():
+    live = await get_live()
+    return {"enabled": live.get("enabled", False), "error": live.get("error",""), "vehicles": live.get("vehicles", [])}
+
+@app.get("/api/vehicles/near")
+async def api_vehicles_near(lat: float, lon: float, r: float = NEAR_RADIUS_M):
+    live = await get_live()
+    out = []
+    for v in live.get("vehicles", []):
+        try:
+            d = haversine_m(lat, lon, float(v["lat"]), float(v["lon"]))
+        except Exception:
+            continue
+        if d <= r:
+            vv = dict(v)
+            vv["distance_m"] = int(d)
+            out.append(vv)
+    out.sort(key=lambda x: x.get("distance_m", 10**9))
+    return {"count": len(out), "vehicles": out}
+
+# ----------------------------
+# If running locally:
+#   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# On Railway: set Start Command accordingly, and ensure DATA_DIR=gtfs
+# ----------------------------
