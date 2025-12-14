@@ -1,49 +1,112 @@
 <!doctype html>
 <html lang="hu">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Megálló</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    :root{
+      --bg:#0b1220; --card:#0f172a; --card2:#111c33; --txt:#e5e7eb; --muted:#94a3b8;
+      --line:#1f2a44; --link:#60a5fa; --live:#10b981; --due:#22c55e;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font:16px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:var(--txt);background:var(--bg)}
+    a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+    .wrap{max-width:980px;margin:0 auto;padding:14px}
+    .topbar{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:6px 0 12px}
+    .brand{display:flex;gap:10px;align-items:center}
+    .search{flex:1;display:flex;justify-content:center}
+    .search input{width:min(560px,100%);background:#091023;border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:10px 12px}
+    .meta{color:var(--muted);font-size:13px}
+    h1{font-size:44px;margin:14px 0 8px}
+    .sub{color:var(--muted);margin-bottom:14px}
+    .row{display:flex;align-items:center;justify-content:space-between;background:#0b142a;border:1px solid var(--line);border-radius:14px;padding:12px 12px;margin:10px 0}
+    .left{display:flex;gap:12px;align-items:center}
+    .time{min-width:64px;text-align:center;font-weight:900;border-radius:12px;padding:8px 10px;background:#111a31}
+    .small{color:var(--muted);font-size:12px}
+    .row.live{border-color: rgba(16,185,129,.6)}
+    .row.live .right{color:var(--live)}
+    .row.live .time{background:rgba(16,185,129,.15)}
+    .row.live.due{animation:blink 1s steps(2,end) infinite;border-color:var(--due)}
+    @keyframes blink{to{visibility:hidden}}
+  </style>
 </head>
 <body>
-<div class="wrap">
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <div>★</div>
+        <a href="/"><strong>bluestar</strong></a>
+      </div>
 
-  <div class="topbar">
-    <a href="/" class="logo">★ bluestar</a>
-    <form action="/search">
-      <input name="q" placeholder="Keresés">
-    </form>
-    <div class="clock">UK: {{ now_uk }}</div>
+      <div class="search">
+        <form action="/search" style="width:100%">
+          <input name="q" placeholder="Keresés: járat vagy megálló" />
+        </form>
+      </div>
+
+      <div class="meta">UK: <span id="ukNow">{{ now_uk }}</span></div>
+    </div>
+
+    <h1>Megálló</h1>
+    <div class="sub">{{ stop.stop_name }}{% if stop.stop_code %} [{{ stop.stop_code }}]{% endif %}</div>
+
+    <div id="rows">
+      {% for r in rows %}
+        <div class="row {% if r.is_live %}live{% endif %} {% if r.is_due %}due{% endif %}">
+          <div class="left">
+            <div class="time">{{ r.time }}</div>
+            <div>
+              <div><a href="/r/{{ r.route_key }}"><strong>{{ r.headsign or r.route_short }}</strong></a></div>
+              <div class="small">{{ r.route_short }}{% if r.fleet %} • {{ r.fleet }}{% endif %}{% if not r.is_live %} • menetrendi{% endif %}</div>
+            </div>
+          </div>
+          <div class="right small">
+            {% if r.delay_text %}{{ r.delay_text }} • {% endif %}
+            {% if r.is_live %}{{ r.wait_mins }} perc{% else %}—{% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="small" style="margin-top:12px;color:#94a3b8">
+      Frissítés automatikus (15 mp). Menetrendi = fehér, Live = zöld, Due = villogó zöld.
+    </div>
   </div>
 
-  <h1>{{ stop.stop_name }}</h1>
-  <div class="muted">{{ stop.stop_code or stop.stop_id }}</div>
+  <script>
+    const stopCode = "{{ stop.stop_code or stop.stop_id }}";
 
-  <h2>Indulások</h2>
-
-  {% if not rows %}
-    <div class="muted">Nincs közelgő indulás.</div>
-  {% endif %}
-
-  {% for r in rows %}
-    <div class="departure {{ r.row_class }}">
-      <div class="time">{{ r.time_str }}</div>
-      <div class="info">
-        <div class="line">{{ r.route_short }} → {{ r.headsign }}</div>
-        {% if r.is_live %}
-          <div class="live">
-            élő • {{ r.wait_mins }} perc
-            {% if r.delay_text %} ({{ r.delay_text }}){% endif %}
+    function rowHtml(r){
+      const cls = `row ${r.is_live ? 'live' : ''} ${r.is_due ? 'due' : ''}`;
+      const head = (r.headsign || r.route_short || '');
+      const fleet = r.fleet ? ` • ${r.fleet}` : '';
+      const meta = `${r.route_short}${fleet}${r.is_live ? '' : ' • menetrendi'}`;
+      const right = `${r.delay_text ? (r.delay_text + ' • ') : ''}${r.is_live ? (r.wait_mins + ' perc') : '—'}`;
+      return `
+        <div class="${cls}">
+          <div class="left">
+            <div class="time">${r.time}</div>
+            <div>
+              <div><a href="/r/${encodeURIComponent(r.route_key)}"><strong>${head}</strong></a></div>
+              <div class="small">${meta}</div>
+            </div>
           </div>
-        {% else %}
-          <div class="muted">menetrendi</div>
-        {% endif %}
-      </div>
-      <a class="arrow" href="/r/{{ r.route_key }}">›</a>
-    </div>
-  {% endfor %}
+          <div class="right small">${right}</div>
+        </div>`;
+    }
 
-</div>
+    async function poll(){
+      try{
+        const res = await fetch(`/api/stop/${encodeURIComponent(stopCode)}/departures`);
+        const data = await res.json();
+        document.getElementById('ukNow').textContent = new Date(data.now_uk).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        const rows = (data.rows || []).slice(0, 30);
+        document.getElementById('rows').innerHTML = rows.map(rowHtml).join('');
+      }catch(e){}
+    }
+
+    setInterval(poll, 15000);
+  </script>
 </body>
 </html>
