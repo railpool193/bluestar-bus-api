@@ -1,49 +1,73 @@
 <!doctype html>
 <html lang="hu">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Keresés</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    :root{
+      --bg:#0b1220; --card:#0f172a; --card2:#111c33; --txt:#e5e7eb; --muted:#94a3b8;
+      --line:#1f2a44; --link:#60a5fa;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font:16px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:var(--txt);background:var(--bg)}
+    a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+    .wrap{max-width:980px;margin:0 auto;padding:14px}
+    .topbar{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:6px 0 12px}
+    .brand{display:flex;gap:10px;align-items:center}
+    .search{flex:1;display:flex;justify-content:center}
+    .search input{width:min(560px,100%);background:#091023;border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:10px 12px}
+    .meta{color:var(--muted);font-size:13px}
+    h1{font-size:34px;margin:14px 0 8px}
+    h2{font-size:14px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin:18px 0 8px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+    .card{background:#0b142a;border:1px solid var(--line);border-radius:14px;padding:12px 12px}
+    .card .big{font-weight:900;font-size:20px}
+    .row{display:flex;align-items:center;justify-content:space-between;background:#0b142a;border:1px solid var(--line);border-radius:14px;padding:12px 12px;margin:10px 0}
+    .small{color:var(--muted);font-size:12px}
+  </style>
 </head>
 <body>
-<div class="wrap">
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <div>★</div>
+        <a href="/"><strong>bluestar</strong></a>
+      </div>
 
-  <div class="topbar">
-    <a href="/" class="logo">★ bluestar</a>
-    <form action="/search">
-      <input name="q" value="{{ q }}" placeholder="Keresés: járat vagy megálló">
-    </form>
-    <div class="clock">UK: {{ now_uk }}</div>
-  </div>
+      <div class="search">
+        <form action="/search" style="width:100%">
+          <input name="q" placeholder="Keresés: járat vagy megálló" value="{{ q or '' }}" />
+        </form>
+      </div>
 
-  <h1>Keresés: "{{ q }}"</h1>
+      <div class="meta">UK: {{ now_uk }}</div>
+    </div>
 
-  <h2>Járatok</h2>
-  {% if not routes %}
-    <div class="muted">Nincs találat.</div>
-  {% endif %}
-  <div class="grid">
-    {% for r in routes %}
-      <a class="card" href="/r/{{ r.key }}">{{ r.short }}</a>
+    <h1>Keresés: "{{ q }}"</h1>
+
+    <h2>Járatok</h2>
+    {% if not routes %}<div class="small">Nincs találat.</div>{% endif %}
+    <div class="grid">
+      {% for r in routes %}
+        <a class="card" href="/r/{{ r.key }}">
+          <div class="big">{{ r.short }}</div>
+          <div class="small">{{ r.operator }}</div>
+        </a>
+      {% endfor %}
+    </div>
+
+    <h2>Megállók</h2>
+    {% if not stops %}<div class="small">Nincs találat.</div>{% endif %}
+    {% for s in stops %}
+      <div class="row">
+        <div>
+          <div><strong>{{ s.name }}</strong></div>
+          <div class="small">{{ s.code }}</div>
+        </div>
+        <div><a href="/stop/{{ s.code }}">Megnyitás</a></div>
+      </div>
     {% endfor %}
   </div>
-
-  <h2>Megállók</h2>
-  {% if not stops %}
-    <div class="muted">Nincs találat.</div>
-  {% endif %}
-
-  {% for s in stops %}
-    <div class="row">
-      <div>
-        <strong>{{ s.name }}</strong><br>
-        <span class="muted">{{ s.code or s.id }}</span>
-      </div>
-      <a href="/stop/{{ s.code or s.id }}">Megnyitás</a>
-    </div>
-  {% endfor %}
-
-</div>
 </body>
 </html>
