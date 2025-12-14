@@ -1,18 +1,49 @@
-{% extends "base.html" %}{% block content %}
-<div class="h1">Keresés: "{{ q }}"</div>
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Keresés</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="wrap">
 
-<h3>Járatok</h3>
-{% if not route_hits %}<div class="muted">Nincs találat.</div>{% endif %}
-<ul>
-  {% for r in route_hits %}
-  <li><a href="/r/{{ r.route_id }}">{{ r.short_name }}</a></li>
-  {% endfor %}
-</ul>
+  <div class="topbar">
+    <a href="/" class="logo">★ bluestar</a>
+    <form action="/search">
+      <input name="q" value="{{ q }}" placeholder="Keresés: járat vagy megálló">
+    </form>
+    <div class="clock">UK: {{ now_uk }}</div>
+  </div>
 
-<h3>Megállók</h3>
-<ul>
-  {% for s in stop_hits %}
-  <li><a href="/stop/{{ s.stop_id }}">{{ s.name }}</a></li>
+  <h1>Keresés: "{{ q }}"</h1>
+
+  <h2>Járatok</h2>
+  {% if not routes %}
+    <div class="muted">Nincs találat.</div>
+  {% endif %}
+  <div class="grid">
+    {% for r in routes %}
+      <a class="card" href="/r/{{ r.key }}">{{ r.short }}</a>
+    {% endfor %}
+  </div>
+
+  <h2>Megállók</h2>
+  {% if not stops %}
+    <div class="muted">Nincs találat.</div>
+  {% endif %}
+
+  {% for s in stops %}
+    <div class="row">
+      <div>
+        <strong>{{ s.name }}</strong><br>
+        <span class="muted">{{ s.code or s.id }}</span>
+      </div>
+      <a href="/stop/{{ s.code or s.id }}">Megnyitás</a>
+    </div>
   {% endfor %}
-</ul>
-{% endblock %}
+
+</div>
+</body>
+</html>
