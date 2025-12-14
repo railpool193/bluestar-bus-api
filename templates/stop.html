@@ -1,33 +1,49 @@
-{% extends "base.html" %}{% block content %}
-<div class="h1">Megálló</div>
-<div class="muted">{{ stop.stop_name }}</div>
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Megálló</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="wrap">
 
-<h3>Indulások</h3>
-
-{% for r in rows %}
-  <div class="card">
-    <div class="row">
-      <div class="pill">{{ (r.time.astimezone(now_uk.tzinfo)).strftime("%H:%M") }}</div>
-      <div>
-        <div style="font-weight:700">
-          {{ r.headsign or "—" }}
-          {% if r.vehicle_ref %}<span class="badge">fleet: {{ r.vehicle_ref }}</span>{% endif %}
-        </div>
-        <div class="tiny muted">
-          {% if r._kind == "live" %}
-            <span class="live">LIVE</span>
-            {% if r.is_due %}<span class="due badge">due</span>{% endif %}
-            {% if r.delay_sec is not none %}<span class="badge">{{ fmt_delay(r.delay_sec) }}</span>{% endif %}
-          {% else %}
-            Menetrend
-          {% endif %}
-        </div>
-      </div>
-    </div>
-    <div class="tiny muted">
-      {% if r.trip_id %}<a href="/t/{{ r.trip_id }}">Trip</a>{% endif %}
-    </div>
+  <div class="topbar">
+    <a href="/" class="logo">★ bluestar</a>
+    <form action="/search">
+      <input name="q" placeholder="Keresés">
+    </form>
+    <div class="clock">UK: {{ now_uk }}</div>
   </div>
-{% endfor %}
 
-{% endblock %}
+  <h1>{{ stop.stop_name }}</h1>
+  <div class="muted">{{ stop.stop_code or stop.stop_id }}</div>
+
+  <h2>Indulások</h2>
+
+  {% if not rows %}
+    <div class="muted">Nincs közelgő indulás.</div>
+  {% endif %}
+
+  {% for r in rows %}
+    <div class="departure {{ r.row_class }}">
+      <div class="time">{{ r.time_str }}</div>
+      <div class="info">
+        <div class="line">{{ r.route_short }} → {{ r.headsign }}</div>
+        {% if r.is_live %}
+          <div class="live">
+            élő • {{ r.wait_mins }} perc
+            {% if r.delay_text %} ({{ r.delay_text }}){% endif %}
+          </div>
+        {% else %}
+          <div class="muted">menetrendi</div>
+        {% endif %}
+      </div>
+      <a class="arrow" href="/r/{{ r.route_key }}">›</a>
+    </div>
+  {% endfor %}
+
+</div>
+</body>
+</html>
