@@ -1,41 +1,152 @@
 <!doctype html>
 <html lang="hu">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Járat {{ route_short }}</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Route {{ route_short }}</title>
+  <style>
+    :root{
+      --bg:#0b1220; --card:#0f172a; --card2:#111c33; --txt:#e5e7eb; --muted:#94a3b8;
+      --line:#1f2a44; --link:#60a5fa; --ok:#10b981; --due:#22c55e;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font:16px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:var(--txt);background:var(--bg)}
+    a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+    .wrap{max-width:1100px;margin:0 auto;padding:14px}
+    .topbar{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:6px 0 12px}
+    .brand{display:flex;gap:10px;align-items:center}
+    .search{flex:1;display:flex;justify-content:center}
+    .search input{width:min(560px,100%);background:#091023;border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:10px 12px}
+    .meta{color:var(--muted);font-size:13px}
+    h1{font-size:44px;margin:14px 0 10px}
+    .badge{display:inline-block;background:#0b142a;border:1px solid var(--line);border-radius:14px;padding:6px 10px;font-weight:900}
+    .panel{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:16px;overflow:hidden}
+    .panel h2{margin:0;padding:12px 14px;border-bottom:1px solid var(--line);font-size:14px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+    #map{height:520px;width:100%}
+    .list{padding:10px 12px}
+    .row{display:flex;align-items:center;justify-content:space-between;background:#0b142a;border:1px solid var(--line);border-radius:14px;padding:12px 12px;margin:10px 0}
+    .left{display:flex;gap:12px;align-items:center}
+    .time{min-width:54px;text-align:center;font-weight:800;border-radius:12px;padding:8px 10px;background:#111a31}
+    .live{border-color: rgba(16,185,129,.6)}
+    .small{color:var(--muted);font-size:12px}
+    .pillrow{display:flex;gap:8px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .pill{padding:8px 10px;border-radius:999px;background:#0b142a;border:1px solid var(--line);color:var(--txt);font-size:13px;cursor:pointer}
+  </style>
 </head>
 <body>
-<div class="wrap">
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <div>★</div>
+        <a href="/"><strong>bluestar</strong></a>
+      </div>
 
-  <div class="topbar">
-    <a href="/" class="logo">★ bluestar</a>
-    <form action="/search">
-      <input name="q" placeholder="Keresés">
-    </form>
-    <div class="clock">UK: {{ now_uk }}</div>
+      <div class="search">
+        <form action="/search" style="width:100%">
+          <input name="q" placeholder="Keresés: járat vagy megálló" />
+        </form>
+      </div>
+
+      <div class="meta">UK: <span id="ukNow">{{ now_uk }}</span></div>
+    </div>
+
+    <h1>Route <span class="badge">{{ route_short }}</span></h1>
+
+    <div class="panel">
+      <h2>Élő járművek (Bluestar/Unilink) • fleet számok</h2>
+      <div class="pillrow">
+        <a class="pill" href="/">← Járatok</a>
+        <a class="pill" href="/c">Diagnosztika</a>
+      </div>
+      <div id="map"></div>
+      <div class="list" id="vehiclesList"></div>
+    </div>
   </div>
 
-  <h1>Járat {{ route_short }}</h1>
+  <script>
+    const route = "{{ route_short }}";
+    const key = "{{ google_maps_api_key }}";
+    const mapDiv = document.getElementById('map');
+    const listDiv = document.getElementById('vehiclesList');
 
-  <h2>Élő járművek</h2>
+    function el(tag, attrs={}, children=[]){
+      const e=document.createElement(tag);
+      Object.entries(attrs).forEach(([k,v])=>{ if(k==='class') e.className=v; else e.setAttribute(k,v); });
+      children.forEach(c=>e.appendChild(typeof c==='string'?document.createTextNode(c):c));
+      return e;
+    }
 
-  {% if not live_vehicles %}
-    <div class="muted">Jelenleg nincs élő adat.</div>
-  {% endif %}
+    if(!key){
+      mapDiv.innerHTML = '<div style="padding:18px;color:#94a3b8">Google Maps API kulcs nincs beállítva: <code>GOOGLE_MAPS_API_KEY</code></div>';
+    } else {
+      let map, markers = new Map();
 
-  {% for v in live_vehicles %}
-    <div class="row live">
-      <div>
-        <strong>{{ v.fleet or "BUS" }}</strong><br>
-        <span class="muted">
-          {{ "%.5f"|format(v.lat) }}, {{ "%.5f"|format(v.lon) }}
-        </span>
-      </div>
-    </div>
-  {% endfor %}
+      function upsertMarker(v){
+        const id = v.fleet || (v.lat+','+v.lon);
+        const pos = {lat: v.lat, lng: v.lon};
+        if(markers.has(id)){
+          markers.get(id).setPosition(pos);
+          return;
+        }
+        const m = new google.maps.Marker({
+          position: pos,
+          map,
+          title: (v.fleet ? ('Fleet ' + v.fleet) : 'Bus') + ' • ' + (v.line || route),
+          label: v.fleet ? String(v.fleet).slice(-3) : undefined
+        });
+        markers.set(id, m);
+      }
 
-</div>
+      function renderList(vehicles){
+        listDiv.innerHTML = '';
+        if(!vehicles.length){
+          listDiv.appendChild(el('div', {class:'small'}, ['Jelenleg nincs élő jármű.']));
+          return;
+        }
+        vehicles.forEach(v=>{
+          const row = el('div', {class:'row live'}, [
+            el('div', {class:'left'}, [
+              el('div', {class:'time'}, ['BUS']),
+              el('div', {}, [
+                el('div', {}, [el('strong', {}, [v.fleet || '—'])]),
+                el('div', {class:'small'}, [`${v.lat.toFixed(5)}, ${v.lon.toFixed(5)}`]),
+              ])
+            ]),
+            el('div', {class:'small'}, [v.line || route])
+          ]);
+          listDiv.appendChild(row);
+        });
+      }
+
+      async function poll(){
+        try{
+          const res = await fetch(`/api/route/${encodeURIComponent(route)}/vehicles`);
+          const data = await res.json();
+          document.getElementById('ukNow').textContent = new Date(data.now_uk).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+          const vehicles = data.vehicles || [];
+          vehicles.forEach(upsertMarker);
+          renderList(vehicles);
+        }catch(e){
+          // noop
+        }
+      }
+
+      window.initMap = function(){
+        const center = {lat: 50.9097, lng: -1.4044};
+        map = new google.maps.Map(mapDiv, {zoom: 11, center, mapId: "DEMO_MAP_ID"});
+        // első render: szerveroldali live_vehicles is lehet
+        const initial = {{ live_vehicles | tojson }};
+        (initial || []).forEach(upsertMarker);
+        renderList(initial || []);
+        poll();
+        setInterval(poll, 15000);
+      }
+
+      const s=document.createElement('script');
+      s.src = "https://maps.googleapis.com/maps/api/js?key="+encodeURIComponent(key)+"&callback=initMap";
+      s.async=true; s.defer=true;
+      document.body.appendChild(s);
+    }
+  </script>
 </body>
 </html>
