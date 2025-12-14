@@ -1,639 +1,140 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="hu">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Megállóhelyi Menetrend - Valós idejű</title>
-    
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-
-    <style>
-        /* Alap beállítások, sötét téma, betűtípus */
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-            background-color: #2e2e2e;
-            color: #ffffff;
-            margin: 0;
-            padding: 0;
-            line-height: 1.4;
-            overflow: hidden; 
-        }
-
-        /* Fő alkalmazás konténer */
-        .app-container {
-            display: flex;
-            flex-direction: column; 
-            height: 100vh;
-        }
-
-        /* Térkép konténer */
-        .map-container {
-            height: 40vh;
-            width: 100%;
-            order: 1; 
-        }
-        #map {
-            height: 100%;
-            width: 100%;
-        }
-
-        /* Jobb oldali panel/Menetrendi panel */
-        .sidebar {
-            height: 60vh;
-            width: 100%;
-            background-color: #2e2e2e;
-            overflow-y: auto; 
-            padding-bottom: 50px; 
-            order: 2; 
-        }
-
-        /* Kereső fejléc */
-        .search-header {
-            background-color: #1e1e1e;
-            padding: 10px;
-            display: flex;
-            gap: 10px;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
-        }
-
-        #searchInput {
-            flex-grow: 1;
-            padding: 12px 15px;
-            border: none;
-            border-radius: 20px;
-            background-color: #383838;
-            color: #ffffff;
-            font-size: 1em;
-        }
-        .search-button {
-            background-color: #383838;
-            color: #ffffff;
-            border: none;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            font-size: 1.1em;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        /* Információs szekciók */
-        .section {
-            background-color: #222222;
-            padding: 10px;
-            margin-top: 10px;
-        }
-        .section h3 {
-            margin: 0 0 10px 0;
-            color: #ffffff;
-            font-weight: 600;
-        }
-        .subtitle {
-            font-size: 0.9em;
-            color: #ccc;
-            margin-bottom: 10px;
-        }
-
-        /* Járat címkék stílusai */
-        .line-tag {
-            display: inline-block;
-            padding: 4px 8px;
-            margin: 3px 3px 3px 0;
-            border-radius: 4px;
-            font-size: 0.8em;
-            font-weight: bold;
-            text-align: center;
-            color: white;
-            white-space: nowrap;
-        }
-        /* Alapértelmezett színek */
-        .tag-bus, .tag-blue { background-color: #007bff; }
-        .tag-metro { background-color: #e51d21; } 
-        .tag-night { background-color: #1a1a1a; border: 1px solid #999; }
-        .tag-alert { background-color: #ffc107; color: #333; } 
-        .tags-container {
-            padding: 5px 0;
-        }
-
-        /* Kedvenc listaelem és Keresési találat elemei */
-        .list-item {
-            background-color: #383838;
-            padding: 15px;
-            margin-top: 1px;
-            cursor: pointer;
-            border-left: 5px solid transparent;
-        }
-        .list-item:hover {
-            background-color: #444;
-        }
-        .fav-item {
-            border-left-color: gold;
-        }
-        .list-item strong {
-            font-size: 1.1em;
-            display: block;
-        }
-        .list-item p {
-            margin: 5px 0 0 0;
-            font-size: 0.9em;
-            color: #ccc;
-        }
-        .star {
-            float: right;
-            color: gold;
-            font-size: 1.2em;
-        }
-
-        /* Érkezési lista és Jármű részletek (Detail View) */
-        .arrival-item, .trip-item {
-            padding: 12px 0;
-            border-bottom: 1px solid #444;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .arrival-item:last-child, .trip-item:last-child {
-            border-bottom: none;
-        }
-
-        .arrival-info {
-            flex-grow: 1;
-            padding-left: 10px;
-        }
-        .delay-time {
-            font-weight: bold;
-            font-size: 1.2em;
-            padding: 5px 10px;
-            border-radius: 4px;
-        }
-        /* Késés jelölések */
-        .delay-early { background-color: #dc3545; color: white; } /* Korai (Piros) */
-        .delay-late { background-color: #28a745; color: white; } /* Késik (Zöld) */
-        .delay-ontime { color: #ffc107; } /* Pontos (Sárga/Fehér) */
-
-        /* Trip (Jármű) nézet listaelem */
-        .trip-item .trip-time {
-            width: 60px;
-            text-align: right;
-            font-weight: 600;
-        }
-        .trip-item .trip-info {
-            flex-grow: 1;
-            padding: 0 15px;
-        }
-        .trip-item .trip-delay {
-            font-weight: bold;
-        }
-        .active-stop {
-            color: #007bff;
-            font-weight: bold;
-        }
-        .visited-stop {
-            color: #777;
-            text-decoration: line-through;
-        }
-
-        /* **Desktop (Nagyobb képernyő) optimalizáció** */
-        @media (min-width: 769px) {
-            .app-container {
-                flex-direction: row; 
-            }
-            .map-container {
-                height: 100vh;
-                flex: 2; 
-                order: 1;
-            }
-            .sidebar {
-                height: 100vh;
-                flex: 1; 
-                order: 2;
-            }
-        }
-    </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>bluestar</title>
+  <style>
+    :root{
+      --bg:#0b1220; --card:#0f172a; --card2:#111c33; --txt:#e5e7eb; --muted:#94a3b8;
+      --line:#1f2a44; --link:#60a5fa; --ok:#10b981; --due:#22c55e; --warn:#f59e0b;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font:16px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:var(--txt);background:var(--bg)}
+    a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+    .wrap{max-width:1100px;margin:0 auto;padding:14px}
+    .topbar{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:6px 0 12px}
+    .brand{display:flex;gap:10px;align-items:center}
+    .star{font-weight:900}
+    .search{flex:1;display:flex;justify-content:center}
+    .search input{width:min(560px,100%);background:#091023;border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:10px 12px}
+    .meta{color:var(--muted);font-size:13px}
+    h1{font-size:44px;margin:14px 0 10px}
+    .grid{display:grid;grid-template-columns:420px 1fr;gap:14px}
+    @media (max-width: 960px){ .grid{grid-template-columns:1fr} }
+    .panel{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:16px;overflow:hidden}
+    .panel h2{margin:0;padding:12px 14px;border-bottom:1px solid var(--line);font-size:14px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+    .list{padding:10px 12px}
+    .routegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px}
+    .routecard{background:#0b142a;border:1px solid var(--line);border-radius:14px;padding:12px 12px}
+    .routecard .short{font-weight:900;font-size:22px}
+    .routecard .op{color:var(--muted);font-size:12px;margin-top:2px}
+    .routecard:hover{border-color:#2b3a63}
+    .mapwrap{height:520px}
+    #map{height:520px;width:100%}
+    .hint{padding:10px 14px;color:var(--muted);font-size:13px;border-top:1px solid var(--line)}
+    .pillrow{display:flex;gap:8px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .pill{padding:8px 10px;border-radius:999px;background:#0b142a;border:1px solid var(--line);color:var(--txt);font-size:13px;cursor:pointer}
+    .pill.active{border-color:#2b3a63}
+    .status{display:flex;gap:10px;align-items:center}
+    .dot{width:10px;height:10px;border-radius:999px;background:var(--muted)}
+    .dot.ok{background:var(--ok)}
+    .dot.warn{background:var(--warn)}
+    .small{font-size:12px;color:var(--muted)}
+    .footer{margin-top:14px;color:var(--muted);font-size:12px}
+  </style>
 </head>
 <body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <div class="star">★</div>
+        <a href="/"><strong>bluestar</strong></a>
+      </div>
 
-    <div class="app-container">
-        
-        <div id="map-container" class="map-container">
-            <div id="map"></div>
-        </div>
+      <div class="search">
+        <form action="/search" style="width:100%">
+          <input name="q" placeholder="Keresés: járat vagy megálló" />
+        </form>
+      </div>
 
-        <div class="sidebar" id="sidebar">
-            
-            <header class="search-header">
-                <input type="text" id="searchInput" placeholder="Megálló vagy viszonylat keresése">
-                <button id="clearSearch" class="search-button" style="display:none;"><i class="fas fa-times"></i></button>
-            </header>
-
-            <div id="contentArea">
-                
-                <div id="alertsSection" class="section info-section">
-                    <h3>Kiemelt forgalmi változások</h3>
-                    <p class="subtitle">Fontosabb aktuális pótlások, terelések, járatkimaradások</p>
-                    <div class="tags-container" id="alertsTags">
-                        <p style="text-align:center; color:#999;">Frissítések betöltése...</p>
-                    </div>
-                </div>
-
-                <div id="favouritesSection" class="section info-section">
-                    <h3>Kedvenc megállók és viszonylatok</h3>
-                    <div id="favouritesList">
-                        </div>
-                </div>
-
-                <div id="searchResultsSection" class="section" style="display:none;">
-                    <h3 id="searchResultsTitle">Találatok</h3>
-                    <div id="searchResultsList">
-                        </div>
-                </div>
-
-                <div id="detailViewSection" class="section" style="display:none;">
-                    </div>
-                
-            </div>
-            
-        </div>
+      <div class="meta">UK: {{ now_uk }}</div>
     </div>
 
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-    <script>
-document.addEventListener('DOMContentLoaded', () => {
+    <h1>Járatok</h1>
 
-  const API_BASE_URL = '/api/';
-
-  const searchInput = document.getElementById('searchInput');
-  const clearSearchButton = document.getElementById('clearSearch');
-  const searchResultsSection = document.getElementById('searchResultsSection');
-  const searchResultsList = document.getElementById('searchResultsList');
-  const detailViewSection = document.getElementById('detailViewSection');
-
-  let map;
-  let busMarkers = L.layerGroup();
-  let routePolyline = null;
-
-  // --- INIT ---
-  initializeMap();
-  setupEventListeners();
-  loadInitialData();
-
-  // --- MAP FUNCTIONS ---
-  function initializeMap() {
-    map = L.map('map').setView([50.93, -1.39], 13);
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap'
-    }).addTo(map);
-
-    busMarkers.addTo(map);
-
-    fetchLiveBusLocations();
-    setInterval(fetchLiveBusLocations, 10000);
-  }
-
-  async function fetchLiveBusLocations() {
-    try {
-      const response = await fetch(`${API_BASE_URL}live_data`);
-      const data = await response.json();
-      updateMapMarkers(data);
-    } catch (error) {
-      console.error("Hiba a valós idejű koordináták lekérésekor:", error);
-    }
-  }
-
-  function updateMapMarkers(busData) {
-    busMarkers.clearLayers();
-
-    busData.forEach(bus => {
-      if (bus.lat && bus.lon) {
-        const busIconHtml = `
-          <div style="
-            background-color: #${bus.route_color || '0057B8'};
-            color: #${bus.route_text_color || 'FFFFFF'};
-            border-radius: 50%;
-            width: 30px; height: 30px;
-            text-align: center; line-height: 30px;
-            font-weight: bold; font-size: 0.9em;
-            border: 2px solid white;
-            box-shadow: 0 0 5px rgba(0,0,0,0.5);">
-            ${bus.route_short_name}
-          </div>`;
-
-        const customIcon = L.divIcon({
-          className: 'custom-bus-icon',
-          html: busIconHtml,
-          iconSize: [30, 30],
-          iconAnchor: [15, 15]
-        });
-
-        const marker = L.marker([bus.lat, bus.lon], {icon: customIcon})
-          .bindPopup(`<b>${bus.route_short_name}</b> - ${bus.dest} (ID: ${bus.id})`);
-
-        busMarkers.addLayer(marker);
-      }
-    });
-  }
-
-  // --- UI SECTIONS ---
-  function showSection(sectionName) {
-    if (routePolyline && map.hasLayer(routePolyline)) {
-      map.removeLayer(routePolyline);
-      routePolyline = null;
-    }
-
-    const sections = [
-      document.getElementById('alertsSection'),
-      document.getElementById('favouritesSection'),
-      searchResultsSection,
-      detailViewSection
-    ];
-    sections.forEach(s => s.style.display = 'none');
-
-    if (sectionName === 'initial') {
-      document.getElementById('alertsSection').style.display = 'block';
-      document.getElementById('favouritesSection').style.display = 'block';
-    } else if (sectionName === 'search') {
-      searchResultsSection.style.display = 'block';
-    } else if (sectionName === 'detail') {
-      detailViewSection.style.display = 'block';
-    }
-  }
-
-  // --- EVENT LISTENERS ---
-  function setupEventListeners() {
-    searchInput.addEventListener('input', (e) => {
-      const query = e.target.value.trim();
-      if (query.length > 0) {
-        clearSearchButton.style.display = 'flex';
-        if (query.length >= 2) performSearch(query);
-      } else {
-        clearSearchButton.style.display = 'none';
-        showSection('initial');
-      }
-    });
-
-    clearSearchButton.addEventListener('click', () => {
-      searchInput.value = '';
-      clearSearchButton.style.display = 'none';
-      showSection('initial');
-    });
-  }
-
-  // --- INITIAL DATA ---
-  async function loadInitialData() {
-    const alertsTags = document.getElementById('alertsTags');
-    const favouritesList = document.getElementById('favouritesList');
-
-    try {
-      const response = await fetch(`${API_BASE_URL}service_updates`);
-      const updates = await response.json();
-
-      if (updates.length > 0) {
-        alertsTags.innerHTML = updates.map(u => {
-          const bgColor = `#${u.route_color || 'ffc107'}`;
-          const textColor = `#${u.route_text_color || '333333'}`;
-          return `<span class="line-tag" title="${escapeHtml(u.update_text)}" style="background-color:${bgColor}; color:${textColor};">${escapeHtml(u.route_short_name)}</span>`;
-        }).join('');
-      } else {
-        alertsTags.innerHTML = '<p class="subtitle" style="text-align:center;">Nincs aktuális forgalmi változás.</p>';
-      }
-    } catch (error) {
-      alertsTags.innerHTML = '<p class="subtitle" style="text-align:center; color:red;">Hiba történt a frissítések betöltésekor.</p>';
-    }
-
-    favouritesList.innerHTML = '<p class="subtitle" style="text-align:center; padding:10px;">Nincsenek kedvenc megállók vagy viszonylatok beállítva.</p>';
-    showSection('initial');
-  }
-
-  // --- SEARCH ---
-  async function performSearch(query) {
-    showSection('search');
-    searchResultsList.innerHTML = '<p style="text-align:center; color:#ccc;">Keresés...</p>';
-
-    try {
-      const response = await fetch(`${API_BASE_URL}search?q=${encodeURIComponent(query)}`);
-      const results = await response.json();
-
-      document.getElementById('searchResultsTitle').textContent = `Találatok a "${query}" kifejezésre`;
-
-      const allResults = [
-        ...results.stops.map(s => ({
-          type: 'stop',
-          id: s.stop_id,
-          name: s.stop_name,
-          description: `Megálló azonosító: ${s.stop_id}`,
-          lines: []
-        })),
-        ...results.routes.map(r => ({
-          type: 'route',
-          id: r.route_id,
-          name: `${r.route_short_name} - ${r.route_long_name}`,
-          description: r.route_type_desc,
-          lines: [{name: r.route_short_name, color: r.route_color, textColor: r.route_text_color}]
-        }))
-      ];
-
-      if (allResults.length === 0) {
-        searchResultsList.innerHTML = '<p style="text-align:center; color:#ccc;">Nincs találat.</p>';
-        return;
-      }
-
-      // KATTINTÁS inline onclick nélkül (stabilabb)
-      searchResultsList.innerHTML = allResults.map((item, idx) => {
-        const lineTags = item.lines.map(line =>
-          `<span class="line-tag" style="background-color:#${line.color || '0057B8'}; color:#${line.textColor || 'FFFFFF'};">${escapeHtml(line.name)}</span>`
-        ).join('');
-
-        return `
-          <div class="list-item" data-idx="${idx}">
-            <strong>${escapeHtml(item.name)}</strong>
-            <p>${escapeHtml(item.description)}</p>
-            <p>${lineTags}</p>
+    <div class="grid">
+      <div class="panel">
+        <h2>Járatok (koppints egyre a térképes élő nézethez)</h2>
+        <div class="list">
+          <div class="routegrid" id="routes">
+            {% for r in routes %}
+              <a class="routecard" href="/r/{{ r.key }}" data-route="{{ r.short }}">
+                <div class="short">{{ r.short }}</div>
+                <div class="op">{{ r.operator }}</div>
+              </a>
+            {% endfor %}
           </div>
-        `;
-      }).join('');
-
-      // felkötjük az eventeket
-      [...searchResultsList.querySelectorAll('.list-item')].forEach(el => {
-        const idx = Number(el.dataset.idx);
-        const item = allResults[idx];
-        el.addEventListener('click', () => {
-          if (item.type === 'stop') showStopArrivals(item.id);
-          else showRoutePath(item.id);
-        });
-      });
-
-    } catch (error) {
-      console.error('Keresési hiba:', error);
-      searchResultsList.innerHTML = '<p style="text-align:center; color:red;">Hiba történt a keresés során.</p>';
-    }
-  }
-
-  // --- STOP VIEW ---
-  async function showStopArrivals(stopId) {
-    showSection('detail');
-    detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Érkezések betöltése...</p>';
-
-    try {
-      const response = await fetch(`${API_BASE_URL}departures/${encodeURIComponent(stopId)}`);
-      const data = await response.json();
-
-      const headerHtml = `
-        <header class="section" style="margin-top:0;">
-          <h3>${escapeHtml(data.stop_name || `Megálló`)} <span style="font-size:0.8em; color:#999;">(${escapeHtml(data.stop_id)})</span></h3>
-          <p class="subtitle">Következő indulások</p>
-        </header>
-      `;
-
-      if (!data.departures || data.departures.length === 0) {
-        detailViewSection.innerHTML = headerHtml + `<p class="subtitle" style="text-align:center;">Nincs közelgő indulás.</p>`;
-        return;
-      }
-
-      const listHtml = data.departures.map((a) => {
-        const delayClass = a.delay !== null ? getDelayClass(a.delay) : 'delay-ontime';
-        const right = a.delay !== null ? formatDelay(a.delay) : a.time;
-
-        const lineTag = `
-          <span class="line-tag" style="background-color:#${a.route_color || '0057B8'}; color:#${a.route_text_color || 'FFFFFF'};">
-            ${escapeHtml(a.line)}
-          </span>
-        `;
-
-        // trip_id kell a trip nézethez
-        const tripId = a.trip_id || '';
-
-        return `
-          <div class="arrival-item" data-trip="${escapeHtml(tripId)}">
-            <div class="arrival-info">
-              ${lineTag}
-              <div><strong>${escapeHtml(a.destination || '')}</strong></div>
-              <div class="subtitle">${a.is_realtime ? 'valós idejű' : 'menetrendi'} • ${escapeHtml(a.time)}</div>
+        </div>
+        <div class="hint">
+          <div class="status">
+            <div class="dot" id="liveDot"></div>
+            <div>
+              <div><strong>Élő adat</strong> <span class="small" id="liveText">ellenőrzés…</span></div>
+              <div class="small">Ha van Google Maps kulcs, a route nézetben élő jármű marker-ek.</div>
             </div>
-            <div class="delay-time ${delayClass}">${escapeHtml(right)}</div>
           </div>
-        `;
-      }).join('');
+        </div>
+      </div>
 
-      detailViewSection.innerHTML = headerHtml + `<div class="section">${listHtml}</div>`;
-
-      // kattintás: trip route megnyitása
-      [...detailViewSection.querySelectorAll('.arrival-item')].forEach(el => {
-        el.addEventListener('click', () => {
-          const tripId = el.dataset.trip;
-          if (tripId) showTripRoute(tripId);
-        });
-      });
-
-    } catch (error) {
-      console.error("Hiba az érkezések lekérésekor:", error);
-      detailViewSection.innerHTML = '<p style="text-align:center; color:red;">Hiba történt az érkezések betöltésekor.</p>';
-    }
-  }
-
-  // --- TRIP ROUTE VIEW ---
-  async function showTripRoute(tripId) {
-    showSection('detail');
-    detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Jármű útvonal betöltése...</p>';
-
-    try {
-      const response = await fetch(`${API_BASE_URL}trip_route/${encodeURIComponent(tripId)}`);
-      const data = await response.json();
-
-      const headerHtml = `
-        <header class="section" style="margin-top:0;">
-          <h3>Járat útvonala <span style="font-size:0.8em; color:#999;">(${escapeHtml(tripId)})</span></h3>
-          <p class="subtitle">Összes megálló a trip-hez</p>
-        </header>
-      `;
-
-      if (!data.route || data.route.length === 0) {
-        detailViewSection.innerHTML = headerHtml + `<p class="subtitle" style="text-align:center;">Nincs útvonal adat ehhez a trip-hez.</p>`;
-        return;
-      }
-
-      const routeHtml = data.route.map(s => {
-        const cls = s.status === 'current' ? 'active-stop' : (s.status === 'past' ? 'visited-stop' : '');
-        return `
-          <div class="trip-item">
-            <div class="trip-time">${escapeHtml(s.time)}</div>
-            <div class="trip-info ${cls}">${escapeHtml(s.name)}</div>
-            <div class="trip-delay">${escapeHtml(formatDelay(s.delay))}</div>
+      <div class="panel">
+        <h2>Térkép (Route élő járművek)</h2>
+        <div class="pillrow">
+          <button class="pill active" id="modeRoute">Route</button>
+          <a class="pill" href="/search?q=">Megálló keresés</a>
+          <a class="pill" href="/c">Diagnosztika</a>
+        </div>
+        <div class="mapwrap">
+          <div id="map"></div>
+        </div>
+        <div class="hint">
+          <div class="small">
+            Tipp: nyisd meg egy route oldalát (pl. <code>/r/3</code>) a teljes élő térképhez + fleet számokhoz.
           </div>
-        `;
-      }).join('');
+        </div>
+      </div>
+    </div>
 
-      detailViewSection.innerHTML = headerHtml + `<div class="section">${routeHtml}</div>`;
+    <div class="footer">bluestar • menetrend + élő adatok (ha elérhető) • Google térkép</div>
+  </div>
 
-    } catch (error) {
-      console.error("Trip route hiba:", error);
-      detailViewSection.innerHTML = '<p style="text-align:center; color:red;">Hiba történt a jármű útvonal betöltésekor.</p>';
-    }
-  }
+  <script>
+    // Live elérhetőség gyors check
+    fetch('/c').then(r=>r.json()).then(d=>{
+      const dot=document.getElementById('liveDot');
+      const txt=document.getElementById('liveText');
+      const ok = !!(d.live_vm_url || d.live_sm_url) && d.httpx_available;
+      dot.classList.add(ok ? 'ok' : 'warn');
+      txt.textContent = ok ? 'elérhető' : 'nincs / nincs httpx / nincs URL';
+    }).catch(()=>{});
 
-  // --- ROUTE PATH ON MAP ---
-  async function showRoutePath(routeId) {
-    showSection('detail');
-    detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Útvonal rajzolása...</p>';
-
-    try {
-      const response = await fetch(`${API_BASE_URL}route_shapes/${encodeURIComponent(routeId)}`);
-      const coords = await response.json();
-
-      if (!Array.isArray(coords) || coords.length === 0) {
-        detailViewSection.innerHTML = '<p style="text-align:center; color:#ccc;">Nincs shape adat ehhez az útvonalhoz.</p>';
-        return;
+    // Térkép: itt csak "placeholder" – route oldalon lesz a tényleges élő marker logika
+    // Ha nincs Google Maps kulcs, mutatunk egy üzenetet.
+    const key = "{{ google_maps_api_key }}";
+    const mapDiv = document.getElementById('map');
+    if(!key){
+      mapDiv.innerHTML = '<div style="padding:18px;color:var(--muted)">Google Maps API kulcs nincs beállítva.<br><br>Állítsd be env-ben: <code>GOOGLE_MAPS_API_KEY</code>, majd redeploy.</div>';
+    } else {
+      window.initMap = function(){
+        const center = {lat: 50.9097, lng: -1.4044}; // Southampton környéke
+        const map = new google.maps.Map(mapDiv, {zoom: 11, center, mapId: "DEMO_MAP_ID"});
+        new google.maps.Marker({position:center, map, title:"Southampton"});
       }
-
-      // coords: [[lat, lon], ...]
-      const latlngs = coords.map(c => [c[0], c[1]]);
-
-      if (routePolyline && map.hasLayer(routePolyline)) map.removeLayer(routePolyline);
-      routePolyline = L.polyline(latlngs).addTo(map);
-      map.fitBounds(routePolyline.getBounds());
-
-      detailViewSection.innerHTML = `
-        <header class="section" style="margin-top:0;">
-          <h3>Útvonal megjelenítve a térképen</h3>
-          <p class="subtitle">Route ID: ${escapeHtml(routeId)}</p>
-        </header>
-      `;
-    } catch (error) {
-      console.error("Route shape hiba:", error);
-      detailViewSection.innerHTML = '<p style="text-align:center; color:red;">Hiba történt az útvonal megjelenítésekor.</p>';
+      const s=document.createElement('script');
+      s.src = "https://maps.googleapis.com/maps/api/js?key="+encodeURIComponent(key)+"&callback=initMap";
+      s.async=true; s.defer=true;
+      document.body.appendChild(s);
     }
-  }
-
-  // --- HELPERS ---
-  function getDelayClass(delay) {
-    if (delay === 0) return 'delay-ontime';
-    if (delay > 0) return 'delay-late';
-    return 'delay-early';
-  }
-
-  function formatDelay(delay) {
-    if (delay === null || delay === undefined) return '';
-    if (delay === 0) return 'ONTIME';
-    if (delay > 0) return `+${delay}m`;
-    return `${delay}m`;
-  }
-
-  function escapeHtml(s) {
-    return String(s ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
-});
-    </script>
+  </script>
 </body>
 </html>
