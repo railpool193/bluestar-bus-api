@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Megálló & Indulások</title>
 
-  <!-- Leaflet (map) -->
+  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -100,6 +100,26 @@
       max-width: 92vw;
     }
     .kpi{ display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;}
+
+    /* ---- Requested coloring rules ----
+       timetable = white (default)
+       live = green
+       due = blinking green
+       late = yellow + minutes
+       early = red
+    */
+    .time-live { color: #34d399; font-weight: 900; }     /* green */
+    .time-timetable { color: #e5e7eb; font-weight: 900; }/* white */
+    .delta { display:inline-flex; margin-left:8px; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:900; border:1px solid; }
+    .delta-late { color:#fbbf24; border-color: rgba(251,191,36,.55); background: rgba(251,191,36,.10); }  /* yellow */
+    .delta-early{ color:#f87171; border-color: rgba(248,113,113,.55); background: rgba(248,113,113,.10); } /* red */
+
+    @keyframes blinkDue { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+    .due-blink { color:#34d399; font-weight: 1000; animation: blinkDue .8s linear infinite; } /* blinking green */
+
+    .note { padding:10px; border-radius:12px; margin-top:10px;
+      background: rgba(250,204,21,.08); border:1px solid rgba(250,204,21,.25); color:#fde68a; font-size:12px;
+    }
     a{ color: var(--accent); text-decoration:none; }
   </style>
 </head>
@@ -160,6 +180,10 @@
             <span class="pill" id="countPill">—</span>
           </div>
 
+          <div id="calendarNote" class="note" style="display:none;">
+            Figyelem: a GTFS calendar dátumtartomány valószínűleg lejárt, ezért a menetrendet “calendar_ignored” módban adom.
+          </div>
+
           <div id="depWrap" style="margin-top:10px;">
             <table>
               <thead>
@@ -184,7 +208,7 @@
             </div>
             <div id="map"></div>
             <div class="muted small" style="margin-top:8px;">
-              Tipp: ha semmi nem jelenik meg, lehet hogy a feed nem ad jármű-pozíciót ehhez a hálózathoz, vagy a lineRef nem egyezik a GTFS rövid névvel.
+              Tipp: a térképes élő adat a SIRI VehicleMonitoring feedből jön.
             </div>
           </div>
         </div>
@@ -221,19 +245,10 @@
     return await r.json();
   }
 
-  // -------------------------
-  // Favorites (localStorage)
-  // -------------------------
-  function loadFav() {
-    try { return JSON.parse(localStorage.getItem("favStops") || "[]"); }
-    catch(e) { return []; }
-  }
-  function saveFav(list) {
-    localStorage.setItem("favStops", JSON.stringify(list));
-  }
-  function isFav(stop_id) {
-    return loadFav().some(x => x.stop_id === stop_id);
-  }
+  // Favorites
+  function loadFav() { try { return JSON.parse(localStorage.getItem("favStops") || "[]"); } catch(e) { return []; } }
+  function saveFav(list) { localStorage.setItem("favStops", JSON.stringify(list)); }
+  function isFav(stop_id) { return loadFav().some(x => x.stop_id === stop_id); }
   function addFav(stop) {
     const list = loadFav();
     if (!list.some(x => x.stop_id === stop.stop_id)) {
@@ -273,19 +288,14 @@
     return (s || "").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]));
   }
 
-  // -------------------------
-  // Search with debounce
-  // -------------------------
+  // Search
   let searchTO = null;
   $("search").addEventListener("input", () => {
     clearTimeout(searchTO);
     const q = $("search").value.trim();
     searchTO = setTimeout(() => runSearch(q), 200);
   });
-  $("clear").onclick = () => {
-    $("search").value = "";
-    $("results").innerHTML = "";
-  };
+  $("clear").onclick = () => { $("search").value = ""; $("results").innerHTML = ""; };
 
   async function runSearch(q) {
     const resEl = $("results");
@@ -294,10 +304,7 @@
 
     try {
       const stops = await fetchJSON(`/api/stops?q=${encodeURIComponent(q)}&limit=12`);
-      if (!stops.length) {
-        resEl.innerHTML = `<div class="muted small">Nincs találat.</div>`;
-        return;
-      }
+      if (!stops.length) { resEl.innerHTML = `<div class="muted small">Nincs találat.</div>`; return; }
       stops.forEach(s => {
         const div = document.createElement("div");
         div.className = "item";
@@ -314,9 +321,7 @@
     }
   }
 
-  // -------------------------
-  // Nearby stops
-  // -------------------------
+  // Nearby
   $("nearbyBtn").onclick = async () => {
     if (!navigator.geolocation) return toast("A böngésző nem támogatja a GPS-t.");
     toast("Helymeghatározás…");
@@ -327,10 +332,7 @@
         const stops = await fetchJSON(`/api/nearby?lat=${lat}&lon=${lon}&radius_m=700&limit=12`);
         const resEl = $("results");
         resEl.innerHTML = "";
-        if (!stops.length) {
-          resEl.innerHTML = `<div class="muted small">Nincs közeli megálló 700m-en belül.</div>`;
-          return;
-        }
+        if (!stops.length) { resEl.innerHTML = `<div class="muted small">Nincs közeli megálló 700m-en belül.</div>`; return; }
         stops.forEach(s => {
           const div = document.createElement("div");
           div.className = "item";
@@ -347,9 +349,7 @@
     }, () => toast("Nem kaptam GPS engedélyt."));
   };
 
-  // -------------------------
   // Health
-  // -------------------------
   $("healthBtn").onclick = async () => {
     try {
       const h = await fetchJSON("/api/health");
@@ -359,9 +359,7 @@
     }
   };
 
-  // -------------------------
   // Stop selection & departures
-  // -------------------------
   $("windowSel").onchange = () => state.selectedStop && refreshDepartures();
   $("refreshBtn").onclick = () => refreshDepartures();
 
@@ -373,11 +371,7 @@
     updateFavBtn();
   };
 
-  $("clearFav").onclick = () => {
-    saveFav([]);
-    renderFav();
-    toast("Kedvencek törölve");
-  };
+  $("clearFav").onclick = () => { saveFav([]); renderFav(); toast("Kedvencek törölve"); };
 
   function updateFavBtn() {
     if (!state.selectedStop) return;
@@ -394,17 +388,27 @@
     if (state.mapVisible) initOrUpdateMap();
   }
 
-  function minutesUntil(nowISO, hhmm) {
-    try {
-      const now = new Date(nowISO);
-      const [h,m] = hhmm.split(":").map(x => parseInt(x,10));
-      const t = new Date(now);
-      t.setHours(h,m,0,0);
-      let diff = (t - now) / 60000;
-      // if negative, assume after midnight (rare)
-      if (diff < -1) diff += 1440;
-      return Math.round(diff);
-    } catch(e) { return null; }
+  function formatNow(iso) {
+    try { return new Date(iso).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}); }
+    catch(e){ return "—"; }
+  }
+
+  function renderTimeCell(d) {
+    // Color rules:
+    // timetable = white
+    // live = green
+    // due = blinking green
+    if (d.status === "due") {
+      return `<span class="due-blink">Due</span>`;
+    }
+    const cls = (d.source === "live") ? "time-live" : "time-timetable";
+    const t = escapeHtml(d.time || d.expected_time || d.aimed_time || "—");
+    let delta = "";
+    if (d.delta_min != null) {
+      if (d.delta_min >= 1) delta = `<span class="delta delta-late">+${d.delta_min}</span>`;
+      else if (d.delta_min <= -1) delta = `<span class="delta delta-early">${d.delta_min}</span>`;
+    }
+    return `<span class="${cls}">${t}</span>${delta}`;
   }
 
   async function refreshDepartures(resetTimer=false) {
@@ -414,9 +418,10 @@
     const windowMin = parseInt($("windowSel").value, 10) || 90;
 
     try {
-      const data = await fetchJSON(`/api/departures?stop_id=${encodeURIComponent(stop_id)}&window_min=${windowMin}&max=60`);
-      $("nowPill").textContent = "🕒 " + new Date(data.now).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+      const data = await fetchJSON(`/api/departures?stop_id=${encodeURIComponent(stop_id)}&window_min=${windowMin}&max_results=60&include_live=1`);
+      $("nowPill").textContent = "🕒 " + formatNow(data.now);
       $("countPill").textContent = `🚌 ${data.departures.length} indulás`;
+      $("calendarNote").style.display = data.calendar_ignored ? "block" : "none";
 
       const body = $("depBody");
       body.innerHTML = "";
@@ -427,26 +432,25 @@
         $("empty").style.display = "none";
         data.departures.forEach(d => {
           const tr = document.createElement("tr");
-          const mins = minutesUntil(data.now, d.time);
           const route = d.route || "—";
-          const headsign = d.headsign || d.route_name || "";
+          const headsign = d.headsign || "";
+          const mins = (d.status === "due") ? "" : (d.mins_to != null ? d.mins_to : "—");
+
           tr.innerHTML = `
-            <td><b>${escapeHtml(d.time)}</b></td>
+            <td>${renderTimeCell(d)}</td>
             <td><span class="routeBadge">${escapeHtml(route)}</span></td>
             <td>${escapeHtml(headsign)}</td>
-            <td class="right"><b>${mins != null ? mins : "—"}</b><span class="muted small"> min</span></td>
+            <td class="right"><b>${escapeHtml(String(mins))}</b>${mins !== "" ? `<span class="muted small"> min</span>` : ""}</td>
           `;
           body.appendChild(tr);
         });
       }
 
-      // Auto-refresh departures
       if (resetTimer) {
         if (state.departuresTimer) clearInterval(state.departuresTimer);
-        state.departuresTimer = setInterval(() => refreshDepartures(false), 30000);
+        state.departuresTimer = setInterval(() => refreshDepartures(false), 20000);
       }
 
-      // Update map center/stop marker if open
       if (state.mapVisible) initOrUpdateMap();
 
     } catch(e) {
@@ -454,9 +458,7 @@
     }
   }
 
-  // -------------------------
-  // Map & live vehicles
-  // -------------------------
+  // Map & vehicles
   $("toggleMap").onclick = async () => {
     state.mapVisible = !state.mapVisible;
     $("mapWrap").style.display = state.mapVisible ? "block" : "none";
@@ -469,19 +471,15 @@
     }
   };
 
-  $("lineFilter").addEventListener("input", () => {
-    if (state.mapVisible) refreshVehicles();
-  });
+  $("lineFilter").addEventListener("input", () => { if (state.mapVisible) refreshVehicles(); });
 
   function initOrUpdateMap(forceInit=false) {
     if (!state.selectedStop) return;
-
     const lat = state.selectedStop.lat;
     const lon = state.selectedStop.lon;
 
     if (!state.map || forceInit) {
-      // default fallback if stop has no coords
-      const center = (lat != null && lon != null) ? [lat, lon] : [50.9097, -1.4043]; // Southampton-ish fallback
+      const center = (lat != null && lon != null) ? [lat, lon] : [50.9097, -1.4043];
       state.map = L.map("map", { zoomControl: true }).setView(center, 14);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
@@ -505,7 +503,6 @@
   function stopVehiclesPolling() {
     if (state.vehiclesTimer) clearInterval(state.vehiclesTimer);
     state.vehiclesTimer = null;
-    // remove markers
     for (const m of state.vehicleMarkers.values()) m.remove();
     state.vehicleMarkers.clear();
   }
@@ -514,7 +511,7 @@
     if (!state.mapVisible || !state.map) return;
 
     const line = $("lineFilter").value.trim();
-    let url = "/api/vehicles?max=250";
+    let url = "/api/vehicles?max_results=250";
     if (line) url += "&line=" + encodeURIComponent(line);
 
     try {
@@ -539,16 +536,10 @@
         }
       });
 
-      // remove old markers
       for (const [key, marker] of state.vehicleMarkers.entries()) {
-        if (!seen.has(key)) {
-          marker.remove();
-          state.vehicleMarkers.delete(key);
-        }
+        if (!seen.has(key)) { marker.remove(); state.vehicleMarkers.delete(key); }
       }
-    } catch(e) {
-      // Don't spam toast
-    }
+    } catch(e) {}
   }
 
   // Init
