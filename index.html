@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Megálló & Indulások</title>
 
-  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -96,31 +95,63 @@
       padding: 10px 12px; border-radius: 14px;
       font-size: 13px; color: var(--text);
       display:none;
-      z-index: 20;
+      z-index: 50;
       max-width: 92vw;
     }
     .kpi{ display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;}
 
-    /* ---- Requested coloring rules ----
-       timetable = white (default)
-       live = green
-       due = blinking green
-       late = yellow + minutes
-       early = red
-    */
+    /* Colors */
     .time-live { color: #34d399; font-weight: 900; }     /* green */
     .time-timetable { color: #e5e7eb; font-weight: 900; }/* white */
     .delta { display:inline-flex; margin-left:8px; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:900; border:1px solid; }
-    .delta-late { color:#fbbf24; border-color: rgba(251,191,36,.55); background: rgba(251,191,36,.10); }  /* yellow */
-    .delta-early{ color:#f87171; border-color: rgba(248,113,113,.55); background: rgba(248,113,113,.10); } /* red */
+    .delta-late { color:#fbbf24; border-color: rgba(251,191,36,.55); background: rgba(251,191,36,.10); }
+    .delta-early{ color:#f87171; border-color: rgba(248,113,113,.55); background: rgba(248,113,113,.10); }
 
     @keyframes blinkDue { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
-    .due-blink { color:#34d399; font-weight: 1000; animation: blinkDue .8s linear infinite; } /* blinking green */
+    .due-blink { color:#34d399; font-weight: 1000; animation: blinkDue .8s linear infinite; }
 
     .note { padding:10px; border-radius:12px; margin-top:10px;
       background: rgba(250,204,21,.08); border:1px solid rgba(250,204,21,.25); color:#fde68a; font-size:12px;
     }
-    a{ color: var(--accent); text-decoration:none; }
+
+    /* Trip modal */
+    .modalBack{
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.55);
+      display:none;
+      z-index: 60;
+      padding: 14px;
+    }
+    .modal{
+      max-width: 920px;
+      margin: 0 auto;
+      background: rgba(17,24,39,.96);
+      border: 1px solid rgba(31,41,55,.85);
+      border-radius: 18px;
+      box-shadow: 0 18px 60px rgba(0,0,0,.55);
+      overflow:hidden;
+    }
+    .modalHead{
+      padding: 12px 12px 10px;
+      border-bottom: 1px solid rgba(31,41,55,.75);
+      display:flex; align-items:center; gap:10px;
+    }
+    .modalTitle{ font-weight: 950; font-size: 15px; }
+    .modalSub{ color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .modalBody{ padding: 12px; }
+    .badgeDelay{
+      margin-left:auto;
+      display:inline-flex; align-items:center; gap:8px;
+      padding: 6px 10px; border-radius: 999px;
+      font-weight: 900; font-size: 12px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.06);
+    }
+    .badgeDelay.late{ color:#fbbf24; border-color: rgba(251,191,36,.45); background: rgba(251,191,36,.10); }
+    .badgeDelay.early{ color:#f87171; border-color: rgba(248,113,113,.45); background: rgba(248,113,113,.10); }
+    .badgeDelay.on{ color:#34d399; border-color: rgba(52,211,153,.45); background: rgba(52,211,153,.10); }
+    .rowClickHint{ color: var(--muted); font-size: 12px; margin-top: 8px; }
+    .tripRowNext{ outline: 1px solid rgba(96,165,250,.45); background: rgba(96,165,250,.06); border-radius: 12px; }
   </style>
 </head>
 <body>
@@ -184,6 +215,8 @@
             Figyelem: a GTFS calendar dátumtartomány valószínűleg lejárt, ezért a menetrendet “calendar_ignored” módban adom.
           </div>
 
+          <div class="rowClickHint">Tipp: koppints egy indulásra → Trip nézet (összes megálló + live ETA).</div>
+
           <div id="depWrap" style="margin-top:10px;">
             <table>
               <thead>
@@ -216,6 +249,42 @@
     </div>
   </div>
 
+  <!-- Trip modal -->
+  <div id="tripBack" class="modalBack">
+    <div class="modal">
+      <div class="modalHead">
+        <button id="tripClose" class="secondary">← Vissza</button>
+        <div>
+          <div class="modalTitle" id="tripTitle">Trip</div>
+          <div class="modalSub" id="tripSub">—</div>
+        </div>
+        <div id="tripDelay" class="badgeDelay">—</div>
+      </div>
+      <div class="modalBody">
+        <div class="row" style="flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+          <span class="pill" id="tripFleet">🚌 Fleet: —</span>
+          <span class="pill" id="tripMatch">Live: —</span>
+          <span class="pill" id="tripNow">🕒 —</span>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Menetrend</th>
+              <th>Megálló</th>
+              <th class="right">Live</th>
+            </tr>
+          </thead>
+          <tbody id="tripBody"></tbody>
+        </table>
+
+        <div class="muted small" style="margin-top:10px;">
+          Megjegyzés: ha a feed csak “Delay”-t ad, akkor az expected idők = menetrend + delay (best-effort).
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 
 <script>
@@ -228,7 +297,9 @@
     map: null,
     stopMarker: null,
     vehicleMarkers: new Map(),
-    mapVisible: false
+    mapVisible: false,
+    tripTimer: null,
+    currentTrip: null
   };
 
   function toast(msg) {
@@ -243,6 +314,10 @@
     const r = await fetch(url, { cache: "no-store" });
     if (!r.ok) throw new Error(await r.text());
     return await r.json();
+  }
+
+  function escapeHtml(s) {
+    return (s || "").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]));
   }
 
   // Favorites
@@ -282,10 +357,6 @@
       div.onclick = () => selectStop({ stop_id: s.stop_id, stop_name: s.stop_name });
       el.appendChild(div);
     });
-  }
-
-  function escapeHtml(s) {
-    return (s || "").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]));
   }
 
   // Search
@@ -361,7 +432,7 @@
 
   // Stop selection & departures
   $("windowSel").onchange = () => state.selectedStop && refreshDepartures();
-  $("refreshBtn").onclick = () => refreshDepartures();
+  $("refreshBtn").onclick = () => refreshDepartures(true);
 
   $("favBtn").onclick = () => {
     if (!state.selectedStop) return;
@@ -394,15 +465,11 @@
   }
 
   function renderTimeCell(d) {
-    // Color rules:
-    // timetable = white
-    // live = green
-    // due = blinking green
     if (d.status === "due") {
       return `<span class="due-blink">Due</span>`;
     }
     const cls = (d.source === "live") ? "time-live" : "time-timetable";
-    const t = escapeHtml(d.time || d.expected_time || d.aimed_time || "—");
+    const t = escapeHtml(d.expected_time || d.aimed_time || "—");
     let delta = "";
     if (d.delta_min != null) {
       if (d.delta_min >= 1) delta = `<span class="delta delta-late">+${d.delta_min}</span>`;
@@ -432,6 +499,7 @@
         $("empty").style.display = "none";
         data.departures.forEach(d => {
           const tr = document.createElement("tr");
+
           const route = d.route || "—";
           const headsign = d.headsign || "";
           const mins = (d.status === "due") ? "" : (d.mins_to != null ? d.mins_to : "—");
@@ -442,6 +510,14 @@
             <td>${escapeHtml(headsign)}</td>
             <td class="right"><b>${escapeHtml(String(mins))}</b>${mins !== "" ? `<span class="muted small"> min</span>` : ""}</td>
           `;
+
+          // Trip view on tap
+          tr.style.cursor = d.trip_id ? "pointer" : "default";
+          tr.onclick = () => {
+            if (!d.trip_id) return;
+            openTrip(d.trip_id, d.service_date, d.route, d.headsign);
+          };
+
           body.appendChild(tr);
         });
       }
@@ -540,6 +616,91 @@
         if (!seen.has(key)) { marker.remove(); state.vehicleMarkers.delete(key); }
       }
     } catch(e) {}
+  }
+
+  // -----------------
+  // Trip modal
+  // -----------------
+  function openTrip(trip_id, service_date, route, headsign) {
+    state.currentTrip = { trip_id, service_date };
+    $("tripBack").style.display = "block";
+    $("tripTitle").textContent = `${route || ""} → ${headsign || ""}`.trim() || "Trip";
+    $("tripSub").textContent = `trip_id: ${trip_id} • service_date: ${service_date || "—"}`;
+    fetchTrip(true);
+    if (state.tripTimer) clearInterval(state.tripTimer);
+    state.tripTimer = setInterval(() => fetchTrip(false), 15000);
+  }
+
+  function closeTrip() {
+    $("tripBack").style.display = "none";
+    if (state.tripTimer) clearInterval(state.tripTimer);
+    state.tripTimer = null;
+    state.currentTrip = null;
+  }
+
+  $("tripClose").onclick = closeTrip;
+  $("tripBack").addEventListener("click", (e) => {
+    if (e.target === $("tripBack")) closeTrip();
+  });
+
+  function delayBadge(delay_min) {
+    const el = $("tripDelay");
+    el.className = "badgeDelay";
+    if (delay_min == null) { el.textContent = "Live: —"; return; }
+    if (delay_min >= 1) { el.classList.add("late"); el.textContent = `Késés: +${delay_min}`; return; }
+    if (delay_min <= -1) { el.classList.add("early"); el.textContent = `Siet: ${delay_min}`; return; }
+    el.classList.add("on"); el.textContent = "Pontos / ~0";
+  }
+
+  async function fetchTrip(showToast) {
+    if (!state.currentTrip) return;
+    const { trip_id, service_date } = state.currentTrip;
+
+    try {
+      const data = await fetchJSON(`/api/trip?trip_id=${encodeURIComponent(trip_id)}&service_date=${encodeURIComponent(service_date || "")}`);
+      $("tripNow").textContent = "🕒 " + formatNow(data.now);
+
+      delayBadge(data.delay_min);
+
+      const live = data.live || {};
+      $("tripFleet").textContent = `🚌 Fleet: ${live.vehicle_id || "—"}`;
+      $("tripMatch").textContent = `Live: ${live.match || "—"}${live.score ? " ("+live.score+")" : ""}`;
+
+      const body = $("tripBody");
+      body.innerHTML = "";
+
+      const nextIdx = data.next_index;
+
+      (data.stops || []).forEach(r => {
+        const tr = document.createElement("tr");
+        if (nextIdx != null && r.idx === nextIdx) tr.classList.add("tripRowNext");
+
+        // right column: mins + expected + delta
+        let right = "";
+        if (r.expected_time) {
+          const mins = r.mins_to != null ? r.mins_to : "—";
+          let delta = "";
+          if (r.delta_min != null) {
+            if (r.delta_min >= 1) delta = `<span class="delta delta-late">+${r.delta_min}</span>`;
+            else if (r.delta_min <= -1) delta = `<span class="delta delta-early">${r.delta_min}</span>`;
+          }
+          right = `<b>${escapeHtml(String(mins))} min</b> <span class="muted small">(${escapeHtml(r.expected_time)})</span> ${delta}`;
+          if (r.status === "due") right = `<span class="due-blink">Due</span> ${delta}`;
+        } else {
+          right = `<span class="muted">—</span>`;
+        }
+
+        tr.innerHTML = `
+          <td><span class="time-timetable">${escapeHtml(r.sched_time)}</span></td>
+          <td>${escapeHtml(r.stop_name)}</td>
+          <td class="right">${right}</td>
+        `;
+        body.appendChild(tr);
+      });
+
+    } catch(e) {
+      if (showToast) toast("Trip adat nem elérhető (még).");
+    }
   }
 
   // Init
