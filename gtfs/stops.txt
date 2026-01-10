@@ -1,5 +1,5 @@
 stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,location_type,parent_station,stop_timezone,wheelchair_boarding
-1980SNA90944,,"Southampton, Bella Italia [CX]",,50.902927329,-1.401934284,,,0,,,0
+1980SN12619A,,"Southampton, Hanover Buildings [CU]",,50.903095366,-1.403140944,,,0,,,0
 1980SN12532A,,"Above Bar [AC]",,50.905746243,-1.404529276,,,0,,,0
 1980SN12524D,,"Cenotaph [HD]",,50.910001583,-1.40490171,,,0,,,0
 1980SN120522,,"Giddy Bridge",,50.911849634,-1.404038939,,,0,,,0
@@ -89,7 +89,9 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980SN120536,,"Law Courts",,50.913664956,-1.402052778,,,0,,,0
 1980SNA40402,,"Giddy Bridge",,50.910998306,-1.404618755,,,0,,,0
 1980SN120525,,"Cenotaph [HA]",,50.909416168,-1.404724269,,,0,,,0
-1980SN12532B,,"Above Bar [AB]",,50.905655236,-1.404317105,,,0,,,0
+1980HAA13584,,"Civic Centre [AI]",,50.906808139,-1.406449989,,,0,,,0
+1980SN121031,,"ASDA & Marlands [AK]",,50.905638469,-1.406322635,,,0,,,0
+1980HAA13583,,"Southampton, Westquay [BP]",,50.903612182,-1.40573687,,,0,,,0
 1980SN12531B,,"Above Bar [AD]",,50.905989096,-1.404540402,,,0,,,0
 1980SN120403,,"Stag Gates",,50.918814783,-1.403252933,,,0,,,0
 1980SN120407,,"Cedar Road",,50.919133645,-1.400545876,,,0,,,0
@@ -230,7 +232,10 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1900HAA10109,,"Manor Farm Close",,50.96662327,-1.32950046,,,0,,,0
 1900HAA10107,,"The River Inn",,50.969303417,-1.335870596,,,0,,,0
 1900HA030212,,"Eastleigh Bus Station [A]",,50.970301925,-1.351949677,,,0,,,0
-1980SN12619E,,"Southampton, Vincents Walk [CK]",,50.903479692,-1.402680946,,,0,,,0
+1980SN121003,,"Southampton, Bargate Street [BL]",,50.902728442,-1.405250373,,,0,,,0
+1980SN120553,,"ASDA & Marlands [AJ]",,50.905990887,-1.406659487,,,0,,,0
+1980SNA19559,,"Civic Centre [AN]",,50.907040482,-1.406162585,,,0,,,0
+1980SNA40401,,"Park Walk [AH]",,50.906991037,-1.403517827,,,0,,,0
 1980SN12544B,,"Solent University [IE]",,50.907427685,-1.399231233,,,0,,,0
 1980SN120548,,"Brintons Road",,50.907986597,-1.394274502,,,0,,,0
 1980SN120558,,"Britannia Road",,50.909663858,-1.389985744,,,0,,,0
@@ -313,6 +318,8 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980SN120547,,"Brintons Road",,50.907770719,-1.39426308,,,0,,,0
 1980SN120545,,"Solent University [IA]",,50.907125251,-1.399875139,,,0,,,0
 1980SN120533,,"New Road",,50.906847166,-1.403519665,,,0,,,0
+1980SN12532B,,"Above Bar [AB]",,50.905655236,-1.404317105,,,0,,,0
+1980SN12618B,,"Southampton, Vincents Walk [CH]",,50.904108543,-1.40255913,,,0,,,0
 1980HAA13371,,"Southampton, Vincents Walk [CM]",,50.903965691,-1.40276006,,,0,,,0
 1980SN12617B,,"Above Bar [AF]",,50.906375965,-1.404578136,,,0,,,0
 1980SN12441A,,"Art Gallery [HF]",,50.908803545,-1.40626817,,,0,,,0
@@ -408,8 +415,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980SN120515,,"Four Post Hill",,50.90964319,-1.417650368,,,0,,,0
 1980SNA09196,,"Southampton Central Station [SD]",,50.908378099,-1.412830351,,,0,,,0
 1980SN120526,,"SeaCity Museum [AM]",,50.907822089,-1.407788263,,,0,,,0
-1980SN121031,,"ASDA & Marlands [AK]",,50.905638469,-1.406322635,,,0,,,0
-1980HAA13583,,"Southampton, Westquay [BP]",,50.903612182,-1.40573687,,,0,,,0
 1900HA030211,,"Eastleigh Bus Station [B]",,50.970122407,-1.352009141,,,0,,,0
 1900HA030202,,"Derby Road",,50.962268777,-1.353043913,,,0,,,0
 1900HA030197,,"Doncaster Road",,50.960556841,-1.355687633,,,0,,,0
@@ -474,10 +479,10 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 4600WIA11758,,"Salisbury City Centre, New Canal [U]",,51.068503348,-1.794592437,,,0,,,0
 1900HA100763,,"North Baddesley Schools",,50.976957605,-1.43539743,,,0,,,0
 1900HA100766,,"Misslebrook Lane",,50.975540856,-1.425159335,,,0,,,0
-1900HA100003,,"Templars Way, Castle Lane",,50.974781614,-1.402863849,,,0,,,0
+1900HA100003,,"Castle Lane",,50.974781614,-1.402863849,,,0,,,0
 1900HAA09187,,"School Lane",,50.972892104,-1.398474277,,,0,,,0
 1900HA030003,,"Hampshire Corporate Park",,50.970134365,-1.394478032,,,0,,,0
-1900HAA13773,,"Chestnut Avenue, Asda",,50.968303673,-1.388292647,,,0,,,0
+1900HAA13773,,"B&Q House",,50.968303673,-1.388292647,,,0,,,0
 1900HA030120,,"Falkland Road",,50.965422975,-1.385980805,,,0,,,0
 1900HAA10111,,"Cedar Road",,50.962444432,-1.370385135,,,0,,,0
 1900HAA90912,,"Monks Way",,50.961406082,-1.369601772,,,0,,,0
@@ -562,7 +567,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1900HAA13545,,"Priestlands School",,50.752875956,-1.552253202,,,0,,,0
 1980SNA90985,,"Southampton, Albion Place [BB]",,50.90172997,-1.405419944,,,0,,,0
 1980HAA13582,,"Southampton, Westquay [BS]",,50.903100005,-1.405814494,,,0,,,0
-1980SN120553,,"ASDA & Marlands [AJ]",,50.905990887,-1.406659487,,,0,,,0
 1980SN121022,,"SeaCity Museum [AL]",,50.908130048,-1.408225265,,,0,,,0
 1980SN120503,,"Queenstown Road",,50.910762944,-1.424037045,,,0,,,0
 1980SN12493A,,"Christ Church Freemantle",,50.911248699,-1.427729239,,,0,,,0
@@ -662,6 +666,7 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980SNA09017,,"Wellington Court",,50.910423765,-1.420912048,,,0,,,0
 1900HA080667,,"Priestlands Place",,50.756439212,-1.550475483,,,0,,,0
 1900HA080657,,"Lymington, High Street",,50.757710356,-1.544338785,,,0,,,0
+1980SN12619E,,"Southampton, Vincents Walk [CK]",,50.903479692,-1.402680946,,,0,,,0
 1980SNA10143,,"Houndwell Park",,50.903017976,-1.402075336,,,0,,,0
 1980SN120980,,"Hoglands Park [CP]",,50.902807828,-1.399674637,,,0,,,0
 1980SNA90830,,"City College",,50.90234618,-1.393864142,,,0,,,0
@@ -717,7 +722,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980SN12369B,,"Shirley, Park Street [SE]",,50.922575875,-1.434433664,,,0,,,0
 1980SN120519,,"Southampton Central Station [SA]",,50.908144238,-1.412819069,,,0,,,0
 1980SN120523,,"Art Gallery [HE]",,50.908916576,-1.407276573,,,0,,,0
-1980SN120660,,"Johns Road",,50.898083348,-1.378391433,,,0,,,0
 1980SNA09207,,"Aldermoor Turning Circle",,50.939508226,-1.428805826,,,0,,,0
 1980SN120829,,"St Mary's Cemetery",,50.894798058,-1.352997686,,,0,,,0
 1980SN120736,,"Laxton Close",,50.894570996,-1.355844582,,,0,,,0
@@ -758,7 +762,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980HAA13389,,"Tanners Brook",,50.942274888,-1.437454229,,,0,,,0
 1980SN120010,,"Kinloss Court",,50.943477339,-1.444442667,,,0,,,0
 1980SN120009,,"Blackbushe Close",,50.943476152,-1.447986852,,,0,,,0
-1980SN120661,,"Johns Road",,50.897975446,-1.378392868,,,0,,,0
 1900HA080203,,"Hounsdown, Spicers Hill",,50.909455193,-1.495126673,,,0,,,0
 1900HA080204,,"Jacobs Walk",,50.906921284,-1.495580741,,,0,,,0
 1900HA080205,,"Valley Road",,50.906127548,-1.490881765,,,0,,,0
@@ -894,10 +897,13 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1900HA080479,,"Badminston Lane",,50.819561484,-1.340906226,,,0,,,0
 1900HA080477,,Stonehills,,50.822900046,-1.344507867,,,0,,,0
 1980SN12616C,,"Southampton, Vincents Walk [CI]",,50.903910939,-1.402604323,,,0,,,0
+1980SNA09464,,"Southampton, Westquay [BG]",,50.902423514,-1.405410688,,,0,,,0
+1980HA120626,,"Holyrood Church [BJ]",,50.899987146,-1.4037637,,,0,,,0
 1980SNA90889,,"Oxford Street",,50.899457867,-1.400499806,,,0,,,0
 1980SN120634,,"Challis Court",,50.900434111,-1.397741721,,,0,,,0
 1980SNA90891,,"Terminus Terrace",,50.900773848,-1.395861214,,,0,,,0
 1980SN12658A,,"Woolston, Bridge Link Road",,50.898256671,-1.377166218,,,0,,,0
+1980SN120661,,"Johns Road",,50.897975446,-1.378392868,,,0,,,0
 1980SN120657,,"Radstock Road",,50.899510102,-1.377817855,,,0,,,0
 1980SN120654,,"Ailsa Lane",,50.901725329,-1.376707554,,,0,,,0
 1980SN120571,,"Peartree, Osterley Road",,50.906006696,-1.37352152,,,0,,,0
@@ -925,8 +931,11 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980SN120880,,"Peartree Church",,50.904304722,-1.374753198,,,0,,,0
 1980SN120655,,"Ailsa Lane",,50.902002407,-1.376390994,,,0,,,0
 1980SN120656,,"Radstock Road",,50.899626011,-1.377631447,,,0,,,0
+1980SN120660,,"Johns Road",,50.898083348,-1.378391433,,,0,,,0
 1980SNA90892,,"Itchen Bridge (west)",,50.898898965,-1.393268975,,,0,,,0
 1980SNA90873,,"Oxford Street",,50.899289088,-1.400466707,,,0,,,0
+1980HA120625,,"Holyrood Church [BK]",,50.900060242,-1.403990293,,,0,,,0
+1980SNA90981,,"Southampton, Albion Place [BE]",,50.901749997,-1.405149919,,,0,,,0
 1980SNA90984,,"Southampton, Albion Place [BA]",,50.901850029,-1.405509999,,,0,,,0
 1900HA080035,,"Water Lane Shops",,50.918611381,-1.491414245,,,0,,,0
 1900HA080038,,"Sunset Road",,50.919263861,-1.496727737,,,0,,,0
@@ -1039,7 +1048,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980SN120449,,"Dean Road",,50.920222387,-1.356714096,,,0,,,0
 1980SN120451,,"Chichester Road",,50.917456823,-1.359099456,,,0,,,0
 1980SN120520,,"Southampton Central Station [SF]",,50.907156772,-1.413158604,,,0,,,0
-1980SNA19559,,"Civic Centre [AN]",,50.907040482,-1.406162585,,,0,,,0
 1980SN120737,,"Weston Infant School",,50.892584193,-1.355943067,,,0,,,0
 1980SN120741,,"The Gardeners Arms",,50.890636494,-1.353353887,,,0,,,0
 1980SN122003,,"Tenterton Avenue",,50.888841762,-1.352411969,,,0,,,0
@@ -1081,7 +1089,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980SN122002,,"Tenterton Avenue",,50.889410612,-1.3528306,,,0,,,0
 1980SN120742,,"The Gardeners Arms",,50.890862785,-1.353620889,,,0,,,0
 1980SN120738,,"Weston Infant School",,50.892457915,-1.355873718,,,0,,,0
-1980HA120625,,"Holyrood Church [BK]",,50.900060242,-1.403990293,,,0,,,0
 1980HAA13647,,"Southampton, Westquay [BF]",,50.902496245,-1.405566195,,,0,,,0
 1980SNA90906,,"Montgomery Road",,50.921832939,-1.35851296,,,0,,,0
 1980SN120438,,"Vale Drive",,50.923384882,-1.361109493,,,0,,,0
@@ -1146,8 +1153,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980HA120721,,"Swift Road",,50.891493908,-1.375408062,,,0,,,0
 1980HAA13653,,"Mayfield Garage",,50.889656677,-1.373214732,,,0,,,0
 1980HA120746,,"Duncan Close",,50.888029279,-1.371587419,,,0,,,0
-1980SNA09464,,"Southampton (West Quay)",,50.902423514,-1.405410688,,,0,,,0
-1980HA120626,,"Holyrood Church [BJ]",,50.899987146,-1.4037637,,,0,,,0
 1980SN120599,,"Springwell School",,50.907482598,-1.342638492,,,0,,,0
 1980SN120605,,"Byron Road",,50.908298992,-1.340430975,,,0,,,0
 1980SN120606,,"Tatwin Crescent",,50.909103961,-1.33675571,,,0,,,0
@@ -1183,10 +1188,10 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980SN120690,,"St Monica School",,50.898867011,-1.356892937,,,0,,,0
 1980SN120764,,"Millers Pond",,50.897491917,-1.360454124,,,0,,,0
 1980SN120678,,"Sholing Railway Station",,50.897213978,-1.363899062,,,0,,,0
+1980SN120653,,"Itchen Bridge (west)",,50.898390836,-1.392393942,,,0,,,0
 1980HA120642,,"Ocean Village",,50.896934169,-1.394147663,,,0,,,0
 1980SNA13767,,"Town Quay, Platform Tavern [TC]",,50.896063842,-1.403259228,,,0,,,0
 1980SNA13768,,"Telephone House [TE]",,50.897282613,-1.404196369,,,0,,,0
-1980SN120653,,"Itchen Bridge (west)",,50.898390836,-1.392393942,,,0,,,0
 1980SNA13769,,"Telephone House [TF]",,50.897461799,-1.404066107,,,0,,,0
 1980SNA13766,,"Town Quay, Platform Tavern [TD]",,50.896234035,-1.403129081,,,0,,,0
 1980HA120641,,"Ocean Village",,50.897041187,-1.393975641,,,0,,,0
@@ -1490,10 +1495,10 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1900HA030322,,"Locke Road",,50.921833411,-1.300622978,,,0,,,0
 1900HA100006,,"Templars Way",,50.975799518,-1.404973084,,,0,,,0
 1900HA100007,,"Pilgrims Close",,50.977357344,-1.405394748,,,0,,,0
-1900HAA19702,,"Skys Wood Road, Harvest Road",,50.983829925,-1.408560187,,,0,,,0
-1900HAA09248,,"Skys Wood Road, Bird Field",,50.986262316,-1.409441082,,,0,,,0
-1900HAA19703,,"Skys Wood Road, Catmint Close",,50.987119219,-1.406409854,,,0,,,0
-1900HAA19704,,"Skys Wood Road, Field View",,50.98535575,-1.404452079,,,0,,,0
+1900HAA19702,,"Harvest Road",,50.983829925,-1.408560187,,,0,,,0
+1900HAA09248,,"Bird Field",,50.986262316,-1.409441082,,,0,,,0
+1900HAA19703,,"Catmint Close",,50.987119219,-1.406409854,,,0,,,0
+1900HAA19704,,"Field View",,50.98535575,-1.404452079,,,0,,,0
 1900HAA09251,,"Skys Wood Road, Wood End Way",,50.984705641,-1.400414459,,,0,,,0
 1900HAA19697,,"Knightwood Road",,50.98666219,-1.399676923,,,0,,,0
 1900HA100018,,"Knightwood Road, Katrine Crescent",,50.990715913,-1.402830472,,,0,,,0
@@ -1503,7 +1508,18 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1900HA030052,,"Pine Road",,50.997634561,-1.38103864,,,0,,,0
 1900HA030077,,"Lakewood Road",,50.996352793,-1.375056508,,,0,,,0
 1900HA030075,,"Kingsway Shops",,50.995794283,-1.369848633,,,0,,,0
-1900HAA10124,,"Thornden School",,50.995333202,-1.362758614,,,0,,,0
+1900HAA10124,,"Thornden School (grounds)",,50.995333202,-1.362758614,,,0,,,0
+1900HA030074,,"Kingsway Shops",,50.995740486,-1.36987786,,,0,,,0
+1900HA030076,,"Lakewood Road",,50.996271334,-1.374957854,,,0,,,0
+1900HAA09358,,"Pine Road",,50.997792924,-1.382076803,,,0,,,0
+1900HAA91772,,"Hiltingbury Road (Hiltingbury Court)",,50.99928533,-1.390578919,,,0,,,0
+1900HAA19696,,"Hursley Road",,50.9991907,-1.393131031,,,0,,,0
+1900HA030040,,"Baddesley Bridge",,50.996577094,-1.39896481,,,0,,,0
+1900HA100017,,"Valley Park, Katrine Crescent",,50.990670007,-1.402645836,,,0,,,0
+1900HAA09350,,"Knightwood Road",,50.986787855,-1.399632562,,,0,,,0
+1900HAA09252,,"Skys Wood Road, Wood End Way",,50.984596922,-1.402011435,,,0,,,0
+1900HA100008,,"Pilgrims Close",,50.97757177,-1.405121373,,,0,,,0
+1900HA100005,,"Templars Way",,50.976024748,-1.405055669,,,0,,,0
 1900HAA91115,,"West Ways Close - Sch Only",,50.946529876,-1.462626521,,,0,,,0
 1900HA100805,,"Balmoral Way",,50.947848124,-1.463792829,,,0,,,0
 1900HA100803,,"Upton Cresent",,50.951979802,-1.468642568,,,0,,,0
@@ -1513,7 +1529,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980SN120093,,"Dunkirk Road",,50.937770598,-1.424714089,,,0,,,0
 1980SNA09343,,"Southampton, Westquay [BR]",,50.90355946,-1.405979306,,,0,,,0
 1980SN120527,,"Civic Centre [AO]",,50.907030984,-1.406063148,,,0,,,0
-1980SNA40401,,"Park Walk [AH]",,50.906991037,-1.403517827,,,0,,,0
 1980SN120913,,"Solent University [ID]",,50.908024713,-1.401669878,,,0,,,0
 1980SN120268,,"Highfield Crescent",,50.929586156,-1.390749827,,,0,,,0
 1980SN120267,,"Upper Shaftesbury Avenue",,50.93107196,-1.391143091,,,0,,,0
@@ -1525,7 +1540,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1980SN120266,,"Upper Shaftesbury Avenue",,50.931199106,-1.39138334,,,0,,,0
 1980SN120269,,"Highfield Crescent",,50.928723533,-1.390874924,,,0,,,0
 1980SN120914,,"Solent University [IC]",,50.908554506,-1.401520859,,,0,,,0
-1980HAA13584,,"Civic Centre [AI]",,50.906808139,-1.406449989,,,0,,,0
 1980SNA90993,,"Glenfield Avenue",,50.920654916,-1.364466807,,,0,,,0
 1980HAA13381,,"High Road",,50.937006834,-1.38163145,,,0,,,0
 1980SN120131,,"Burgess Road Library",,50.93811078,-1.395904329,,,0,,,0
@@ -1776,8 +1790,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1900HA110507,,Meadowview,,50.96496821,-1.239824772,,,0,,,0
 1900HA110505,,"Wold Cottages",,50.969903894,-1.250781639,,,0,,,0
 1900HA110503,,"Upham, Alma Inn",,50.972543105,-1.25569562,,,0,,,0
-1900HA110852,,"Stroudwood Lane",,50.970388978,-1.269160195,,,0,,,0
-1900HA030288,,"Mortimers Lane, Bradshaw Close",,50.966173914,-1.287012885,,,0,,,0
 1900HA030287,,"Mortimers Lane, Bradshaw Close",,50.966254404,-1.28694045,,,0,,,0
 1900HA110851,,"Stroudwood Lane",,50.970676153,-1.268894491,,,0,,,0
 1900HA110504,,"Upham, Alma Inn",,50.972196526,-1.254932062,,,0,,,0
@@ -2082,8 +2094,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1900HA100031,,"White Horse",,51.006611926,-1.431189389,,,0,,,0
 1900HA100028,,"Ampfield School",,51.007710561,-1.427826438,,,0,,,0
 1900HAA19706,,"Potters Heron Hotel",,51.007382886,-1.414318452,,,0,,,0
-1900HA100017,,"Valley Park, Katrine Crescent",,50.990670007,-1.402645836,,,0,,,0
-1900HAA09350,,"Knightwood Road",,50.986787855,-1.399632562,,,0,,,0
 1900HA100009,,"Chidden Holt",,50.97916054,-1.402793464,,,0,,,0
 1900HA100010,,"Valley Park, Chidden Holt",,50.979730623,-1.401732045,,,0,,,0
 1900HA100027,,"Potters Heron Hotel",,51.007460456,-1.415443479,,,0,,,0
@@ -2125,10 +2135,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1900HAA91984,,"Hollybank Crescent",,50.865555718,-1.402184991,,,0,,,0
 1900HA080322,,"Jones Lane Garage",,50.868849814,-1.406264038,,,0,,,0
 1900HA030073,,"Kingsway Gardens",,50.993976066,-1.366196978,,,0,,,0
-1900HA030074,,"Kingsway Shops",,50.995740486,-1.36987786,,,0,,,0
-1900HA030076,,"Lakewood Road",,50.996271334,-1.374957854,,,0,,,0
-1900HAA09358,,"Pine Road",,50.997792924,-1.382076803,,,0,,,0
-1900HAA91772,,"Hiltingbury Road, Hiltingbury Court",,50.99928533,-1.390578919,,,0,,,0
 1900HA030018,,"Park Road",,50.984678602,-1.384829418,,,0,,,0
 1900HA030016,,"Chandlers Ford Railway Station",,50.98323452,-1.383822797,,,0,,,0
 1900HA030017,,"Chandlers Ford Railway Station",,50.983714986,-1.384557229,,,0,,,0
@@ -2259,7 +2265,6 @@ stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,locatio
 1900HAA91957,,"Clifton Hill",,51.063164133,-1.323098449,,,0,,,0
 1980SN120146,,"Aster Road",,50.938542834,-1.383929503,,,0,,,0
 1980SNA90989,,"Central Station (Western Esplanade)",,50.90720999,-1.411850028,,,0,,,0
-1980SNA90981,,"Southampton, Albion Place [BE]",,50.901749997,-1.405149919,,,0,,,0
 1980SNA90990,,"Central Station (Western Esplanade)",,50.906950031,-1.412210002,,,0,,,0
 1980SNA13762,,"Red Jet Terminal",,50.894755657,-1.40594907,,,0,,,0
 1980HA120546,,"Red Funnel Terminal [TB]",,50.896153184,-1.404907515,,,0,,,0
