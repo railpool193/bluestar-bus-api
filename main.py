@@ -5,32 +5,45 @@ import math
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, date, timedelta
-from zoneinfo import ZoneInfo
 from typing import Dict, List, Tuple, Optional, Set, Any
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None  # fallback
 
 
 # -----------------------------
 # Config
 # -----------------------------
-APP_TZ = ZoneInfo(os.getenv("APP_TZ", "Europe/London"))
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 GTFS_DIR = os.getenv("GTFS_DIR", os.path.join(BASE_DIR, "gtfs"))
 
-# Keep API key out of the frontend; backend proxies the feed.
+APP_TZ_NAME = os.getenv("APP_TZ", "Europe/London")
+APP_TZ = None
+if ZoneInfo:
+    try:
+        APP_TZ = ZoneInfo(APP_TZ_NAME)
+    except Exception:
+        APP_TZ = None
+
 DFT_API_KEY = os.getenv("DFT_API_KEY", "9d2f6818e2723996467fedb958ba682aa9860a93")
 DFT_FEED_URL = os.getenv(
     "DFT_FEED_URL",
     f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/?api_key={DFT_API_KEY}",
 )
-
-# live vehicle cache (avoid hammering the feed)
 LIVE_CACHE_TTL_SEC = int(os.getenv("LIVE_CACHE_TTL_SEC", "12"))
 
-app = Flask(__name__)
+
+# -----------------------------
+# App
+# -----------------------------
+app = FastAPI(title="Bluestar Stop Departures API")
 
 
 # -----------------------------
@@ -44,11 +57,21 @@ def _norm(s: str) -> str:
     return " ".join(s.split())
 
 
+def _read_csv(path: str) -> List[Dict[str, str]]:
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _safe_float(x: str) -> Optional[float]:
+    try:
+        if x is None or x == "":
+            return None
+        return float(x)
+    except Exception:
+        return None
+
+
 def _parse_gtfs_time_to_seconds(t: str) -> Optional[int]:
-    """
-    GTFS time can exceed 24:00:00 (e.g. 25:10:00).
-    Returns seconds since 00:00 of service day.
-    """
     if not t:
         return None
     try:
@@ -85,8 +108,14 @@ def _haversine_m(lat1, lon1, lat2, lon2) -> float:
     return R * c
 
 
+def _now_dt() -> datetime:
+    if APP_TZ:
+        return datetime.now(APP_TZ)
+    return datetime.utcnow()
+
+
 # -----------------------------
-# GTFS Data Structures
+# GTFS Data
 # -----------------------------
 @dataclass(frozen=True)
 class Stop:
@@ -115,37 +144,19 @@ class Trip:
     direction_id: Optional[str]
 
 
-# In-memory stores
 STOPS: Dict[str, Stop] = {}
 ROUTES: Dict[str, Route] = {}
 TRIPS: Dict[str, Trip] = {}
-STOP_TIMES_BY_STOP: Dict[str, List[Tuple[int, str]]] = {}  # stop_id -> [(dep_sec, trip_id), ...] sorted
-
-CALENDAR: Dict[str, Dict[str, Any]] = {}  # service_id -> calendar row
-CAL_ADDED: Dict[str, Set[str]] = {}       # service_id -> {yyyymmdd}
-CAL_REMOVED: Dict[str, Set[str]] = {}     # service_id -> {yyyymmdd}
-
+STOP_TIMES_BY_STOP: Dict[str, List[Tuple[int, str]]] = {}
+CALENDAR: Dict[str, Dict[str, Any]] = {}
+CAL_ADDED: Dict[str, Set[str]] = {}
+CAL_REMOVED: Dict[str, Set[str]] = {}
 DATA_LOADED_AT: Optional[float] = None
-
-
-def _read_csv(path: str) -> List[Dict[str, str]]:
-    with open(path, "r", encoding="utf-8-sig", newline="") as f:
-        return list(csv.DictReader(f))
-
-
-def _safe_float(x: str) -> Optional[float]:
-    try:
-        if x is None or x == "":
-            return None
-        return float(x)
-    except Exception:
-        return None
 
 
 def load_gtfs() -> None:
     global STOPS, ROUTES, TRIPS, STOP_TIMES_BY_STOP, CALENDAR, CAL_ADDED, CAL_REMOVED, DATA_LOADED_AT
 
-    # Stops
     stops_path = os.path.join(GTFS_DIR, "stops.txt")
     routes_path = os.path.join(GTFS_DIR, "routes.txt")
     trips_path = os.path.join(GTFS_DIR, "trips.txt")
@@ -172,7 +183,6 @@ def load_gtfs() -> None:
             norm_name=_norm(name),
         )
 
-    # Routes
     ROUTES = {}
     if os.path.exists(routes_path):
         for row in _read_csv(routes_path):
@@ -185,7 +195,6 @@ def load_gtfs() -> None:
                 long_name=(row.get("route_long_name") or "").strip(),
             )
 
-    # Trips
     TRIPS = {}
     if os.path.exists(trips_path):
         for row in _read_csv(trips_path):
@@ -200,7 +209,6 @@ def load_gtfs() -> None:
                 direction_id=(row.get("direction_id") or "").strip() or None,
             )
 
-    # Stop times index
     STOP_TIMES_BY_STOP = {}
     if os.path.exists(stop_times_path):
         for row in _read_csv(stop_times_path):
@@ -210,12 +218,9 @@ def load_gtfs() -> None:
             if not stop_id or not trip_id or dep is None:
                 continue
             STOP_TIMES_BY_STOP.setdefault(stop_id, []).append((dep, trip_id))
-
-        # Sort each stop's list by departure time
         for sid in STOP_TIMES_BY_STOP:
             STOP_TIMES_BY_STOP[sid].sort(key=lambda x: x[0])
 
-    # Calendar
     CALENDAR = {}
     CAL_ADDED = {}
     CAL_REMOVED = {}
@@ -223,9 +228,8 @@ def load_gtfs() -> None:
     if os.path.exists(calendar_path):
         for row in _read_csv(calendar_path):
             sid = (row.get("service_id") or "").strip()
-            if not sid:
-                continue
-            CALENDAR[sid] = row
+            if sid:
+                CALENDAR[sid] = row
 
     if os.path.exists(calendar_dates_path):
         for row in _read_csv(calendar_dates_path):
@@ -245,7 +249,6 @@ def load_gtfs() -> None:
 def _service_active_on(service_id: str, d: date) -> bool:
     ds = _yyyymmdd(d)
 
-    # Exceptions override
     if ds in CAL_REMOVED.get(service_id, set()):
         return False
     if ds in CAL_ADDED.get(service_id, set()):
@@ -253,7 +256,6 @@ def _service_active_on(service_id: str, d: date) -> bool:
 
     cal = CALENDAR.get(service_id)
     if not cal:
-        # No calendar row -> only active if explicitly added in calendar_dates
         return False
 
     start = (cal.get("start_date") or "").strip()
@@ -265,18 +267,16 @@ def _service_active_on(service_id: str, d: date) -> bool:
 
     weekday = d.weekday()  # 0=Mon
     keys = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-    k = keys[weekday]
-    return (cal.get(k) or "0").strip() == "1"
+    return (cal.get(keys[weekday]) or "0").strip() == "1"
 
 
 # -----------------------------
-# Live vehicles (SIRI-VM parsing)
+# Live vehicles cache + parse
 # -----------------------------
 _live_cache: Dict[str, Any] = {"ts": 0.0, "data": []}
 
 
 def _xml_findtext_suffix(elem, suffix: str) -> Optional[str]:
-    # find first child element whose tag endswith suffix, anywhere under elem
     for child in elem.iter():
         if isinstance(child.tag, str) and child.tag.endswith(suffix):
             if child.text:
@@ -293,7 +293,7 @@ def fetch_live_vehicles() -> List[Dict[str, Any]]:
         r = requests.get(DFT_FEED_URL, timeout=20)
         r.raise_for_status()
         content = r.content
-    except Exception as e:
+    except Exception:
         _live_cache["ts"] = now
         _live_cache["data"] = []
         return []
@@ -303,7 +303,6 @@ def fetch_live_vehicles() -> List[Dict[str, Any]]:
         import xml.etree.ElementTree as ET
         root = ET.fromstring(content)
 
-        # SIRI VehicleMonitoring -> VehicleActivity
         for va in root.iter():
             if not (isinstance(va.tag, str) and va.tag.endswith("VehicleActivity")):
                 continue
@@ -343,55 +342,65 @@ def fetch_live_vehicles() -> List[Dict[str, Any]]:
 
 
 # -----------------------------
-# API
+# Startup
+# -----------------------------
+@app.on_event("startup")
+def _startup():
+    # Load GTFS on boot
+    try:
+        load_gtfs()
+    except Exception as e:
+        # Don't crash the server; health will show 0 stops
+        print("GTFS load error:", e)
+
+
+# -----------------------------
+# API endpoints
 # -----------------------------
 @app.get("/api/health")
 def api_health():
-    return jsonify(
-        {
-            "ok": True,
-            "loaded_at": DATA_LOADED_AT,
-            "stops": len(STOPS),
-            "routes": len(ROUTES),
-            "trips": len(TRIPS),
-        }
-    )
+    return {
+        "ok": True,
+        "loaded_at": DATA_LOADED_AT,
+        "stops": len(STOPS),
+        "routes": len(ROUTES),
+        "trips": len(TRIPS),
+        "gtfs_dir": GTFS_DIR,
+        "tz": APP_TZ_NAME,
+    }
 
 
 @app.get("/api/stops")
-def api_stops():
-    q = _norm(request.args.get("q", ""))
-    limit = int(request.args.get("limit", "10"))
+def api_stops(q: str = Query("", min_length=0), limit: int = 10):
+    qn = _norm(q)
+    if not qn:
+        return []
 
-    if not q:
-        return jsonify([])
-
+    limit = max(1, min(limit, 50))
     results = []
     for s in STOPS.values():
-        # allow searching by stop_id/stop_code too
         hay = s.norm_name
         code = (s.stop_code or "").lower()
         sid = s.stop_id.lower()
 
         score = None
-        if hay.startswith(q) or any(word.startswith(q) for word in hay.split()):
+        if hay.startswith(qn) or any(word.startswith(qn) for word in hay.split()):
             score = 0
-        elif q in hay:
+        elif qn in hay:
             score = 1
-        elif q == sid or (q and q in sid):
+        elif qn == sid or (qn and qn in sid):
             score = 2
-        elif q and code and q in code:
+        elif qn and code and qn in code:
             score = 2
 
         if score is None:
             continue
-
         results.append((score, len(s.stop_name), s))
 
     results.sort(key=lambda x: (x[0], x[1]))
 
     out = []
-    for _, __, s in results[: max(1, min(limit, 50))]:
+    for _, __, s in results[:limit]:
         out.append(
             {
                 "stop_id": s.stop_id,
@@ -402,36 +411,28 @@ def api_stops():
                 "parent_station": s.parent_station,
             }
         )
-    return jsonify(out)
+    return out
 
 
-@app.get("/api/stop/<stop_id>")
+@app.get("/api/stop/{stop_id}")
 def api_stop(stop_id: str):
     s = STOPS.get(stop_id)
     if not s:
-        return jsonify({"error": "stop_not_found"}), 404
-    return jsonify(
-        {
-            "stop_id": s.stop_id,
-            "stop_name": s.stop_name,
-            "lat": s.lat,
-            "lon": s.lon,
-            "stop_code": s.stop_code,
-            "parent_station": s.parent_station,
-        }
-    )
+        raise HTTPException(status_code=404, detail="stop_not_found")
+    return {
+        "stop_id": s.stop_id,
+        "stop_name": s.stop_name,
+        "lat": s.lat,
+        "lon": s.lon,
+        "stop_code": s.stop_code,
+        "parent_station": s.parent_station,
+    }
 
 
 @app.get("/api/nearby")
-def api_nearby():
-    try:
-        lat = float(request.args.get("lat", ""))
-        lon = float(request.args.get("lon", ""))
-    except Exception:
-        return jsonify({"error": "invalid_lat_lon"}), 400
-
-    radius_m = float(request.args.get("radius_m", "600"))
-    limit = int(request.args.get("limit", "15"))
+def api_nearby(lat: float, lon: float, radius_m: float = 600, limit: int = 15):
+    radius_m = max(50.0, min(radius_m, 5000.0))
+    limit = max(1, min(limit, 50))
 
     candidates = []
     for s in STOPS.values():
@@ -443,7 +444,7 @@ def api_nearby():
 
     candidates.sort(key=lambda x: x[0])
     out = []
-    for d, s in candidates[: max(1, min(limit, 50))]:
+    for d, s in candidates[:limit]:
         out.append(
             {
                 "stop_id": s.stop_id,
@@ -453,28 +454,24 @@ def api_nearby():
                 "distance_m": round(d, 1),
             }
         )
-    return jsonify(out)
+    return out
 
 
 @app.get("/api/departures")
-def api_departures():
-    stop_id = request.args.get("stop_id", "").strip()
-    if not stop_id:
-        return jsonify({"error": "missing_stop_id"}), 400
+def api_departures(stop_id: str, window_min: int = 90, max_results: int = 40):
+    if stop_id not in STOPS:
+        raise HTTPException(status_code=404, detail="stop_not_found")
 
-    window_min = int(request.args.get("window_min", "90"))
-    max_results = int(request.args.get("max", "40"))
+    window_min = max(10, min(window_min, 240))
+    max_results = max(1, min(max_results, 80))
 
-    s = STOPS.get(stop_id)
-    if not s:
-        return jsonify({"error": "stop_not_found"}), 404
-
-    now_dt = datetime.now(APP_TZ)
+    s = STOPS[stop_id]
+    now_dt = _now_dt()
     today = now_dt.date()
     yesterday = today - timedelta(days=1)
 
     now_sec = now_dt.hour * 3600 + now_dt.minute * 60 + now_dt.second
-    window_sec = max(10, min(window_min, 240)) * 60  # clamp 10..240min
+    window_sec = window_min * 60
 
     today_from = now_sec
     today_to = now_sec + window_sec
@@ -485,36 +482,24 @@ def api_departures():
     active_today = set()
     active_yesterday = set()
 
-    # We’ll lazily compute service activeness only for services we see.
     def is_active(service_id: str, which: str) -> bool:
         if which == "today":
-            if service_id not in active_today:
-                if _service_active_on(service_id, today):
-                    active_today.add(service_id)
-                else:
-                    # mark as checked via negative cache? simple skip
-                    pass
+            if service_id not in active_today and _service_active_on(service_id, today):
+                active_today.add(service_id)
             return service_id in active_today
         else:
-            if service_id not in active_yesterday:
-                if _service_active_on(service_id, yesterday):
-                    active_yesterday.add(service_id)
-                else:
-                    pass
+            if service_id not in active_yesterday and _service_active_on(service_id, yesterday):
+                active_yesterday.add(service_id)
             return service_id in active_yesterday
 
     rows = STOP_TIMES_BY_STOP.get(stop_id, [])
     out = []
 
-    # Because rows are sorted by dep_sec, we can early-break for today's window.
-    # For yesterday window (dep_sec > 86400), we can't guarantee ordering vs <86400,
-    # but still ok to scan—MVP.
     for dep_sec, trip_id in rows:
         trip = TRIPS.get(trip_id)
         if not trip:
             continue
 
-        # Today window
         if today_from <= dep_sec <= today_to:
             if is_active(trip.service_id, "today"):
                 route = ROUTES.get(trip.route_id)
@@ -530,7 +515,6 @@ def api_departures():
                     }
                 )
 
-        # Yesterday late-night trips encoded as 24:xx etc
         if y_from <= dep_sec <= y_to:
             if is_active(trip.service_id, "yesterday"):
                 route = ROUTES.get(trip.route_id)
@@ -546,86 +530,54 @@ def api_departures():
                     }
                 )
 
-        # small optimization: if dep_sec exceeds today_to and is still < 86400,
-        # we can break (since sorted).
-        if dep_sec < 86400 and dep_sec > today_to:
-            # still need to continue in case there are >86400 times later in list,
-            # but those usually come after; keep scanning lightly.
-            pass
-
-    # Sort by the actual "arrival moment" relative to now:
-    # today dep_sec -> +0 day, yesterday encoded dep_sec -> (dep_sec - 86400) next-day time
     def sort_key(x):
-        if x["service_day"] == "today":
-            return x["dep_sec"]
-        return x["dep_sec"] - 86400  # display time is next-day clock time
+        return x["dep_sec"] if x["service_day"] == "today" else (x["dep_sec"] - 86400)
 
     out.sort(key=sort_key)
-    out = out[: max(1, min(max_results, 80))]
+    out = out[:max_results]
 
-    return jsonify(
-        {
-            "stop": {
-                "stop_id": s.stop_id,
-                "stop_name": s.stop_name,
-                "lat": s.lat,
-                "lon": s.lon,
-            },
-            "now": now_dt.isoformat(),
-            "window_min": window_min,
-            "departures": out,
-        }
-    )
+    return {
+        "stop": {"stop_id": s.stop_id, "stop_name": s.stop_name, "lat": s.lat, "lon": s.lon},
+        "now": now_dt.isoformat(),
+        "window_min": window_min,
+        "departures": out,
+    }
 
 
 @app.get("/api/vehicles")
-def api_vehicles():
-    qline = _norm(request.args.get("line", ""))
-    max_results = int(request.args.get("max", "200"))
+def api_vehicles(line: str = "", max_results: int = 200):
+    max_results = max(1, min(max_results, 500))
+    qline = _norm(line)
 
     vehicles = fetch_live_vehicles()
-
     if qline:
-        filtered = []
-        for v in vehicles:
-            line = _norm(str(v.get("line") or ""))
-            if qline in line:
-                filtered.append(v)
-        vehicles = filtered
+        vehicles = [v for v in vehicles if qline in _norm(str(v.get("line") or ""))]
 
-    vehicles = vehicles[: max(1, min(max_results, 500))]
-    return jsonify(
-        {
-            "count": len(vehicles),
-            "vehicles": vehicles,
-            "cached_ttl_sec": LIVE_CACHE_TTL_SEC,
-        }
-    )
+    vehicles = vehicles[:max_results]
+    return {"count": len(vehicles), "vehicles": vehicles, "cached_ttl_sec": LIVE_CACHE_TTL_SEC}
 
 
 # -----------------------------
-# Frontend: serve index.html from repo root
+# Serve frontend
 # -----------------------------
+def _pick_index_file() -> str:
+    # Prefer root index.html, fallback to templates/index.html
+    root_idx = os.path.join(BASE_DIR, "index.html")
+    tpl_idx = os.path.join(BASE_DIR, "templates", "index.html")
+    if os.path.exists(root_idx):
+        return root_idx
+    if os.path.exists(tpl_idx):
+        return tpl_idx
+    return root_idx  # will 404
+
 @app.get("/")
 def home():
-    return send_from_directory(BASE_DIR, "index.html")
+    idx = _pick_index_file()
+    if not os.path.exists(idx):
+        raise HTTPException(status_code=404, detail="index.html not found")
+    return FileResponse(idx)
 
-
-@app.get("/<path:path>")
-def static_passthrough(path: str):
-    # allow serving favicon etc if you add them later
-    return send_from_directory(BASE_DIR, path)
-
-
-# -----------------------------
-# Boot
-# -----------------------------
-try:
-    load_gtfs()
-except Exception as e:
-    # Start anyway so /api/health shows what's wrong
-    print("GTFS load error:", e)
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8080"))
-    app.run(host="0.0.0.0", port=port, debug=True)
+# Optional: serve /static if you use it
+static_dir = os.path.join(BASE_DIR, "static")
+if os.path.isdir(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
