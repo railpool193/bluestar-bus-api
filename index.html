@@ -15,11 +15,9 @@
       --panel2:#0b1527;
       --text:#e9eefc;
       --muted:#a9b6da;
-      --line:#1d2b4a;
       --good:#1dd36b;
       --warn:#ffd24a;
       --bad:#ff5a5a;
-      --chip:#132344;
       --shadow: 0 10px 30px rgba(0,0,0,.35);
       --radius: 18px;
     }
@@ -68,7 +66,6 @@
       gap:8px;
     }
     .btn:active{transform: translateY(1px)}
-    .btn-danger{border-color: rgba(255,90,90,.35); background: rgba(255,90,90,.12)}
     .btn-primary{border-color: rgba(90,140,255,.35); background: rgba(90,140,255,.14)}
     .muted{color:var(--muted)}
     .list{
@@ -144,13 +141,8 @@
     .status-live{ color: var(--good) }
     .status-late{ color: var(--warn) }
     .status-early{ color: var(--bad) }
-    .blink{
-      animation: blink 1s infinite;
-    }
-    @keyframes blink{
-      0%,50%{opacity: 1}
-      51%,100%{opacity: .35}
-    }
+    .blink{ animation: blink 1s infinite; }
+    @keyframes blink{ 0%,50%{opacity:1} 51%,100%{opacity:.35} }
 
     #mapStop{height: 260px; width:100%}
     .mapWrap{
@@ -164,7 +156,7 @@
     .modal{
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,.55);
+      background: rgba(0,0,0,.80);   /* <<< erősebb */
       display:none;
       z-index: 9999;
       padding: 14px;
@@ -174,19 +166,19 @@
       height: calc(100dvh - 28px);
       max-width: 760px;
       margin: 0 auto;
-      background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
-      border:1px solid rgba(255,255,255,.08);
+      background: var(--panel2);      /* <<< solid, nem áttetsző */
+      border:1px solid rgba(255,255,255,.10);
       border-radius: 22px;
       box-shadow: var(--shadow);
       overflow:hidden;
-
       display:flex;
       flex-direction: column;
     }
     .modalHeader{
       padding: 14px;
-      border-bottom: 1px solid rgba(255,255,255,.06);
-      background: rgba(0,0,0,.12);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      background: rgba(0,0,0,.28);    /* <<< sötétebb */
+      backdrop-filter: blur(10px);
     }
     .modalHeaderTop{
       display:flex;
@@ -206,18 +198,18 @@
     }
     .modalBody{
       flex:1;
-      overflow-y: auto;           /* <<< FIX: SCROLL */
+      overflow-y: auto;
       -webkit-overflow-scrolling: touch;
+      background: var(--panel2);      /* <<< biztosan nem áttetsző */
     }
     #mapTrip{height: 280px; width:100%}
-    .tripTable th, .tripTable td{padding: 12px 14px}
     .stickyHead{
       position: sticky;
       top: 0;
-      background: rgba(5,10,18,.92);
+      background: rgba(5,10,18,.96);
       backdrop-filter: blur(10px);
       z-index: 5;
-      border-bottom:1px solid rgba(255,255,255,.06);
+      border-bottom:1px solid rgba(255,255,255,.08);
     }
     .tripRow{
       display:grid;
@@ -294,8 +286,13 @@
             <span class="chip" style="flex:1">🚌 Élő járművek (ha elérhető)</span>
             <input id="lineFilter" class="search" placeholder="Szűrés vonalra (pl. 1, U1...)" style="max-width: 220px; padding:10px 12px; font-size:14px" />
           </div>
+
+          <div id="mapMsg" class="chip" style="display:none; margin-bottom:10px; border-color: rgba(255,90,90,.35); background: rgba(255,90,90,.12);">
+            LIVE feed hiba: —
+          </div>
+
           <div id="mapStop"></div>
-          <div class="tip">Tipp: a térképes élő adat a SIRI VehicleMonitoring feedből jön. Ha a LIVE időpontok nem jelennek meg, akkor a rendszer “heuristic” (pozíció+menetrend) ETA-t számol.</div>
+          <div class="tip">Tipp: a térképes élő adat a SIRI VehicleMonitoring feedből jön. Ha nincs marker, a feed lehet épp üres / API-key hiányzik / hálózati gond van.</div>
         </div>
       </div>
     </div>
@@ -344,10 +341,16 @@
     let selectedStop = null;
     let stopMap = null;
     let stopMarkers = [];
+    let stopPin = null;
+
     let tripMap = null;
     let tripLayer = null;
 
-    function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+    function normRouteJS(s){
+      if(!s) return "";
+      return String(s).trim().toUpperCase().replace(/\s+/g,"");
+    }
+
     async function jget(url){
       const r = await fetch(url, {cache:"no-store"});
       if(!r.ok) throw new Error(await r.text());
@@ -363,8 +366,7 @@
       return "status-live";
     }
 
-    function percText(minutesTo, live){
-      // Due blink when -1..1
+    function percText(minutesTo){
       if(minutesTo >= -1 && minutesTo <= 1) return "Due";
       return `${minutesTo} min`;
     }
@@ -377,11 +379,8 @@
     }
 
     function applyBlink(el, minutesTo){
-      if(minutesTo >= -1 && minutesTo <= 1){
-        el.classList.add("blink");
-      }else{
-        el.classList.remove("blink");
-      }
+      if(minutesTo >= -1 && minutesTo <= 1) el.classList.add("blink");
+      else el.classList.remove("blink");
     }
 
     function renderResults(stops){
@@ -421,7 +420,7 @@
         const lon = pos.coords.longitude;
         const data = await jget(`/api/nearby?lat=${lat}&lon=${lon}&radius_m=900&limit=25`);
         renderResults(data.stops || []);
-      }, (err)=>{
+      }, ()=>{
         alert("Nem tudtam lekérni a helyzetedet.");
       }, {enableHighAccuracy:true, timeout:8000});
     }
@@ -438,7 +437,7 @@
     }
 
     async function selectStop(stop_id, stop_name){
-      selectedStop = {stop_id, stop_name};
+      selectedStop = {stop_id, stop_name, lat:null, lon:null};
       $("stopCard").style.display = "block";
       $("stopName").textContent = stop_name || stop_id;
       $("stopId").textContent = `stop_id: ${stop_id}`;
@@ -451,9 +450,15 @@
       if(!selectedStop) return;
       const minutes = parseInt($("windowSel").value || "60", 10);
       const data = await jget(`/api/departures?stop_id=${encodeURIComponent(selectedStop.stop_id)}&minutes=${minutes}&limit=50`);
+
+      // <<< stop koordináták eltárolása (map középre + stop pin)
+      if(data.stop){
+        selectedStop.lat = data.stop.lat;
+        selectedStop.lon = data.stop.lon;
+      }
+
       $("nowTxt").textContent = new Date(data.now).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
       $("countTxt").textContent = `${data.count} indulás`;
-
       $("warnBox").style.display = data.calendar_ignored ? "inline-flex" : "none";
 
       const body = $("depBody");
@@ -462,6 +467,7 @@
       for(const d of (data.departures || [])){
         const tr = document.createElement("tr");
         const cls = statusClass(d.live);
+
         const tdTime = document.createElement("td");
         tdTime.className = cls;
         tdTime.textContent = d.scheduled_hhmm;
@@ -474,9 +480,8 @@
 
         const tdMin = document.createElement("td");
         tdMin.className = `right ${cls}`;
-        const m = d.minutes_to;
-        tdMin.textContent = percText(m, d.live);
-        applyBlink(tdMin, m);
+        tdMin.textContent = percText(d.minutes_to);
+        applyBlink(tdMin, d.minutes_to);
 
         tr.appendChild(tdTime);
         tr.appendChild(tdRoute);
@@ -488,7 +493,6 @@
         body.appendChild(tr);
       }
 
-      // Map refresh if visible
       if($("mapWrap").style.display !== "none"){
         await refreshMapVehicles();
       }
@@ -502,38 +506,56 @@
 
     async function refreshMapVehicles(){
       ensureStopMap();
+
+      // stop pin always
+      if(selectedStop && selectedStop.lat != null && selectedStop.lon != null){
+        if(stopPin) stopMap.removeLayer(stopPin);
+        stopPin = L.marker([selectedStop.lat, selectedStop.lon]).addTo(stopMap).bindPopup(`<b>${selectedStop.stop_name}</b><br>${selectedStop.stop_id}`);
+        stopMap.setView([selectedStop.lat, selectedStop.lon], 14);
+      }
+
       for(const m of stopMarkers){ stopMap.removeLayer(m); }
       stopMarkers = [];
 
-      // center to stop
-      if(selectedStop){
-        // fetch stop details via departures response already has coords, but we don’t store it;
-        // simple: keep current view if exists
+      $("mapMsg").style.display = "none";
+
+      let data;
+      try{
+        data = await jget(`/api/vehicles?max_results=200`);
+      }catch(e){
+        $("mapMsg").style.display = "inline-flex";
+        $("mapMsg").textContent = "LIVE feed hiba: nem tudtam lekérni a /api/vehicles-t";
+        return;
       }
 
-      const data = await jget(`/api/vehicles?max_results=200`);
-      const filter = $("lineFilter").value.trim().toLowerCase();
+      if(data && data.error){
+        $("mapMsg").style.display = "inline-flex";
+        $("mapMsg").textContent = `LIVE feed hiba: ${data.error}`;
+        return;
+      }
 
-      let first = true;
+      const filterNorm = normRouteJS($("lineFilter").value);
+
+      // show vehicles
+      let any = false;
       for(const v of (data.vehicles || [])){
         if(v.lat == null || v.lon == null) continue;
-        const line = (v.line || "").toLowerCase();
-        if(filter && line !== filter) continue;
 
+        const vRouteNorm = normRouteJS(v.line);
+        if(filterNorm && vRouteNorm !== filterNorm) continue;
+
+        any = true;
         const marker = L.circleMarker([v.lat, v.lon], {radius: 6});
         marker.bindPopup(`<b>${v.line || "-"}</b> → ${v.destination || "-" }<br><span class="muted">Fleet: ${v.vehicle_id || "-"}</span>`);
         marker.addTo(stopMap);
         stopMarkers.push(marker);
-
-        if(first){
-          first = false;
-          stopMap.setView([v.lat, v.lon], 12);
-        }
       }
-      if(first){
-        // no vehicles, keep default
-        if(!stopMap.getCenter()){
-          stopMap.setView([50.909, -1.404], 12);
+
+      if(!any){
+        // ha nincs találat (filter vagy üres feed), marad a stop közép + pin
+        if(filterNorm){
+          $("mapMsg").style.display = "inline-flex";
+          $("mapMsg").textContent = "Nincs jármű ehhez a vonal-szűrőhöz (vagy a feed most üres).";
         }
       }
     }
@@ -549,6 +571,8 @@
 
     function openTrip(trip_id, service_date, route, destination){
       $("tripModal").classList.add("open");
+      document.body.style.overflow = "hidden"; // <<< background scroll off
+
       $("tripTitle").textContent = `${route || "?"} → ${destination || "?"}`;
       $("tripSub").textContent = `trip_id: ${trip_id} · service_date: ${service_date}`;
       $("tripStops").innerHTML = `<div class="pad muted">Betöltés...</div>`;
@@ -561,7 +585,7 @@
 
     function closeTrip(){
       $("tripModal").classList.remove("open");
-      // cleanup map layers
+      document.body.style.overflow = ""; // <<< restore
       if(tripMap){
         setTimeout(()=>tripMap.invalidateSize(), 50);
       }
@@ -621,7 +645,8 @@
         const cls = rowStatusClass(s.live);
         const div = document.createElement("div");
         div.className = "tripRow";
-        const liveTxt = (s.live && s.live.has_live) ? percText(s.live.minutes_to, s.live) : "—";
+
+        const liveTxt = (s.live && s.live.has_live) ? percText(s.live.minutes_to) : "—";
 
         div.innerHTML = `
           <div class="t1 ${cls}">${s.scheduled_hhmm}</div>
@@ -631,7 +656,6 @@
           <div class="t3 ${cls}">${liveTxt}</div>
         `;
 
-        // Blink when due
         const liveEl = div.querySelector(".t3");
         if(s.live && s.live.has_live){
           applyBlink(liveEl, s.live.minutes_to);
@@ -642,16 +666,12 @@
     }
 
     // Events
-    $("q").addEventListener("input", async ()=>{
-      try{
-        await doSearch();
-      }catch(e){}
-    });
-
+    $("q").addEventListener("input", async ()=>{ try{ await doSearch(); }catch(e){} });
     $("btnNearby").onclick = ()=>doNearby();
     $("btnRefresh").onclick = ()=>refreshStop();
     $("windowSel").onchange = ()=>refreshStop();
     $("btnToggleMap").onclick = ()=>toggleMap();
+
     $("lineFilter").addEventListener("input", async ()=>{
       if($("mapWrap").style.display !== "none") refreshMapVehicles();
     });
@@ -664,16 +684,7 @@
     };
 
     $("btnTripBack").onclick = ()=>closeTrip();
-
-    // Close modal tap outside
-    $("tripModal").addEventListener("click", (e)=>{
-      if(e.target === $("tripModal")) closeTrip();
-    });
-
-    // init: small demo search
-    (async ()=>{
-      // nothing by default
-    })();
+    $("tripModal").addEventListener("click", (e)=>{ if(e.target === $("tripModal")) closeTrip(); });
   </script>
 </body>
 </html>
