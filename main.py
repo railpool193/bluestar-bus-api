@@ -1,965 +1,1063 @@
-import os
 import csv
-import re
-import math
+import io
+import os
 import time
+import math
+import zipfile
 from dataclasses import dataclass
-from datetime import datetime, date, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, date, timedelta, timezone
+from typing import Dict, List, Optional, Tuple, Any
+
+import httpx
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from zoneinfo import ZoneInfo
 import xml.etree.ElementTree as ET
 
-import httpx
-from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 
-
-# ----------------------------
-# Settings
-# ----------------------------
 APP_TZ = ZoneInfo(os.getenv("APP_TZ", "Europe/London"))
 
-GTFS_DIR = os.getenv("GTFS_DIR", "gtfs")
+GTFS_ZIP_PATH = os.getenv("GTFS_ZIP_PATH", "gtfs.zip")
 
-DFT_FEED_ID = os.getenv("DFT_FEED_ID", "7721")
 DFT_API_KEY = os.getenv("DFT_API_KEY", "").strip()
+DFT_VM_URL = os.getenv("DFT_VM_URL", "https://data.bus-data.dft.gov.uk/api/v1/datafeed/").strip()
+DFT_OPERATOR_REF = os.getenv("DFT_OPERATOR_REF", "BLUS").strip()  # Bluestar
+DFT_VM_BBOX = os.getenv("DFT_VM_BBOX", "").strip()  # optional: "minLon,minLat,maxLon,maxLat"
 
-LIVE_CACHE_TTL_SEC = int(os.getenv("LIVE_CACHE_TTL_SEC", "12"))
-LIVE_HTTP_TIMEOUT = float(os.getenv("LIVE_HTTP_TIMEOUT", "12"))
+LIVE_TTL_SEC = int(os.getenv("LIVE_TTL_SEC", "12"))  # how often to refresh VM feed
 
-PAST_GRACE_MIN = int(os.getenv("PAST_GRACE_MIN", "2"))  # within 2 minutes in past -> show as Due (not -2)
-DFT_URL_TEMPLATE = "https://data.bus-data.dft.gov.uk/api/v1/datafeed/{feed_id}/?api_key={api_key}"
+# Matching tolerances
+ORIGIN_MATCH_TOL_SEC = int(os.getenv("ORIGIN_MATCH_TOL_SEC", "180"))  # 3 min
+TRIP_ACTIVE_PAD_MIN = int(os.getenv("TRIP_ACTIVE_PAD_MIN", "30"))  # include some padding around trip
+
+# Heuristic distance parameters
+NEAR_STOP_METERS = float(os.getenv("NEAR_STOP_METERS", "120"))
+MIN_SEG_METERS = float(os.getenv("MIN_SEG_METERS", "10"))
+
+# Stop departures window default
+DEFAULT_WINDOW_MIN = int(os.getenv("DEFAULT_WINDOW_MIN", "60"))
+MAX_WINDOW_MIN = int(os.getenv("MAX_WINDOW_MIN", "240"))
+
+# Calendar handling
+IGNORE_CALENDAR_IF_OUTSIDE_RANGE = os.getenv("IGNORE_CALENDAR_IF_OUTSIDE_RANGE", "1") == "1"
 
 
-# ----------------------------
-# Helpers
-# ----------------------------
-def _now_dt() -> datetime:
+def now_local() -> datetime:
     return datetime.now(tz=APP_TZ)
 
 
-def _parse_iso_dt(s: Optional[str]) -> Optional[datetime]:
-    if not s:
-        return None
-    s = s.strip()
-    try:
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=APP_TZ)
-        return dt.astimezone(APP_TZ)
-    except Exception:
-        return None
+def parse_yyyymmdd(s: str) -> date:
+    return date(int(s[0:4]), int(s[4:6]), int(s[6:8]))
 
 
-def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+def fmt_hhmm(dt: datetime) -> str:
+    return dt.astimezone(APP_TZ).strftime("%H:%M")
 
 
-def _parse_time_to_sec(t: str) -> Optional[int]:
-    if not t:
-        return None
-    t = t.strip()
-    m = re.match(r"^(\d{1,2}|\d{2,3}):(\d{2}):(\d{2})$", t)
-    if not m:
-        return None
-    hh = int(m.group(1))
-    mm = int(m.group(2))
-    ss = int(m.group(3))
-    return hh * 3600 + mm * 60 + ss
+def strip_ns(tag: str) -> str:
+    if "}" in tag:
+        return tag.split("}", 1)[1]
+    return tag
 
 
-def _dt_from_service_date_and_seconds(svc: date, sec: int) -> datetime:
-    days = sec // 86400
-    rem = sec % 86400
-    base = datetime(svc.year, svc.month, svc.day, tzinfo=APP_TZ) + timedelta(days=days)
-    return base + timedelta(seconds=rem)
+def parse_gtfs_time_to_seconds(hhmmss: str) -> int:
+    # GTFS allows 24+ hours (e.g. 25:10:00)
+    parts = hhmmss.strip().split(":")
+    if len(parts) != 3:
+        raise ValueError(f"Bad GTFS time: {hhmmss}")
+    h = int(parts[0])
+    m = int(parts[1])
+    s = int(parts[2])
+    return h * 3600 + m * 60 + s
 
 
-def _parse_duration_to_seconds(dur: Optional[str]) -> Optional[int]:
-    if not dur:
-        return None
-    s = dur.strip()
-    sign = 1
-    if s.startswith("-"):
-        sign = -1
-        s = s[1:]
-    if not s.startswith("P"):
-        return None
-    m = re.match(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$", s)
-    if not m:
-        m2 = re.match(r"^P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$", s)
-        if not m2:
-            return None
-        m = m2
-    days = int(m.group(1) or 0)
-    hours = int(m.group(2) or 0)
-    minutes = int(m.group(3) or 0)
-    seconds = int(m.group(4) or 0)
-    return sign * (days * 86400 + hours * 3600 + minutes * 60 + seconds)
+def seconds_to_service_dt(service_date: date, sec: int) -> datetime:
+    base = datetime(service_date.year, service_date.month, service_date.day, tzinfo=APP_TZ)
+    return base + timedelta(seconds=sec)
 
 
-def _parse_int_loose(v: Any, default: int) -> int:
-    s = str(v or "").strip()
-    m = re.search(r"-?\d+", s)
-    if not m:
-        return default
-    try:
-        return int(m.group(0))
-    except Exception:
-        return default
-
-
-def _haversine_m(lat1, lon1, lat2, lon2) -> float:
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    # meters
     R = 6371000.0
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dl = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dl / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
+    return 2 * R * math.asin(math.sqrt(a))
 
 
-# ----------------------------
-# GTFS Store
-# ----------------------------
+def _to_xy_m(lat: float, lon: float, lat0: float) -> Tuple[float, float]:
+    # Equirectangular projection around lat0 (ok for local distances)
+    R = 6371000.0
+    x = math.radians(lon) * R * math.cos(math.radians(lat0))
+    y = math.radians(lat) * R
+    return x, y
+
+
+def point_segment_distance_fraction_m(
+    plat: float, plon: float,
+    alat: float, alon: float,
+    blat: float, blon: float
+) -> Tuple[float, float]:
+    """
+    Returns (distance_m, fraction 0..1 along segment AB) using local projection.
+    """
+    lat0 = (alat + blat) / 2.0
+    px, py = _to_xy_m(plat, plon, lat0)
+    ax, ay = _to_xy_m(alat, alon, lat0)
+    bx, by = _to_xy_m(blat, blon, lat0)
+
+    abx, aby = bx - ax, by - ay
+    apx, apy = px - ax, py - ay
+    ab2 = abx * abx + aby * aby
+    if ab2 < 1e-9:
+        # Degenerate segment
+        dx = px - ax
+        dy = py - ay
+        return math.hypot(dx, dy), 0.0
+
+    t = (apx * abx + apy * aby) / ab2
+    t_clamped = max(0.0, min(1.0, t))
+    cx = ax + t_clamped * abx
+    cy = ay + t_clamped * aby
+    dist = math.hypot(px - cx, py - cy)
+    return dist, t_clamped
+
+
 @dataclass
 class Stop:
     stop_id: str
     stop_name: str
-    lat: Optional[float]
-    lon: Optional[float]
+    lat: float
+    lon: float
+
+
+@dataclass
+class Route:
+    route_id: str
+    short_name: str
+    long_name: str
+
+
+@dataclass
+class Trip:
+    trip_id: str
+    route_id: str
+    service_id: str
+    headsign: str
+    direction_id: Optional[str]
+    trip_short_name: str
 
 
 @dataclass
 class StopTime:
     trip_id: str
     stop_id: str
-    arrival_sec: Optional[int]
-    departure_sec: Optional[int]
+    arrival_sec: int
+    departure_sec: int
     stop_sequence: int
 
 
-class GTFSStore:
-    def __init__(self, gtfs_dir: str):
-        self.gtfs_dir = gtfs_dir
+@dataclass
+class CalendarSvc:
+    service_id: str
+    start_date: date
+    end_date: date
+    weekdays: Dict[int, bool]  # 0=Mon .. 6=Sun
 
+
+class GTFS:
+    def __init__(self) -> None:
         self.stops: Dict[str, Stop] = {}
-        self.routes: Dict[str, Dict[str, str]] = {}
-        self.trips: Dict[str, Dict[str, Any]] = {}
-
+        self.routes: Dict[str, Route] = {}
+        self.trips: Dict[str, Trip] = {}
         self.stop_times_by_stop: Dict[str, List[StopTime]] = {}
         self.stop_times_by_trip: Dict[str, List[StopTime]] = {}
-        self.last_seq_by_trip: Dict[str, int] = {}
+        self.trip_max_seq: Dict[str, int] = {}
+        self.calendar: Dict[str, CalendarSvc] = {}
+        self.calendar_dates_add: Dict[Tuple[str, date], bool] = {}
+        self.calendar_dates_remove: Dict[Tuple[str, date], bool] = {}
 
-        self.calendar: Dict[str, Dict[str, Any]] = {}
-        self.calendar_dates: Dict[Tuple[str, date], int] = {}
-        self.min_cal_start: Optional[date] = None
-        self.max_cal_end: Optional[date] = None
+        # indexes
+        self.route_id_to_short: Dict[str, str] = {}
+        self.route_short_to_route_ids: Dict[str, List[str]] = {}
+        self.trip_first_last: Dict[str, Tuple[int, int]] = {}
 
-        self.loaded_ok = False
-        self.load_errors: List[str] = []
+    def load(self, zip_path: str) -> None:
+        if not os.path.exists(zip_path):
+            raise FileNotFoundError(f"GTFS zip not found: {zip_path}")
 
-    def _path(self, filename: str) -> str:
-        return os.path.join(self.gtfs_dir, filename)
+        with zipfile.ZipFile(zip_path, "r") as z:
+            def read_csv(name: str) -> List[Dict[str, str]]:
+                try:
+                    raw = z.read(name)
+                except KeyError:
+                    return []
+                text = raw.decode("utf-8-sig", errors="replace")
+                f = io.StringIO(text)
+                reader = csv.DictReader(f)
+                return [row for row in reader]
 
-    def _load_csv(self, filename: str) -> List[Dict[str, str]]:
-        path = self._path(filename)
-        with open(path, "r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            return list(reader)
+            stops_rows = read_csv("stops.txt")
+            for r in stops_rows:
+                sid = r.get("stop_id", "").strip()
+                if not sid:
+                    continue
+                name = (r.get("stop_name") or "").strip()
+                try:
+                    lat = float(r.get("stop_lat") or "0")
+                    lon = float(r.get("stop_lon") or "0")
+                except ValueError:
+                    continue
+                self.stops[sid] = Stop(sid, name, lat, lon)
 
-    def load(self) -> None:
-        try:
-            self._load_routes()
-            self._load_trips()
-            self._load_stops()
-            self._load_calendar()
-            self._load_calendar_dates()
-            self._load_stop_times()
-            self._finalize()
-            self.loaded_ok = True
-        except Exception as e:
-            self.loaded_ok = False
-            self.load_errors.append(f"GTFS load error: {e!r}")
+            routes_rows = read_csv("routes.txt")
+            for r in routes_rows:
+                rid = (r.get("route_id") or "").strip()
+                if not rid:
+                    continue
+                short = (r.get("route_short_name") or "").strip()
+                longn = (r.get("route_long_name") or "").strip()
+                self.routes[rid] = Route(rid, short, longn)
+                self.route_id_to_short[rid] = short
+                self.route_short_to_route_ids.setdefault(short, []).append(rid)
 
-    def _load_routes(self) -> None:
-        rows = self._load_csv("routes.txt")
-        for r in rows:
-            rid = (r.get("route_id") or "").strip()
-            if not rid:
-                continue
-            self.routes[rid] = {
-                "route_short_name": (r.get("route_short_name") or "").strip(),
-                "route_long_name": (r.get("route_long_name") or "").strip(),
-            }
+            trips_rows = read_csv("trips.txt")
+            for r in trips_rows:
+                tid = (r.get("trip_id") or "").strip()
+                if not tid:
+                    continue
+                rid = (r.get("route_id") or "").strip()
+                sid = (r.get("service_id") or "").strip()
+                headsign = (r.get("trip_headsign") or "").strip()
+                direction = (r.get("direction_id") or "").strip() or None
+                tshort = (r.get("trip_short_name") or "").strip()
+                self.trips[tid] = Trip(tid, rid, sid, headsign, direction, tshort)
 
-    def _load_trips(self) -> None:
-        rows = self._load_csv("trips.txt")
-        for r in rows:
-            tid = (r.get("trip_id") or "").strip()
-            if not tid:
-                continue
-            self.trips[tid] = {
-                "route_id": (r.get("route_id") or "").strip(),
-                "service_id": (r.get("service_id") or "").strip(),
-                "trip_headsign": (r.get("trip_headsign") or "").strip(),
-                "direction_id": (r.get("direction_id") or "").strip(),
-                "shape_id": (r.get("shape_id") or "").strip(),
-            }
+            cal_rows = read_csv("calendar.txt")
+            for r in cal_rows:
+                sid = (r.get("service_id") or "").strip()
+                if not sid:
+                    continue
+                try:
+                    start = parse_yyyymmdd((r.get("start_date") or "").strip())
+                    end = parse_yyyymmdd((r.get("end_date") or "").strip())
+                except Exception:
+                    continue
+                weekdays = {}
+                # GTFS: monday..sunday keys
+                keys = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+                for i, k in enumerate(keys):
+                    weekdays[i] = (r.get(k) or "0").strip() == "1"
+                self.calendar[sid] = CalendarSvc(sid, start, end, weekdays)
 
-    def _load_stops(self) -> None:
-        rows = self._load_csv("stops.txt")
-        for r in rows:
-            sid = (r.get("stop_id") or "").strip()
-            if not sid:
-                continue
-            name = (r.get("stop_name") or "").strip()
-            lat = None
-            lon = None
-            try:
-                if r.get("stop_lat"):
-                    lat = float(r["stop_lat"])
-                if r.get("stop_lon"):
-                    lon = float(r["stop_lon"])
-            except Exception:
-                lat = None
-                lon = None
-            self.stops[sid] = Stop(stop_id=sid, stop_name=name, lat=lat, lon=lon)
+            cald_rows = read_csv("calendar_dates.txt")
+            for r in cald_rows:
+                sid = (r.get("service_id") or "").strip()
+                ds = (r.get("date") or "").strip()
+                et = (r.get("exception_type") or "").strip()
+                if not sid or not ds or not et:
+                    continue
+                try:
+                    d = parse_yyyymmdd(ds)
+                except Exception:
+                    continue
+                if et == "1":
+                    self.calendar_dates_add[(sid, d)] = True
+                elif et == "2":
+                    self.calendar_dates_remove[(sid, d)] = True
 
-    def _load_calendar(self) -> None:
-        path = self._path("calendar.txt")
-        if not os.path.exists(path):
-            return
-        rows = self._load_csv("calendar.txt")
-        for r in rows:
-            sid = (r.get("service_id") or "").strip()
-            if not sid:
-                continue
+            st_rows = read_csv("stop_times.txt")
+            for r in st_rows:
+                tid = (r.get("trip_id") or "").strip()
+                stop_id = (r.get("stop_id") or "").strip()
+                if not tid or not stop_id:
+                    continue
+                try:
+                    arr = parse_gtfs_time_to_seconds((r.get("arrival_time") or "00:00:00").strip())
+                    dep = parse_gtfs_time_to_seconds((r.get("departure_time") or "00:00:00").strip())
+                    seq = int((r.get("stop_sequence") or "0").strip())
+                except Exception:
+                    continue
+                st = StopTime(tid, stop_id, arr, dep, seq)
+                self.stop_times_by_stop.setdefault(stop_id, []).append(st)
+                self.stop_times_by_trip.setdefault(tid, []).append(st)
 
-            def _d(x: str) -> Optional[date]:
-                x = (x or "").strip()
-                if not x or len(x) != 8:
-                    return None
-                return date(int(x[0:4]), int(x[4:6]), int(x[6:8]))
+            # Sort and compute max seq
+            for stop_id, lst in self.stop_times_by_stop.items():
+                lst.sort(key=lambda x: (x.departure_sec, x.stop_sequence))
+            for tid, lst in self.stop_times_by_trip.items():
+                lst.sort(key=lambda x: x.stop_sequence)
+                if lst:
+                    self.trip_max_seq[tid] = max(x.stop_sequence for x in lst)
+                    self.trip_first_last[tid] = (lst[0].departure_sec, lst[-1].arrival_sec)
 
-            start = _d(r.get("start_date") or "")
-            end = _d(r.get("end_date") or "")
-            wk = {
-                "monday": (r.get("monday") == "1"),
-                "tuesday": (r.get("tuesday") == "1"),
-                "wednesday": (r.get("wednesday") == "1"),
-                "thursday": (r.get("thursday") == "1"),
-                "friday": (r.get("friday") == "1"),
-                "saturday": (r.get("saturday") == "1"),
-                "sunday": (r.get("sunday") == "1"),
-            }
-            self.calendar[sid] = {"start": start, "end": end, "wk": wk}
-            if start and (self.min_cal_start is None or start < self.min_cal_start):
-                self.min_cal_start = start
-            if end and (self.max_cal_end is None or end > self.max_cal_end):
-                self.max_cal_end = end
+            # Basic stats
+            print(f"[GTFS] stops={len(self.stops)} routes={len(self.routes)} trips={len(self.trips)} stop_times(trips)={len(self.stop_times_by_trip)}")
 
-    def _load_calendar_dates(self) -> None:
-        path = self._path("calendar_dates.txt")
-        if not os.path.exists(path):
-            return
-        rows = self._load_csv("calendar_dates.txt")
-        for r in rows:
-            sid = (r.get("service_id") or "").strip()
-            d = (r.get("date") or "").strip()
-            ex = (r.get("exception_type") or "").strip()
-            if not sid or not d or not ex:
-                continue
-            if len(d) != 8:
-                continue
-            dt = date(int(d[0:4]), int(d[4:6]), int(d[6:8]))
-            try:
-                et = int(ex)
-            except Exception:
-                continue
-            self.calendar_dates[(sid, dt)] = et
-
-    def _load_stop_times(self) -> None:
-        rows = self._load_csv("stop_times.txt")
-        for r in rows:
-            tid = (r.get("trip_id") or "").strip()
-            sid = (r.get("stop_id") or "").strip()
-            if not tid or not sid:
-                continue
-            arr = _parse_time_to_sec(r.get("arrival_time") or "")
-            dep = _parse_time_to_sec(r.get("departure_time") or "")
-            try:
-                seq = int((r.get("stop_sequence") or "0").strip())
-            except Exception:
-                seq = 0
-            st = StopTime(trip_id=tid, stop_id=sid, arrival_sec=arr, departure_sec=dep, stop_sequence=seq)
-            self.stop_times_by_stop.setdefault(sid, []).append(st)
-            self.stop_times_by_trip.setdefault(tid, []).append(st)
-
-    def _finalize(self) -> None:
-        for sid, lst in self.stop_times_by_stop.items():
-            lst.sort(key=lambda x: (x.departure_sec if x.departure_sec is not None else 10**9, x.stop_sequence))
-        for tid, lst in self.stop_times_by_trip.items():
-            lst.sort(key=lambda x: x.stop_sequence)
-            if lst:
-                self.last_seq_by_trip[tid] = lst[-1].stop_sequence
-
-    def gtfs_stats(self) -> Dict[str, Any]:
-        return {
-            "ok": self.loaded_ok,
-            "stops": len(self.stops),
-            "trips": len(self.trips),
-            "routes": len(self.routes),
-            "calendar_services": len(self.calendar),
-            "calendar_dates": len(self.calendar_dates),
-            "errors": self.load_errors[-3:],
-        }
-
-    def is_service_active(self, service_id: str, svc_date: date, ignore_calendar: bool = False) -> bool:
-        if ignore_calendar:
+    def is_service_active(self, service_id: str, d: date) -> bool:
+        # exceptions win
+        if self.calendar_dates_remove.get((service_id, d)):
+            return False
+        if self.calendar_dates_add.get((service_id, d)):
             return True
-
-        ex = self.calendar_dates.get((service_id, svc_date))
-        if ex == 1:
+        svc = self.calendar.get(service_id)
+        if not svc:
+            # No calendar: assume active
             return True
-        if ex == 2:
+        if d < svc.start_date or d > svc.end_date:
             return False
+        wd = d.weekday()
+        return bool(svc.weekdays.get(wd, False))
 
-        cal = self.calendar.get(service_id)
-        if not cal:
-            return False
-
-        start = cal.get("start")
-        end = cal.get("end")
-        if start and svc_date < start:
-            return False
-        if end and svc_date > end:
-            return False
-
-        wd = svc_date.weekday()
-        wk = cal.get("wk") or {}
-        keys = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-        return bool(wk.get(keys[wd], False))
-
-    def search_stops(self, q: str, limit: int = 30) -> List[Dict[str, Any]]:
-        qn = _norm(q)
-        if not qn:
-            return []
-        hits = []
-        for s in self.stops.values():
-            name_n = _norm(s.stop_name)
-            id_n = _norm(s.stop_id)
-            score = 0
-            if qn in name_n:
-                score += 100
-                if name_n.startswith(qn):
-                    score += 30
-            if qn in id_n:
-                score += 60
-            if score > 0:
-                hits.append((score, s))
-        hits.sort(key=lambda x: (-x[0], x[1].stop_name))
-        out = []
-        for _, s in hits[:limit]:
-            out.append({"stop_id": s.stop_id, "stop_name": s.stop_name, "lat": s.lat, "lon": s.lon})
-        return out
-
-    def nearby_stops(self, lat: float, lon: float, radius_m: int = 700, limit: int = 25) -> List[Dict[str, Any]]:
-        res = []
-        for s in self.stops.values():
-            if s.lat is None or s.lon is None:
-                continue
-            d = _haversine_m(lat, lon, s.lat, s.lon)
-            if d <= radius_m:
-                res.append((d, s))
-        res.sort(key=lambda x: x[0])
-        out = []
-        for d, s in res[:limit]:
-            out.append(
-                {"stop_id": s.stop_id, "stop_name": s.stop_name, "lat": s.lat, "lon": s.lon, "distance_m": int(d)}
-            )
-        return out
-
-    def get_departures(self, stop_id: str, now_dt: datetime, window_min: int = 60) -> Dict[str, Any]:
-        stop = self.stops.get(stop_id)
-        if not stop:
-            return {"stop_id": stop_id, "stop_name": None, "departures": [], "calendar_ignored": False}
-
-        window_min = max(10, min(window_min, 240))
-        window_end = now_dt + timedelta(minutes=window_min)
-
-        today = now_dt.date()
-        ignore_calendar = False
-        if self.max_cal_end and today > self.max_cal_end:
-            ignore_calendar = True
-        if self.min_cal_start and today < self.min_cal_start:
-            ignore_calendar = True
-
-        rows: List[Dict[str, Any]] = []
-
-        st_list = self.stop_times_by_stop.get(stop_id, [])
-        for st in st_list:
-            trip = self.trips.get(st.trip_id)
-            if not trip:
-                continue
-
-            # do not show "trip ends here" rows
-            last_seq = self.last_seq_by_trip.get(st.trip_id)
-            if last_seq is not None and st.stop_sequence >= last_seq:
-                continue
-
-            sec = st.departure_sec if st.departure_sec is not None else st.arrival_sec
-            if sec is None:
-                continue
-
-            for svc in [today, today + timedelta(days=1)]:
-                dt_sched = _dt_from_service_date_and_seconds(svc, sec)
-
-                # FIX: do not show past items, only allow small grace window
-                if dt_sched < now_dt - timedelta(minutes=PAST_GRACE_MIN):
-                    continue
-                if dt_sched > window_end:
-                    continue
-
-                service_id = (trip.get("service_id") or "").strip()
-                if service_id and not self.is_service_active(service_id, svc, ignore_calendar=ignore_calendar):
-                    continue
-
-                route = self.routes.get(trip.get("route_id") or "", {})
-                line = (route.get("route_short_name") or "").strip() or (trip.get("route_id") or "")
-                headsign = (trip.get("trip_headsign") or "").strip()
-
-                mins_to = int(round((dt_sched - now_dt).total_seconds() / 60.0))
-                rows.append(
-                    {
-                        "trip_id": st.trip_id,
-                        "service_date": svc.isoformat(),
-                        "sched_dt": dt_sched.isoformat(),
-                        "sched_time": dt_sched.strftime("%H:%M"),
-                        "mins_to": mins_to,
-                        "line": str(line),
-                        "headsign": headsign,
-                        "stop_id": stop_id,
-                        "stop_name": stop.stop_name,
-                        "status": "timetable",
-                    }
-                )
-
-        rows.sort(key=lambda r: r["sched_dt"])
-        return {
-            "stop_id": stop_id,
-            "stop_name": stop.stop_name,
-            "now": now_dt.isoformat(),
-            "window_min": window_min,
-            "calendar_ignored": ignore_calendar,
-            "departures": rows,
-        }
-
-    def get_trip_stops(self, trip_id: str) -> List[Dict[str, Any]]:
-        st_list = self.stop_times_by_trip.get(trip_id, [])
-        out = []
-        for st in st_list:
-            stop = self.stops.get(st.stop_id)
-            sec = st.departure_sec if st.departure_sec is not None else st.arrival_sec
-            out.append(
-                {
-                    "stop_id": st.stop_id,
-                    "stop_name": stop.stop_name if stop else st.stop_id,
-                    "stop_sequence": st.stop_sequence,
-                    "time_sec": sec,
-                    "lat": stop.lat if stop else None,
-                    "lon": stop.lon if stop else None,
-                }
-            )
-        out.sort(key=lambda x: x["stop_sequence"])
-        return out
+    def route_short_name_for_trip(self, trip_id: str) -> str:
+        t = self.trips.get(trip_id)
+        if not t:
+            return ""
+        return self.route_id_to_short.get(t.route_id, "")
 
 
-GTFS = GTFSStore(GTFS_DIR)
-GTFS.load()
+GTFS_DATA = GTFS()
 
 
-# ----------------------------
-# SIRI VM live (DFT)
-# ----------------------------
-_LIVE_CACHE: Dict[str, Any] = {"ts": 0.0, "vehicles": []}
+class LiveCache:
+    def __init__(self) -> None:
+        self._last_fetch = 0.0
+        self._data: Optional[List[Dict[str, Any]]] = None
+
+    def get(self) -> Optional[List[Dict[str, Any]]]:
+        if self._data is None:
+            return None
+        if time.time() - self._last_fetch > LIVE_TTL_SEC:
+            return None
+        return self._data
+
+    def set(self, data: List[Dict[str, Any]]) -> None:
+        self._data = data
+        self._last_fetch = time.time()
 
 
-def _siri_url() -> Optional[str]:
+LIVE_CACHE = LiveCache()
+
+
+async def fetch_vm_xml() -> str:
     if not DFT_API_KEY:
-        return None
-    return DFT_URL_TEMPLATE.format(feed_id=DFT_FEED_ID, api_key=DFT_API_KEY)
+        raise HTTPException(status_code=400, detail="Missing DFT_API_KEY env var")
+
+    params = {"api_key": DFT_API_KEY}
+    # Optional: reduce to operator
+    if DFT_OPERATOR_REF:
+        params["operatorRef"] = DFT_OPERATOR_REF
+    if DFT_VM_BBOX:
+        params["boundingBox"] = DFT_VM_BBOX
+
+    # Some deployments work better without trailing slash; keep your URL if you set DFT_VM_URL
+    url = DFT_VM_URL
+    timeout = httpx.Timeout(25.0, connect=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.get(url, params=params)
+        r.raise_for_status()
+        return r.text
 
 
-def _get_text(node: Optional[ET.Element]) -> Optional[str]:
-    if node is None or node.text is None:
-        return None
-    s = node.text.strip()
-    return s if s else None
-
-
-def _find_child(parent: ET.Element, tag_end: str) -> Optional[ET.Element]:
-    for ch in list(parent):
-        if ch.tag.endswith(tag_end):
-            return ch
+def find_child_text(node: ET.Element, wanted_local: str) -> Optional[str]:
+    for ch in list(node):
+        if strip_ns(ch.tag) == wanted_local:
+            if ch.text is None:
+                return None
+            return ch.text.strip()
     return None
 
 
-def _get_text_child(parent: Optional[ET.Element], tag_end: str) -> Optional[str]:
-    if parent is None:
+def find_desc_text(node: ET.Element, path_locals: List[str]) -> Optional[str]:
+    # Walk descendants by local tag names
+    cur = node
+    for local in path_locals:
+        found = None
+        for ch in list(cur):
+            if strip_ns(ch.tag) == local:
+                found = ch
+                break
+        if found is None:
+            return None
+        cur = found
+    if cur.text is None:
         return None
-    return _get_text(_find_child(parent, tag_end))
+    return cur.text.strip()
 
 
-def _safe_float(s: Optional[str]) -> Optional[float]:
-    if s is None:
-        return None
+def parse_dt_iso(s: str) -> Optional[datetime]:
     try:
-        return float(s)
+        # ISO like 2026-01-10T17:20:00+00:00
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc).astimezone(APP_TZ)
+        return dt.astimezone(APP_TZ)
     except Exception:
         return None
 
 
-def _parse_call(call_el: ET.Element) -> Dict[str, Any]:
-    sp = _get_text_child(call_el, "StopPointRef")
-    aimed_arr = _parse_iso_dt(_get_text_child(call_el, "AimedArrivalTime"))
-    exp_arr = _parse_iso_dt(_get_text_child(call_el, "ExpectedArrivalTime"))
-    aimed_dep = _parse_iso_dt(_get_text_child(call_el, "AimedDepartureTime"))
-    exp_dep = _parse_iso_dt(_get_text_child(call_el, "ExpectedDepartureTime"))
-    aimed = aimed_dep or aimed_arr
-    expected = exp_dep or exp_arr
-    return {
-        "stop_ref": sp,
-        "aimed_iso": aimed.isoformat() if aimed else None,
-        "expected_iso": expected.isoformat() if expected else None,
-    }
-
-
-def fetch_siri_journeys() -> List[Dict[str, Any]]:
-    now = time.time()
-    if _LIVE_CACHE["vehicles"] and (now - _LIVE_CACHE["ts"] < LIVE_CACHE_TTL_SEC):
-        return _LIVE_CACHE["vehicles"]
-
-    url = _siri_url()
-    if not url:
-        _LIVE_CACHE["vehicles"] = []
-        _LIVE_CACHE["ts"] = now
-        return []
-
-    try:
-        with httpx.Client(timeout=LIVE_HTTP_TIMEOUT) as client:
-            r = client.get(url, headers={"Accept": "*/*"})
-            r.raise_for_status()
-            content = r.content
-    except Exception:
-        _LIVE_CACHE["vehicles"] = []
-        _LIVE_CACHE["ts"] = now
-        return []
-
-    try:
-        root = ET.fromstring(content)
-    except Exception:
-        _LIVE_CACHE["vehicles"] = []
-        _LIVE_CACHE["ts"] = now
-        return []
+def parse_vehicle_activities(xml_text: str) -> List[Dict[str, Any]]:
+    root = ET.fromstring(xml_text)
 
     vehicles: List[Dict[str, Any]] = []
 
-    for va in root.iter():
-        if not va.tag.endswith("VehicleActivity"):
-            continue
+    # Find all VehicleActivity elements
+    stack = [root]
+    acts: List[ET.Element] = []
+    while stack:
+        n = stack.pop()
+        if strip_ns(n.tag) == "VehicleActivity":
+            acts.append(n)
+        stack.extend(list(n))
 
-        recorded_at = _parse_iso_dt(_get_text_child(va, "RecordedAtTime"))
-        valid_until = _parse_iso_dt(_get_text_child(va, "ValidUntilTime"))
-
+    for act in acts:
+        recorded_at = find_desc_text(act, ["RecordedAtTime"])
         mvj = None
-        for ch in va.iter():
-            if ch.tag.endswith("MonitoredVehicleJourney"):
+        for ch in list(act):
+            if strip_ns(ch.tag) == "MonitoredVehicleJourney":
                 mvj = ch
                 break
         if mvj is None:
             continue
 
-        line_ref = _get_text_child(mvj, "LineRef") or ""
-        line_pub = _get_text_child(mvj, "PublishedLineName") or line_ref or ""
-        direction = _get_text_child(mvj, "DirectionRef")
-        operator_ref = _get_text_child(mvj, "OperatorRef")
+        line = find_desc_text(mvj, ["LineRef"]) or find_desc_text(mvj, ["PublishedLineName"]) or ""
+        dest = find_desc_text(mvj, ["DestinationName"]) or ""
+        direction = find_desc_text(mvj, ["DirectionRef"]) or ""
 
-        origin_ref = _get_text_child(mvj, "OriginRef")
-        origin_name = _get_text_child(mvj, "OriginName")
-        dest_ref = _get_text_child(mvj, "DestinationRef")
-        dest_name = _get_text_child(mvj, "DestinationName")
+        lat_txt = find_desc_text(mvj, ["VehicleLocation", "Latitude"])
+        lon_txt = find_desc_text(mvj, ["VehicleLocation", "Longitude"])
+        try:
+            lat = float(lat_txt) if lat_txt else None
+            lon = float(lon_txt) if lon_txt else None
+        except Exception:
+            lat, lon = None, None
 
-        # These exist in your screenshots:
-        origin_aimed_dep = _parse_iso_dt(_get_text_child(mvj, "OriginAimedDepartureTime"))
-        dest_aimed_arr = _parse_iso_dt(_get_text_child(mvj, "DestinationAimedArrivalTime"))
+        vehicle_ref = find_desc_text(mvj, ["VehicleRef"]) or find_desc_text(mvj, ["VehicleRef"]) or None
 
-        data_frame_ref = _get_text_child(mvj, "DataFrameRef")
-        data_frame_date = None
-        if data_frame_ref:
-            try:
-                data_frame_date = date.fromisoformat(data_frame_ref.strip())
-            except Exception:
-                data_frame_date = None
-
-        dated_vjr = _get_text_child(mvj, "DatedVehicleJourneyRef")
-        vjr = _get_text_child(mvj, "VehicleJourneyRef")
-        delay_raw = _get_text_child(mvj, "Delay")
-        delay_sec = _parse_duration_to_seconds(delay_raw)
-
-        # Location
-        lat = lon = None
-        vloc = None
-        for ch in mvj.iter():
-            if ch.tag.endswith("VehicleLocation"):
-                vloc = ch
+        framed = None
+        for ch in list(mvj):
+            if strip_ns(ch.tag) == "FramedVehicleJourneyRef":
+                framed = ch
                 break
-        if vloc is not None:
-            lat = _safe_float(_get_text_child(vloc, "Latitude"))
-            lon = _safe_float(_get_text_child(vloc, "Longitude"))
+        data_frame_ref = find_desc_text(framed, ["DataFrameRef"]) if framed is not None else None
+        dated_vj_ref = find_desc_text(framed, ["DatedVehicleJourneyRef"]) if framed is not None else None
 
-        bearing = _get_text_child(mvj, "Bearing")
-        block_ref = _get_text_child(mvj, "BlockRef")
-        vehicle_ref = _get_text_child(mvj, "VehicleRef") or _get_text_child(mvj, "VehicleId") or ""
+        vj_ref = find_desc_text(mvj, ["VehicleJourneyRef"]) or None
 
-        # Extensions (JourneyCode etc.)
-        ticket_machine_service_code = None
+        origin_aimed = find_desc_text(mvj, ["OriginAimedDepartureTime"])
+        dest_aimed = find_desc_text(mvj, ["DestinationAimedArrivalTime"])
+
+        # Extensions/JourneyCode (TicketMachine)
         journey_code = None
-        vehicle_unique_id = None
+        # find Extensions anywhere under mvj
+        stack2 = [mvj]
+        while stack2:
+            nn = stack2.pop()
+            if strip_ns(nn.tag) == "JourneyCode" and (nn.text or "").strip():
+                journey_code = (nn.text or "").strip()
+                break
+            stack2.extend(list(nn))
 
-        ext = _find_child(mvj, "Extensions")
-        if ext is not None:
-            vj = _find_child(ext, "VehicleJourney")
-            if vj is not None:
-                operational = _find_child(vj, "Operational")
-                if operational is not None:
-                    tm = _find_child(operational, "TicketMachine")
-                    if tm is not None:
-                        ticket_machine_service_code = _get_text_child(tm, "TicketMachineServiceCode")
-                        journey_code = _get_text_child(tm, "JourneyCode")
-                vehicle_unique_id = _get_text_child(vj, "VehicleUniqueId")
+        vehicles.append({
+            "vehicle_id": vehicle_ref,
+            "line": (line or "").strip().replace("_", " "),
+            "destination": (dest or "").strip().replace("_", " "),
+            "direction": direction,
+            "lat": lat,
+            "lon": lon,
+            "recorded_at": recorded_at,
+            "data_frame_ref": data_frame_ref,
+            "dated_vehicle_journey_ref": dated_vj_ref,
+            "vehicle_journey_ref": vj_ref,
+            "origin_aimed_departure": origin_aimed,
+            "destination_aimed_arrival": dest_aimed,
+            "journey_code": journey_code,
+        })
 
-        # Calls (often missing in your feed)
-        monitored_call = None
-        onward_calls: List[Dict[str, Any]] = []
-
-        mc_el = _find_child(mvj, "MonitoredCall")
-        if mc_el is not None:
-            monitored_call = _parse_call(mc_el)
-
-        oc_el = _find_child(mvj, "OnwardCalls")
-        if oc_el is not None:
-            for call_el in oc_el.iter():
-                if call_el.tag.endswith("OnwardCall"):
-                    onward_calls.append(_parse_call(call_el))
-
-        vehicles.append(
-            {
-                "vehicle_id": vehicle_ref,
-                "vehicle_unique_id": vehicle_unique_id,
-                "line": str(line_pub),
-                "line_ref": str(line_ref),
-                "direction": direction,
-                "operator_ref": operator_ref,
-                "origin_ref": origin_ref,
-                "origin_name": origin_name,
-                "destination_ref": dest_ref,
-                "destination": dest_name or "",
-                "origin_aimed_departure_time": origin_aimed_dep.isoformat() if origin_aimed_dep else None,
-                "destination_aimed_arrival_time": dest_aimed_arr.isoformat() if dest_aimed_arr else None,
-                "data_frame_ref": data_frame_ref,
-                "data_frame_date": data_frame_date.isoformat() if data_frame_date else None,
-                "dated_vehicle_journey_ref": dated_vjr,
-                "vehicle_journey_ref": vjr,
-                "delay_sec": delay_sec,
-                "lat": lat,
-                "lon": lon,
-                "bearing": bearing,
-                "block_ref": block_ref,
-                "ticket_machine_service_code": ticket_machine_service_code,
-                "journey_code": journey_code,
-                "recorded_at": recorded_at.isoformat() if recorded_at else None,
-                "valid_until": valid_until.isoformat() if valid_until else None,
-                "monitored_call": monitored_call,
-                "onward_calls": onward_calls,
-            }
-        )
-
-    _LIVE_CACHE["vehicles"] = vehicles
-    _LIVE_CACHE["ts"] = now
     return vehicles
 
 
-def _line_matches(query: str, line_value: str) -> bool:
+def get_or_guess_service_dates_for_now(n: datetime) -> List[date]:
+    # Early morning: include yesterday for overnight trips
+    d0 = n.date()
+    if n.hour < 3:
+        return [d0 - timedelta(days=1), d0]
+    return [d0]
+
+
+def build_trip_index_for_date(service_date: date) -> Dict[str, List[Dict[str, Any]]]:
     """
-    FIX: "1" should match ONLY line 1 (not 16, 18).
-    If query has multiple tokens separated by comma/space -> OR match.
+    Build list of trips per route_short_name for a given service_date.
+    Each item: {trip_id, route, headsign, first_dt, last_dt, trip_short_name}
     """
-    q = (query or "").strip()
-    if not q:
-        return True
-
-    tokens = [t for t in re.split(r"[,\s]+", q) if t.strip()]
-    lv = (line_value or "").strip()
-
-    # normalize versions
-    lv_norm = _norm(lv)
-
-    for tok in tokens:
-        tok = tok.strip()
-        if not tok:
-            continue
-        # numeric exact
-        if re.fullmatch(r"\d+", tok):
-            # compare digits only (so "01" equals "1")
-            tok_i = int(tok)
-            lv_digits = re.sub(r"\D+", "", lv)  # "18" from "18"
-            if lv_digits and int(lv_digits) == tok_i:
-                return True
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for tid, t in GTFS_DATA.trips.items():
+        if not IGNORE_CALENDAR_IF_OUTSIDE_RANGE:
+            if not GTFS_DATA.is_service_active(t.service_id, service_date):
+                continue
         else:
-            # alphanumeric: exact normalized match
-            if _norm(tok) == lv_norm:
-                return True
-    return False
+            # If outside calendar range but there are no active services, we'll still allow
+            # (works with the warning logic in /api/departures)
+            pass
+
+        first_last = GTFS_DATA.trip_first_last.get(tid)
+        if not first_last:
+            continue
+        first_sec, last_sec = first_last
+        first_dt = seconds_to_service_dt(service_date, first_sec)
+        last_dt = seconds_to_service_dt(service_date, last_sec)
+        route_short = GTFS_DATA.route_id_to_short.get(t.route_id, "")
+        if not route_short:
+            continue
+
+        out.setdefault(route_short, []).append({
+            "trip_id": tid,
+            "route": route_short,
+            "headsign": t.headsign,
+            "first_dt": first_dt,
+            "last_dt": last_dt,
+            "trip_short_name": t.trip_short_name,
+        })
+
+    for k in out:
+        out[k].sort(key=lambda x: x["first_dt"])
+    return out
 
 
-# ----------------------------
-# FastAPI
-# ----------------------------
-app = FastAPI(title="Bluestar Bus API")
+def best_match_trip_for_vehicle(
+    v: Dict[str, Any],
+    trip_index: Dict[str, List[Dict[str, Any]]]
+) -> Optional[Dict[str, Any]]:
+    route = (v.get("line") or "").strip()
+    if not route or route not in trip_index:
+        return None
 
-if os.path.isdir("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+    odt = parse_dt_iso(v.get("origin_aimed_departure") or "")
+    if not odt:
+        return None
+
+    candidates = trip_index.get(route, [])
+    best = None
+    best_abs = 1e18
+
+    dest = (v.get("destination") or "").strip().lower().replace("_", " ")
+    for t in candidates:
+        first_dt: datetime = t["first_dt"]
+        # Match start time tightly
+        delta = abs((first_dt - odt).total_seconds())
+        if delta > ORIGIN_MATCH_TOL_SEC:
+            continue
+
+        # Prefer headsign match if possible
+        head = (t.get("headsign") or "").strip().lower()
+        score = delta
+        if dest and head:
+            if dest in head or head in dest:
+                score *= 0.5
+
+        if score < best_abs:
+            best_abs = score
+            best = t
+
+    return best
+
+
+def compute_trip_delay_and_expected_times(
+    trip_id: str,
+    service_date: date,
+    vehicle_lat: float,
+    vehicle_lon: float,
+    n: datetime
+) -> Tuple[Optional[int], Dict[str, datetime], Optional[int]]:
+    """
+    Compute delay_sec using vehicle position projected on stop-to-stop polyline,
+    then expected_dt(stop_id) = scheduled_dt + delay_sec.
+
+    Returns:
+      delay_sec (int or None),
+      expected_by_stop_id,
+      next_stop_sequence (int or None)
+    """
+    sts = GTFS_DATA.stop_times_by_trip.get(trip_id) or []
+    if len(sts) < 2:
+        return None, {}, None
+
+    # Build stop coords + schedule dts
+    coords: List[Tuple[float, float]] = []
+    sched_dts: List[datetime] = []
+    seqs: List[int] = []
+    stop_ids: List[str] = []
+    for st in sts:
+        s = GTFS_DATA.stops.get(st.stop_id)
+        if not s:
+            continue
+        coords.append((s.lat, s.lon))
+        sched_dts.append(seconds_to_service_dt(service_date, st.departure_sec))
+        seqs.append(st.stop_sequence)
+        stop_ids.append(st.stop_id)
+
+    if len(coords) < 2:
+        return None, {}, None
+
+    # Find nearest stop
+    nearest_i = 0
+    nearest_d = 1e18
+    for i, (slat, slon) in enumerate(coords):
+        d = haversine_m(vehicle_lat, vehicle_lon, slat, slon)
+        if d < nearest_d:
+            nearest_d = d
+            nearest_i = i
+
+    # Determine progress on polyline:
+    # If very near a stop, anchor there.
+    if nearest_d <= NEAR_STOP_METERS:
+        # Assume vehicle is at/just passed that stop -> next is i+1
+        i0 = min(nearest_i, len(coords) - 2)
+        frac = 0.0
+        seg_i = i0
+    else:
+        # Find closest segment
+        best_seg = 0
+        best_dist = 1e18
+        best_frac = 0.0
+        for i in range(len(coords) - 1):
+            (alat, alon) = coords[i]
+            (blat, blon) = coords[i + 1]
+            dist, frac = point_segment_distance_fraction_m(
+                vehicle_lat, vehicle_lon, alat, alon, blat, blon
+            )
+            if dist < best_dist:
+                best_dist = dist
+                best_seg = i
+                best_frac = frac
+        seg_i = best_seg
+        frac = best_frac
+
+    # Interpolate scheduled time at progress point
+    tA = sched_dts[seg_i]
+    tB = sched_dts[seg_i + 1]
+    # Avoid weird 0-length segments
+    if (tB - tA).total_seconds() <= 1:
+        sched_at_progress = tA
+    else:
+        sched_at_progress = tA + (tB - tA) * frac
+
+    # If vehicle is way outside trip time window, do not compute
+    first_dt = sched_dts[0]
+    last_dt = sched_dts[-1]
+    pad = timedelta(minutes=TRIP_ACTIVE_PAD_MIN)
+    if not (first_dt - pad <= n <= last_dt + pad):
+        return None, {}, None
+
+    delay_sec = int((n - sched_at_progress).total_seconds())
+
+    expected: Dict[str, datetime] = {}
+    for sid, sdt in zip(stop_ids, sched_dts):
+        expected[sid] = sdt + timedelta(seconds=delay_sec)
+
+    # Next stop sequence (rough)
+    next_i = min(seg_i + 1, len(seqs) - 1)
+    next_seq = seqs[next_i] if 0 <= next_i < len(seqs) else None
+
+    return delay_sec, expected, next_seq
+
+
+async def get_live_vehicles() -> List[Dict[str, Any]]:
+    cached = LIVE_CACHE.get()
+    if cached is not None:
+        return cached
+
+    xml_text = await fetch_vm_xml()
+    vehicles = parse_vehicle_activities(xml_text)
+    LIVE_CACHE.set(vehicles)
+    return vehicles
+
+
+def sanitize_int(q: Any, default: int) -> int:
+    if q is None:
+        return default
+    if isinstance(q, int):
+        return q
+    s = str(q).strip()
+    # Fix "5/" kind of input
+    s = s.rstrip("/").strip()
+    try:
+        return int(s)
+    except Exception:
+        return default
+
+
+app = FastAPI(title="Bluestar/Unilink Stop & Trip API", version="2.2.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    GTFS_DATA.load(GTFS_ZIP_PATH)
 
 
 @app.get("/", response_class=HTMLResponse)
-def root():
-    if os.path.exists("index.html"):
-        return FileResponse("index.html")
-    return HTMLResponse("<h1>Missing index.html</h1>")
+def root() -> str:
+    # Serve the frontend
+    try:
+        with open("index.html", "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "<h1>Missing index.html</h1>"
 
 
-@app.get("/api/gtfs/stats")
-def api_gtfs_stats():
-    return GTFS.gtfs_stats()
+@app.get("/api/health")
+def health() -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "time": now_local().isoformat(),
+        "stops": len(GTFS_DATA.stops),
+        "trips": len(GTFS_DATA.trips),
+        "dft_key": bool(DFT_API_KEY),
+    }
 
 
-@app.get("/api/stops/search")
-def api_stops_search(q: str = Query("", min_length=0), limit: int = 30):
-    limit = max(1, min(limit, 100))
-    return {"q": q, "results": GTFS.search_stops(q, limit=limit)}
+@app.get("/api/stops")
+def stops(q: str = Query("", min_length=0), limit: int = 25) -> Dict[str, Any]:
+    qn = (q or "").strip().lower()
+    limit = max(1, min(100, limit))
+    res = []
+    for s in GTFS_DATA.stops.values():
+        if not qn or qn in s.stop_name.lower() or qn in s.stop_id.lower():
+            res.append({"stop_id": s.stop_id, "stop_name": s.stop_name})
+    res.sort(key=lambda x: x["stop_name"])
+    return {"count": len(res[:limit]), "stops": res[:limit]}
 
 
-@app.get("/api/stops/nearby")
-def api_stops_nearby(lat: float, lon: float, radius_m: int = 700, limit: int = 25):
-    radius_m = max(100, min(radius_m, 5000))
-    limit = max(1, min(limit, 100))
-    return {"results": GTFS.nearby_stops(lat, lon, radius_m=radius_m, limit=limit)}
-
-
-@app.get("/api/stop/departures")
-def api_stop_departures(stop_id: str, window_min: int = 60):
-    now_dt = _now_dt()
-    base = GTFS.get_departures(stop_id, now_dt=now_dt, window_min=window_min)
-
-    deps_out = []
-    for d in base["departures"]:
-        mins_to = d.get("mins_to")
-        status = d.get("status") or "timetable"
-
-        # FIX: never show -2 min etc. -> Due within grace window
-        if mins_to is not None and mins_to < 0:
-            if mins_to >= -PAST_GRACE_MIN:
-                mins_to = 0
-                status = "due_timetable"
-            else:
-                continue
-
-        deps_out.append({**d, "mins_to": mins_to, "status": status, "fleet": None, "delta_min": None})
-
-    base["departures"] = deps_out
-    base["cached_ttl_sec"] = LIVE_CACHE_TTL_SEC
-    base["past_grace_min"] = PAST_GRACE_MIN
-    return base
+@app.get("/api/nearby")
+def nearby(lat: float, lon: float, radius_m: int = 700, limit: int = 25) -> Dict[str, Any]:
+    radius_m = max(50, min(5000, radius_m))
+    limit = max(1, min(50, limit))
+    scored = []
+    for s in GTFS_DATA.stops.values():
+        d = haversine_m(lat, lon, s.lat, s.lon)
+        if d <= radius_m:
+            scored.append((d, s))
+    scored.sort(key=lambda x: x[0])
+    out = [{"stop_id": s.stop_id, "stop_name": s.stop_name, "dist_m": int(d)} for d, s in scored[:limit]]
+    return {"count": len(out), "stops": out}
 
 
 @app.get("/api/vehicles")
-def api_vehicles(line: str = "", max_results: str = "250"):
-    mr = _parse_int_loose(max_results, 250)
-    mr = max(1, min(mr, 500))
+async def vehicles(max_results: Any = Query(10)) -> Dict[str, Any]:
+    mr = sanitize_int(max_results, 10)
+    mr = max(1, min(200, mr))
+    v = await get_live_vehicles()
+    # Basic sort by recorded_at desc if available
+    def keyfun(x: Dict[str, Any]) -> float:
+        ra = x.get("recorded_at") or ""
+        dt = parse_dt_iso(ra) if ra else None
+        return dt.timestamp() if dt else 0.0
 
-    journeys = fetch_siri_journeys()
-    if line.strip():
-        journeys = [v for v in journeys if _line_matches(line, v.get("line") or "")]
-
-    journeys = journeys[:mr]
-
-    vehicles = []
-    for v in journeys:
-        vehicles.append(
-            {
-                "vehicle_id": v.get("vehicle_id") or "",
-                "line": v.get("line") or "",
-                "destination": v.get("destination") or "",
-                "lat": v.get("lat"),
-                "lon": v.get("lon"),
-                "recorded_at": v.get("recorded_at"),
-                "delay_sec": v.get("delay_sec"),
-                "dated_vehicle_journey_ref": v.get("dated_vehicle_journey_ref"),
-                "vehicle_journey_ref": v.get("vehicle_journey_ref"),
-                "origin_aimed_departure_time": v.get("origin_aimed_departure_time"),
-                "destination_aimed_arrival_time": v.get("destination_aimed_arrival_time"),
-            }
-        )
-    return {"count": len(vehicles), "vehicles": vehicles, "cached_ttl_sec": LIVE_CACHE_TTL_SEC}
+    v2 = sorted(v, key=keyfun, reverse=True)[:mr]
+    return {"count": len(v2), "vehicles": v2, "cached_ttl_sec": LIVE_TTL_SEC}
 
 
-def _pick_vehicle_for_trip_gps(trip_id: str, service_date: date, line: str) -> Optional[Dict[str, Any]]:
-    """
-    Your DfT feed often has ONLY VehicleLocation (no Expected calls).
-    Fallback matching:
-      - match line exactly
-      - match DataFrameRef date if present
-      - match OriginAimedDepartureTime close to the trip start time (from GTFS)
-    """
-    stops = GTFS.get_trip_stops(trip_id)
-    if not stops:
-        return None
-
-    # trip start from first timed stop
-    first = None
-    for s in stops:
-        if s.get("time_sec") is not None:
-            first = s
+def determine_calendar_ignored(d: date) -> bool:
+    # If calendar exists but none of the services are active on date, we "ignore"
+    if not GTFS_DATA.calendar:
+        return False
+    active_any = False
+    for tid, t in GTFS_DATA.trips.items():
+        if GTFS_DATA.is_service_active(t.service_id, d):
+            active_any = True
             break
-    if not first:
-        return None
+    return not active_any
 
-    trip_start_dt = _dt_from_service_date_and_seconds(service_date, int(first["time_sec"]))
 
-    candidates = []
-    for v in fetch_siri_journeys():
-        if not _line_matches(line, v.get("line") or ""):
+@app.get("/api/departures")
+async def departures(
+    stop_id: str,
+    minutes: int = DEFAULT_WINDOW_MIN,
+    limit: int = 30
+) -> Dict[str, Any]:
+    minutes = max(10, min(MAX_WINDOW_MIN, minutes))
+    limit = max(1, min(80, limit))
+
+    s = GTFS_DATA.stops.get(stop_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="stop_id not found")
+
+    n = now_local()
+    service_dates = get_or_guess_service_dates_for_now(n)
+
+    # gather candidate stop_times
+    st_list = GTFS_DATA.stop_times_by_stop.get(stop_id) or []
+    if not st_list:
+        return {"stop": {"stop_id": s.stop_id, "stop_name": s.stop_name}, "count": 0, "departures": []}
+
+    calendar_ignored = False
+    if IGNORE_CALENDAR_IF_OUTSIDE_RANGE:
+        # if today has no active calendar ranges, allow anyway but warn
+        calendar_ignored = determine_calendar_ignored(service_dates[-1])
+
+    # Build live matching (vehicle -> trip) once per date
+    live_vehicles = []
+    live_by_trip: Dict[Tuple[str, date], Dict[str, Any]] = {}
+    expected_by_trip_stop: Dict[Tuple[str, date, str], datetime] = {}  # (trip, date, stop_id) -> expected_dt
+    delay_by_trip: Dict[Tuple[str, date], int] = {}
+
+    if DFT_API_KEY:
+        try:
+            live_vehicles = await get_live_vehicles()
+        except Exception:
+            live_vehicles = []
+
+    # Pre-build trip indexes per service_date
+    trip_index_by_date: Dict[date, Dict[str, List[Dict[str, Any]]]] = {}
+    for d in service_dates:
+        trip_index_by_date[d] = build_trip_index_for_date(d)
+
+    # Match each vehicle to a GTFS trip on its dataframe date
+    for v in live_vehicles:
+        df = (v.get("data_frame_ref") or "").strip()
+        vdate = None
+        try:
+            if df:
+                vdate = datetime.fromisoformat(df).date()
+        except Exception:
+            vdate = None
+
+        if vdate is None:
+            # fallback: use "recorded_at" date
+            ra = parse_dt_iso(v.get("recorded_at") or "")
+            vdate = ra.date() if ra else None
+
+        if vdate is None:
             continue
 
-        # filter by date if available
-        df = v.get("data_frame_date")
-        if df:
-            try:
-                if date.fromisoformat(df) != service_date:
+        idx = trip_index_by_date.get(vdate)
+        if not idx:
+            continue
+
+        match = best_match_trip_for_vehicle(v, idx)
+        if not match:
+            continue
+
+        tid = match["trip_id"]
+        key = (tid, vdate)
+        # If already matched, keep the one with newest recorded_at
+        prev = live_by_trip.get(key)
+        if prev is None:
+            live_by_trip[key] = v
+        else:
+            pdt = parse_dt_iso(prev.get("recorded_at") or "") or datetime.min.replace(tzinfo=APP_TZ)
+            ndt = parse_dt_iso(v.get("recorded_at") or "") or datetime.min.replace(tzinfo=APP_TZ)
+            if ndt > pdt:
+                live_by_trip[key] = v
+
+    # Compute expected times for trips that are matched (only for dates we care about)
+    for (tid, d), v in live_by_trip.items():
+        if d not in service_dates:
+            continue
+        lat = v.get("lat")
+        lon = v.get("lon")
+        if lat is None or lon is None:
+            continue
+        delay_sec, expected_map, _ = compute_trip_delay_and_expected_times(
+            trip_id=tid,
+            service_date=d,
+            vehicle_lat=float(lat),
+            vehicle_lon=float(lon),
+            n=n
+        )
+        if delay_sec is None:
+            continue
+        delay_by_trip[(tid, d)] = delay_sec
+        for sid2, edt in expected_map.items():
+            expected_by_trip_stop[(tid, d, sid2)] = edt
+
+    window_end = n + timedelta(minutes=minutes)
+    window_start = n - timedelta(minutes=5)
+
+    dep_rows = []
+
+    for d in service_dates:
+        for st in st_list:
+            t = GTFS_DATA.trips.get(st.trip_id)
+            if not t:
+                continue
+
+            if not calendar_ignored:
+                if not GTFS_DATA.is_service_active(t.service_id, d):
                     continue
-            except Exception:
-                pass
 
-        oadt = _parse_iso_dt(v.get("origin_aimed_departure_time"))
-        if not oadt:
-            continue
+            # REMOVE terminations: if this stop is last stop of the trip -> skip
+            max_seq = GTFS_DATA.trip_max_seq.get(st.trip_id, -1)
+            if max_seq != -1 and st.stop_sequence >= max_seq:
+                continue
 
-        diff_min = abs((oadt - trip_start_dt).total_seconds()) / 60.0
-        if diff_min <= 25:
-            candidates.append((diff_min, v))
+            dep_dt = seconds_to_service_dt(d, st.departure_sec)
+            if dep_dt < window_start or dep_dt > window_end:
+                continue
 
-    if not candidates:
-        return None
-    candidates.sort(key=lambda x: x[0])
-    return candidates[0][1]
+            route_short = GTFS_DATA.route_id_to_short.get(t.route_id, "")
+            headsign = t.headsign or ""
+
+            # LIVE: if vehicle matched, use expected time for this stop
+            expected_dt = expected_by_trip_stop.get((st.trip_id, d, stop_id))
+            delay_sec = delay_by_trip.get((st.trip_id, d))
+            live_delay_min = None
+            if expected_dt is not None:
+                live_delay_min = int(round((expected_dt - dep_dt).total_seconds() / 60.0))
+
+            minutes_to = int(round(((expected_dt or dep_dt) - n).total_seconds() / 60.0))
+
+            dep_rows.append({
+                "service_date": d.isoformat(),
+                "trip_id": st.trip_id,
+                "route": route_short,
+                "destination": headsign,
+                "scheduled_dt": dep_dt.isoformat(),
+                "scheduled_hhmm": fmt_hhmm(dep_dt),
+                "minutes_to": minutes_to,
+                "live": {
+                    "has_live": expected_dt is not None,
+                    "expected_dt": expected_dt.isoformat() if expected_dt else None,
+                    "delay_min": live_delay_min,
+                    "delay_sec": delay_sec,
+                    "fleet": (live_by_trip.get((st.trip_id, d)) or {}).get("vehicle_id"),
+                    "source": "vm_heuristic" if expected_dt else None,
+                }
+            })
+
+    dep_rows.sort(key=lambda x: x["scheduled_dt"])
+    dep_rows = dep_rows[:limit]
+
+    return {
+        "stop": {"stop_id": s.stop_id, "stop_name": s.stop_name, "lat": s.lat, "lon": s.lon},
+        "now": n.isoformat(),
+        "calendar_ignored": calendar_ignored,
+        "count": len(dep_rows),
+        "departures": dep_rows,
+    }
 
 
 @app.get("/api/trip")
-def api_trip(trip_id: str, service_date: str, line: str = ""):
+async def trip(trip_id: str, service_date: str) -> Dict[str, Any]:
+    if trip_id not in GTFS_DATA.trips:
+        raise HTTPException(status_code=404, detail="trip_id not found")
     try:
-        svc = date.fromisoformat(service_date)
+        d = date.fromisoformat(service_date)
     except Exception:
-        svc = _now_dt().date()
+        raise HTTPException(status_code=400, detail="Bad service_date (expected YYYY-MM-DD)")
 
-    trip_meta = GTFS.trips.get(trip_id) or {}
-    route = GTFS.routes.get(trip_meta.get("route_id") or "", {})
-    route_short = (route.get("route_short_name") or "").strip()
-    headsign = (trip_meta.get("trip_headsign") or "").strip()
+    t = GTFS_DATA.trips[trip_id]
+    route_short = GTFS_DATA.route_id_to_short.get(t.route_id, "")
+    n = now_local()
 
-    now_dt = _now_dt()
-    stops = GTFS.get_trip_stops(trip_id)
+    sts = GTFS_DATA.stop_times_by_trip.get(trip_id) or []
+    if not sts:
+        return {"trip_id": trip_id, "service_date": service_date, "stops": []}
 
-    # vehicle fallback (GPS-only mode)
-    chosen_vehicle = _pick_vehicle_for_trip_gps(trip_id, svc, line or route_short or "")
+    # Try find live vehicle that matches this trip/date
+    live_vehicle = None
+    expected_map: Dict[str, datetime] = {}
+    delay_sec = None
+    next_seq = None
 
-    fleet = chosen_vehicle.get("vehicle_id") if chosen_vehicle else None
-    vehicle_lat = chosen_vehicle.get("lat") if chosen_vehicle else None
-    vehicle_lon = chosen_vehicle.get("lon") if chosen_vehicle else None
-    recorded_at = chosen_vehicle.get("recorded_at") if chosen_vehicle else None
-
-    live_mode = "gps_only" if chosen_vehicle else None
-
-    # Guess current stop by nearest distance
-    current_guess_idx = None
-    current_guess_dist_m = None
-    if chosen_vehicle and vehicle_lat is not None and vehicle_lon is not None:
-        best = None
-        for i, st in enumerate(stops):
-            if st.get("lat") is None or st.get("lon") is None:
+    if DFT_API_KEY:
+        try:
+            live_vehicles = await get_live_vehicles()
+        except Exception:
+            live_vehicles = []
+        # Build trip index for this date once
+        idx = build_trip_index_for_date(d)
+        # Find best matching vehicle whose matched trip is THIS one
+        best_dt = None
+        for v in live_vehicles:
+            df = (v.get("data_frame_ref") or "").strip()
+            vdate = None
+            try:
+                if df:
+                    vdate = datetime.fromisoformat(df).date()
+            except Exception:
+                vdate = None
+            if vdate != d:
                 continue
-            d = _haversine_m(vehicle_lat, vehicle_lon, float(st["lat"]), float(st["lon"]))
-            if best is None or d < best[0]:
-                best = (d, i)
-        if best is not None:
-            current_guess_dist_m, current_guess_idx = best
 
-    # Estimate delay only if bus is very near a stop (<= 350m) AND that stop has a schedule time
-    delay_est_min = None
-    if current_guess_idx is not None and current_guess_dist_m is not None and current_guess_dist_m <= 350:
-        st = stops[current_guess_idx]
-        if st.get("time_sec") is not None:
-            sched_dt_here = _dt_from_service_date_and_seconds(svc, int(st["time_sec"]))
-            delay_est_min = int(round((now_dt - sched_dt_here).total_seconds() / 60.0))
+            match = best_match_trip_for_vehicle(v, idx)
+            if not match or match["trip_id"] != trip_id:
+                continue
 
-    next_guess_idx = None
-    if current_guess_idx is not None and current_guess_idx + 1 < len(stops):
-        next_guess_idx = current_guess_idx + 1
+            vdt = parse_dt_iso(v.get("recorded_at") or "") or datetime.min.replace(tzinfo=APP_TZ)
+            if best_dt is None or vdt > best_dt:
+                best_dt = vdt
+                live_vehicle = v
 
-    out_rows = []
-    for i, st in enumerate(stops):
-        sec = st.get("time_sec")
-        sched_dt_row = _dt_from_service_date_and_seconds(svc, int(sec)) if sec is not None else None
+        if live_vehicle and live_vehicle.get("lat") is not None and live_vehicle.get("lon") is not None:
+            delay_sec, expected_map, next_seq = compute_trip_delay_and_expected_times(
+                trip_id=trip_id,
+                service_date=d,
+                vehicle_lat=float(live_vehicle["lat"]),
+                vehicle_lon=float(live_vehicle["lon"]),
+                n=n
+            )
 
-        estimated_dt = None
-        if sched_dt_row and delay_est_min is not None:
-            estimated_dt = sched_dt_row + timedelta(minutes=delay_est_min)
+    stops_out = []
+    for st in sts:
+        s = GTFS_DATA.stops.get(st.stop_id)
+        if not s:
+            continue
+        sched_dt = seconds_to_service_dt(d, st.departure_sec)
+        exp_dt = expected_map.get(st.stop_id) if delay_sec is not None else None
+        live_minutes_to = int(round(((exp_dt or sched_dt) - n).total_seconds() / 60.0))
+        live_delay_min = None
+        if exp_dt is not None:
+            live_delay_min = int(round((exp_dt - sched_dt).total_seconds() / 60.0))
 
-        out_rows.append(
-            {
-                "stop_sequence": st["stop_sequence"],
-                "stop_id": st["stop_id"],
-                "stop_name": st["stop_name"],
-                "lat": st.get("lat"),
-                "lon": st.get("lon"),
-                "sched_time": sched_dt_row.strftime("%H:%M") if sched_dt_row else None,
-                "live_time": estimated_dt.strftime("%H:%M") if estimated_dt else None,
-                "mins_to": int(round((estimated_dt - now_dt).total_seconds() / 60.0)) if estimated_dt else None,
-                "delta_min": delay_est_min,
-                "status": "gps_est" if estimated_dt else "no_live",
-                "is_current_guess": (i == current_guess_idx),
-                "is_next_guess": (i == next_guess_idx),
+        stops_out.append({
+            "stop_sequence": st.stop_sequence,
+            "stop_id": s.stop_id,
+            "stop_name": s.stop_name,
+            "lat": s.lat,
+            "lon": s.lon,
+            "scheduled_dt": sched_dt.isoformat(),
+            "scheduled_hhmm": fmt_hhmm(sched_dt),
+            "live": {
+                "has_live": exp_dt is not None,
+                "expected_dt": exp_dt.isoformat() if exp_dt else None,
+                "minutes_to": live_minutes_to,
+                "delay_min": live_delay_min,
             }
-        )
+        })
+
+    # Overall delay indicator (top right)
+    overall_delay_min = None
+    if delay_sec is not None:
+        overall_delay_min = int(round(delay_sec / 60.0))
 
     return {
         "trip_id": trip_id,
-        "service_date": svc.isoformat(),
-        "route_short": route_short,
-        "headsign": headsign,
-        "line": line or route_short,
-        "fleet": fleet,
-        "live_mode": live_mode,
-        "recorded_at": recorded_at,
-        "vehicle_lat": vehicle_lat,
-        "vehicle_lon": vehicle_lon,
-        "delay_est_min": delay_est_min,
-        "current_guess_dist_m": int(current_guess_dist_m) if current_guess_dist_m is not None else None,
-        "now": now_dt.isoformat(),
-        "stops": out_rows,
-        "cached_ttl_sec": LIVE_CACHE_TTL_SEC,
+        "service_date": d.isoformat(),
+        "route": route_short,
+        "destination": t.headsign,
+        "trip_short_name": t.trip_short_name,
+        "now": n.isoformat(),
+        "overall_delay_min": overall_delay_min,
+        "next_stop_sequence": next_seq,
+        "vehicle": {
+            "has_vehicle": live_vehicle is not None,
+            "fleet": (live_vehicle or {}).get("vehicle_id"),
+            "lat": (live_vehicle or {}).get("lat"),
+            "lon": (live_vehicle or {}).get("lon"),
+            "recorded_at": (live_vehicle or {}).get("recorded_at"),
+            "source": "vm_heuristic" if (live_vehicle and delay_sec is not None) else None,
+        },
+        "stops": stops_out
     }
