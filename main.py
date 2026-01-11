@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple, Any
 
 import httpx
 from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from zoneinfo import ZoneInfo
 import xml.etree.ElementTree as ET
@@ -22,29 +22,41 @@ GTFS_ZIP_PATH = os.getenv("GTFS_ZIP_PATH", "gtfs.zip")
 
 DFT_API_KEY = os.getenv("DFT_API_KEY", "").strip()
 DFT_VM_URL = os.getenv("DFT_VM_URL", "https://data.bus-data.dft.gov.uk/api/v1/datafeed/").strip()
-DFT_OPERATOR_REF = os.getenv("DFT_OPERATOR_REF", "BLUS").strip()  # Bluestar
-DFT_VM_BBOX = os.getenv("DFT_VM_BBOX", "").strip()  # optional: "minLon,minLat,maxLon,maxLat"
+DFT_OPERATOR_REF = os.getenv("DFT_OPERATOR_REF", "BLUS").strip()
+DFT_VM_BBOX = os.getenv("DFT_VM_BBOX", "").strip()
 
-LIVE_TTL_SEC = int(os.getenv("LIVE_TTL_SEC", "12"))  # how often to refresh VM feed
+LIVE_TTL_SEC = int(os.getenv("LIVE_TTL_SEC", "12"))
 
 # Matching tolerances
-ORIGIN_MATCH_TOL_SEC = int(os.getenv("ORIGIN_MATCH_TOL_SEC", "180"))  # 3 min
-TRIP_ACTIVE_PAD_MIN = int(os.getenv("TRIP_ACTIVE_PAD_MIN", "30"))  # include some padding around trip
+# >>> emelve, hogy a feed/GTFS start-idők ne essenek ki pár perc miatt
+ORIGIN_MATCH_TOL_SEC = int(os.getenv("ORIGIN_MATCH_TOL_SEC", "600"))  # 10 min
+TRIP_ACTIVE_PAD_MIN = int(os.getenv("TRIP_ACTIVE_PAD_MIN", "30"))
 
 # Heuristic distance parameters
 NEAR_STOP_METERS = float(os.getenv("NEAR_STOP_METERS", "120"))
 MIN_SEG_METERS = float(os.getenv("MIN_SEG_METERS", "10"))
 
-# Stop departures window default
 DEFAULT_WINDOW_MIN = int(os.getenv("DEFAULT_WINDOW_MIN", "60"))
 MAX_WINDOW_MIN = int(os.getenv("MAX_WINDOW_MIN", "240"))
 
-# Calendar handling
 IGNORE_CALENDAR_IF_OUTSIDE_RANGE = os.getenv("IGNORE_CALENDAR_IF_OUTSIDE_RANGE", "1") == "1"
 
 
 def now_local() -> datetime:
     return datetime.now(tz=APP_TZ)
+
+
+def norm_route(s: str) -> str:
+    """
+    Normalize route short names / LineRef for matching:
+    - trim
+    - uppercase
+    - remove spaces
+    Examples: "19a" -> "19A", " QC " -> "QC"
+    """
+    if s is None:
+        return ""
+    return "".join(str(s).strip().upper().split())
 
 
 def parse_yyyymmdd(s: str) -> date:
@@ -62,7 +74,6 @@ def strip_ns(tag: str) -> str:
 
 
 def parse_gtfs_time_to_seconds(hhmmss: str) -> int:
-    # GTFS allows 24+ hours (e.g. 25:10:00)
     parts = hhmmss.strip().split(":")
     if len(parts) != 3:
         raise ValueError(f"Bad GTFS time: {hhmmss}")
@@ -78,7 +89,6 @@ def seconds_to_service_dt(service_date: date, sec: int) -> datetime:
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    # meters
     R = 6371000.0
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
@@ -89,7 +99,6 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def _to_xy_m(lat: float, lon: float, lat0: float) -> Tuple[float, float]:
-    # Equirectangular projection around lat0 (ok for local distances)
     R = 6371000.0
     x = math.radians(lon) * R * math.cos(math.radians(lat0))
     y = math.radians(lat) * R
@@ -101,9 +110,6 @@ def point_segment_distance_fraction_m(
     alat: float, alon: float,
     blat: float, blon: float
 ) -> Tuple[float, float]:
-    """
-    Returns (distance_m, fraction 0..1 along segment AB) using local projection.
-    """
     lat0 = (alat + blat) / 2.0
     px, py = _to_xy_m(plat, plon, lat0)
     ax, ay = _to_xy_m(alat, alon, lat0)
@@ -113,7 +119,6 @@ def point_segment_distance_fraction_m(
     apx, apy = px - ax, py - ay
     ab2 = abx * abx + aby * aby
     if ab2 < 1e-9:
-        # Degenerate segment
         dx = px - ax
         dy = py - ay
         return math.hypot(dx, dy), 0.0
@@ -180,7 +185,6 @@ class GTFS:
         self.calendar_dates_add: Dict[Tuple[str, date], bool] = {}
         self.calendar_dates_remove: Dict[Tuple[str, date], bool] = {}
 
-        # indexes
         self.route_id_to_short: Dict[str, str] = {}
         self.route_short_to_route_ids: Dict[str, List[str]] = {}
         self.trip_first_last: Dict[str, Tuple[int, int]] = {}
@@ -202,7 +206,7 @@ class GTFS:
 
             stops_rows = read_csv("stops.txt")
             for r in stops_rows:
-                sid = r.get("stop_id", "").strip()
+                sid = (r.get("stop_id") or "").strip()
                 if not sid:
                     continue
                 name = (r.get("stop_name") or "").strip()
@@ -247,7 +251,6 @@ class GTFS:
                 except Exception:
                     continue
                 weekdays = {}
-                # GTFS: monday..sunday keys
                 keys = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
                 for i, k in enumerate(keys):
                     weekdays[i] = (r.get(k) or "0").strip() == "1"
@@ -285,38 +288,29 @@ class GTFS:
                 self.stop_times_by_stop.setdefault(stop_id, []).append(st)
                 self.stop_times_by_trip.setdefault(tid, []).append(st)
 
-            # Sort and compute max seq
             for stop_id, lst in self.stop_times_by_stop.items():
                 lst.sort(key=lambda x: (x.departure_sec, x.stop_sequence))
+
             for tid, lst in self.stop_times_by_trip.items():
                 lst.sort(key=lambda x: x.stop_sequence)
                 if lst:
                     self.trip_max_seq[tid] = max(x.stop_sequence for x in lst)
                     self.trip_first_last[tid] = (lst[0].departure_sec, lst[-1].arrival_sec)
 
-            # Basic stats
             print(f"[GTFS] stops={len(self.stops)} routes={len(self.routes)} trips={len(self.trips)} stop_times(trips)={len(self.stop_times_by_trip)}")
 
     def is_service_active(self, service_id: str, d: date) -> bool:
-        # exceptions win
         if self.calendar_dates_remove.get((service_id, d)):
             return False
         if self.calendar_dates_add.get((service_id, d)):
             return True
         svc = self.calendar.get(service_id)
         if not svc:
-            # No calendar: assume active
             return True
         if d < svc.start_date or d > svc.end_date:
             return False
         wd = d.weekday()
         return bool(svc.weekdays.get(wd, False))
-
-    def route_short_name_for_trip(self, trip_id: str) -> str:
-        t = self.trips.get(trip_id)
-        if not t:
-            return ""
-        return self.route_id_to_short.get(t.route_id, "")
 
 
 GTFS_DATA = GTFS()
@@ -338,6 +332,10 @@ class LiveCache:
         self._data = data
         self._last_fetch = time.time()
 
+    @property
+    def last_fetch(self) -> float:
+        return self._last_fetch
+
 
 LIVE_CACHE = LiveCache()
 
@@ -347,13 +345,11 @@ async def fetch_vm_xml() -> str:
         raise HTTPException(status_code=400, detail="Missing DFT_API_KEY env var")
 
     params = {"api_key": DFT_API_KEY}
-    # Optional: reduce to operator
     if DFT_OPERATOR_REF:
         params["operatorRef"] = DFT_OPERATOR_REF
     if DFT_VM_BBOX:
         params["boundingBox"] = DFT_VM_BBOX
 
-    # Some deployments work better without trailing slash; keep your URL if you set DFT_VM_URL
     url = DFT_VM_URL
     timeout = httpx.Timeout(25.0, connect=10.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -362,17 +358,7 @@ async def fetch_vm_xml() -> str:
         return r.text
 
 
-def find_child_text(node: ET.Element, wanted_local: str) -> Optional[str]:
-    for ch in list(node):
-        if strip_ns(ch.tag) == wanted_local:
-            if ch.text is None:
-                return None
-            return ch.text.strip()
-    return None
-
-
 def find_desc_text(node: ET.Element, path_locals: List[str]) -> Optional[str]:
-    # Walk descendants by local tag names
     cur = node
     for local in path_locals:
         found = None
@@ -390,7 +376,6 @@ def find_desc_text(node: ET.Element, path_locals: List[str]) -> Optional[str]:
 
 def parse_dt_iso(s: str) -> Optional[datetime]:
     try:
-        # ISO like 2026-01-10T17:20:00+00:00
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc).astimezone(APP_TZ)
@@ -404,7 +389,6 @@ def parse_vehicle_activities(xml_text: str) -> List[Dict[str, Any]]:
 
     vehicles: List[Dict[str, Any]] = []
 
-    # Find all VehicleActivity elements
     stack = [root]
     acts: List[ET.Element] = []
     while stack:
@@ -415,6 +399,7 @@ def parse_vehicle_activities(xml_text: str) -> List[Dict[str, Any]]:
 
     for act in acts:
         recorded_at = find_desc_text(act, ["RecordedAtTime"])
+
         mvj = None
         for ch in list(act):
             if strip_ns(ch.tag) == "MonitoredVehicleJourney":
@@ -435,7 +420,7 @@ def parse_vehicle_activities(xml_text: str) -> List[Dict[str, Any]]:
         except Exception:
             lat, lon = None, None
 
-        vehicle_ref = find_desc_text(mvj, ["VehicleRef"]) or find_desc_text(mvj, ["VehicleRef"]) or None
+        vehicle_ref = find_desc_text(mvj, ["VehicleRef"]) or None
 
         framed = None
         for ch in list(mvj):
@@ -444,15 +429,13 @@ def parse_vehicle_activities(xml_text: str) -> List[Dict[str, Any]]:
                 break
         data_frame_ref = find_desc_text(framed, ["DataFrameRef"]) if framed is not None else None
         dated_vj_ref = find_desc_text(framed, ["DatedVehicleJourneyRef"]) if framed is not None else None
-
         vj_ref = find_desc_text(mvj, ["VehicleJourneyRef"]) or None
 
         origin_aimed = find_desc_text(mvj, ["OriginAimedDepartureTime"])
         dest_aimed = find_desc_text(mvj, ["DestinationAimedArrivalTime"])
 
-        # Extensions/JourneyCode (TicketMachine)
+        # Extensions/JourneyCode
         journey_code = None
-        # find Extensions anywhere under mvj
         stack2 = [mvj]
         while stack2:
             nn = stack2.pop()
@@ -461,10 +444,14 @@ def parse_vehicle_activities(xml_text: str) -> List[Dict[str, Any]]:
                 break
             stack2.extend(list(nn))
 
+        line_clean = (line or "").strip()
+        dest_clean = (dest or "").strip().replace("_", " ")
+
         vehicles.append({
             "vehicle_id": vehicle_ref,
-            "line": (line or "").strip().replace("_", " "),
-            "destination": (dest or "").strip().replace("_", " "),
+            "line": line_clean,
+            "line_norm": norm_route(line_clean),
+            "destination": dest_clean,
             "direction": direction,
             "lat": lat,
             "lon": lon,
@@ -481,41 +468,45 @@ def parse_vehicle_activities(xml_text: str) -> List[Dict[str, Any]]:
 
 
 def get_or_guess_service_dates_for_now(n: datetime) -> List[date]:
-    # Early morning: include yesterday for overnight trips
     d0 = n.date()
     if n.hour < 3:
         return [d0 - timedelta(days=1), d0]
     return [d0]
 
 
+def determine_calendar_ignored(d: date) -> bool:
+    if not GTFS_DATA.calendar:
+        return False
+    active_any = False
+    for tid, t in GTFS_DATA.trips.items():
+        if GTFS_DATA.is_service_active(t.service_id, d):
+            active_any = True
+            break
+    return not active_any
+
+
 def build_trip_index_for_date(service_date: date) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Build list of trips per route_short_name for a given service_date.
-    Each item: {trip_id, route, headsign, first_dt, last_dt, trip_short_name}
+    Key: normalized route (norm_route(route_short_name))
     """
     out: Dict[str, List[Dict[str, Any]]] = {}
     for tid, t in GTFS_DATA.trips.items():
-        if not IGNORE_CALENDAR_IF_OUTSIDE_RANGE:
-            if not GTFS_DATA.is_service_active(t.service_id, service_date):
-                continue
-        else:
-            # If outside calendar range but there are no active services, we'll still allow
-            # (works with the warning logic in /api/departures)
-            pass
-
-        first_last = GTFS_DATA.trip_first_last.get(tid)
-        if not first_last:
+        if not GTFS_DATA.trip_first_last.get(tid):
             continue
-        first_sec, last_sec = first_last
+
+        first_sec, last_sec = GTFS_DATA.trip_first_last[tid]
         first_dt = seconds_to_service_dt(service_date, first_sec)
         last_dt = seconds_to_service_dt(service_date, last_sec)
+
         route_short = GTFS_DATA.route_id_to_short.get(t.route_id, "")
-        if not route_short:
+        route_norm = norm_route(route_short)
+        if not route_norm:
             continue
 
-        out.setdefault(route_short, []).append({
+        out.setdefault(route_norm, []).append({
             "trip_id": tid,
-            "route": route_short,
+            "route_display": route_short,
+            "route_norm": route_norm,
             "headsign": t.headsign,
             "first_dt": first_dt,
             "last_dt": last_dt,
@@ -531,35 +522,43 @@ def best_match_trip_for_vehicle(
     v: Dict[str, Any],
     trip_index: Dict[str, List[Dict[str, Any]]]
 ) -> Optional[Dict[str, Any]]:
-    route = (v.get("line") or "").strip()
-    if not route or route not in trip_index:
+    route_norm = norm_route(v.get("line") or "")
+    if not route_norm or route_norm not in trip_index:
         return None
 
     odt = parse_dt_iso(v.get("origin_aimed_departure") or "")
-    if not odt:
+    dat = parse_dt_iso(v.get("destination_aimed_arrival") or "")
+
+    # Ha nincs origin aimed time, fallback: dest aimed time vs last stop
+    if odt is None and dat is None:
         return None
 
-    candidates = trip_index.get(route, [])
+    candidates = trip_index.get(route_norm, [])
     best = None
-    best_abs = 1e18
+    best_score = 1e18
 
     dest = (v.get("destination") or "").strip().lower().replace("_", " ")
+
     for t in candidates:
         first_dt: datetime = t["first_dt"]
-        # Match start time tightly
-        delta = abs((first_dt - odt).total_seconds())
+        last_dt: datetime = t["last_dt"]
+
+        if odt is not None:
+            delta = abs((first_dt - odt).total_seconds())
+        else:
+            delta = abs((last_dt - dat).total_seconds())  # type: ignore
+
         if delta > ORIGIN_MATCH_TOL_SEC:
             continue
 
-        # Prefer headsign match if possible
         head = (t.get("headsign") or "").strip().lower()
         score = delta
         if dest and head:
             if dest in head or head in dest:
                 score *= 0.5
 
-        if score < best_abs:
-            best_abs = score
+        if score < best_score:
+            best_score = score
             best = t
 
     return best
@@ -572,24 +571,15 @@ def compute_trip_delay_and_expected_times(
     vehicle_lon: float,
     n: datetime
 ) -> Tuple[Optional[int], Dict[str, datetime], Optional[int]]:
-    """
-    Compute delay_sec using vehicle position projected on stop-to-stop polyline,
-    then expected_dt(stop_id) = scheduled_dt + delay_sec.
-
-    Returns:
-      delay_sec (int or None),
-      expected_by_stop_id,
-      next_stop_sequence (int or None)
-    """
     sts = GTFS_DATA.stop_times_by_trip.get(trip_id) or []
     if len(sts) < 2:
         return None, {}, None
 
-    # Build stop coords + schedule dts
     coords: List[Tuple[float, float]] = []
     sched_dts: List[datetime] = []
     seqs: List[int] = []
     stop_ids: List[str] = []
+
     for st in sts:
         s = GTFS_DATA.stops.get(st.stop_id)
         if not s:
@@ -602,7 +592,6 @@ def compute_trip_delay_and_expected_times(
     if len(coords) < 2:
         return None, {}, None
 
-    # Find nearest stop
     nearest_i = 0
     nearest_d = 1e18
     for i, (slat, slon) in enumerate(coords):
@@ -611,41 +600,33 @@ def compute_trip_delay_and_expected_times(
             nearest_d = d
             nearest_i = i
 
-    # Determine progress on polyline:
-    # If very near a stop, anchor there.
     if nearest_d <= NEAR_STOP_METERS:
-        # Assume vehicle is at/just passed that stop -> next is i+1
-        i0 = min(nearest_i, len(coords) - 2)
+        seg_i = min(nearest_i, len(coords) - 2)
         frac = 0.0
-        seg_i = i0
     else:
-        # Find closest segment
         best_seg = 0
         best_dist = 1e18
         best_frac = 0.0
         for i in range(len(coords) - 1):
             (alat, alon) = coords[i]
             (blat, blon) = coords[i + 1]
-            dist, frac = point_segment_distance_fraction_m(
+            dist, frac2 = point_segment_distance_fraction_m(
                 vehicle_lat, vehicle_lon, alat, alon, blat, blon
             )
             if dist < best_dist:
                 best_dist = dist
                 best_seg = i
-                best_frac = frac
+                best_frac = frac2
         seg_i = best_seg
         frac = best_frac
 
-    # Interpolate scheduled time at progress point
     tA = sched_dts[seg_i]
     tB = sched_dts[seg_i + 1]
-    # Avoid weird 0-length segments
     if (tB - tA).total_seconds() <= 1:
         sched_at_progress = tA
     else:
         sched_at_progress = tA + (tB - tA) * frac
 
-    # If vehicle is way outside trip time window, do not compute
     first_dt = sched_dts[0]
     last_dt = sched_dts[-1]
     pad = timedelta(minutes=TRIP_ACTIVE_PAD_MIN)
@@ -658,7 +639,6 @@ def compute_trip_delay_and_expected_times(
     for sid, sdt in zip(stop_ids, sched_dts):
         expected[sid] = sdt + timedelta(seconds=delay_sec)
 
-    # Next stop sequence (rough)
     next_i = min(seg_i + 1, len(seqs) - 1)
     next_seq = seqs[next_i] if 0 <= next_i < len(seqs) else None
 
@@ -682,7 +662,6 @@ def sanitize_int(q: Any, default: int) -> int:
     if isinstance(q, int):
         return q
     s = str(q).strip()
-    # Fix "5/" kind of input
     s = s.rstrip("/").strip()
     try:
         return int(s)
@@ -690,7 +669,7 @@ def sanitize_int(q: Any, default: int) -> int:
         return default
 
 
-app = FastAPI(title="Bluestar/Unilink Stop & Trip API", version="2.2.0")
+app = FastAPI(title="Bluestar/Unilink Stop & Trip API", version="2.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -708,7 +687,6 @@ async def startup() -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def root() -> str:
-    # Serve the frontend
     try:
         with open("index.html", "r", encoding="utf-8") as f:
             return f.read()
@@ -717,14 +695,21 @@ def root() -> str:
 
 
 @app.get("/api/health")
-def health() -> Dict[str, Any]:
+def api_health() -> Dict[str, Any]:
     return {
         "ok": True,
         "time": now_local().isoformat(),
         "stops": len(GTFS_DATA.stops),
         "trips": len(GTFS_DATA.trips),
         "dft_key": bool(DFT_API_KEY),
+        "live_cache_last_fetch_epoch": LIVE_CACHE.last_fetch,
     }
+
+
+# >>> Alias, hogy ne legyen 404 ha /health-et nyitsz
+@app.get("/health")
+def health_alias() -> Dict[str, Any]:
+    return api_health()
 
 
 @app.get("/api/stops")
@@ -757,8 +742,13 @@ def nearby(lat: float, lon: float, radius_m: int = 700, limit: int = 25) -> Dict
 async def vehicles(max_results: Any = Query(10)) -> Dict[str, Any]:
     mr = sanitize_int(max_results, 10)
     mr = max(1, min(200, mr))
+
+    if not DFT_API_KEY:
+        # Frontend így is tud üzenni, nem kell crash
+        return {"count": 0, "vehicles": [], "cached_ttl_sec": LIVE_TTL_SEC, "error": "Missing DFT_API_KEY"}
+
     v = await get_live_vehicles()
-    # Basic sort by recorded_at desc if available
+
     def keyfun(x: Dict[str, Any]) -> float:
         ra = x.get("recorded_at") or ""
         dt = parse_dt_iso(ra) if ra else None
@@ -766,18 +756,6 @@ async def vehicles(max_results: Any = Query(10)) -> Dict[str, Any]:
 
     v2 = sorted(v, key=keyfun, reverse=True)[:mr]
     return {"count": len(v2), "vehicles": v2, "cached_ttl_sec": LIVE_TTL_SEC}
-
-
-def determine_calendar_ignored(d: date) -> bool:
-    # If calendar exists but none of the services are active on date, we "ignore"
-    if not GTFS_DATA.calendar:
-        return False
-    active_any = False
-    for tid, t in GTFS_DATA.trips.items():
-        if GTFS_DATA.is_service_active(t.service_id, d):
-            active_any = True
-            break
-    return not active_any
 
 
 @app.get("/api/departures")
@@ -796,20 +774,17 @@ async def departures(
     n = now_local()
     service_dates = get_or_guess_service_dates_for_now(n)
 
-    # gather candidate stop_times
     st_list = GTFS_DATA.stop_times_by_stop.get(stop_id) or []
     if not st_list:
-        return {"stop": {"stop_id": s.stop_id, "stop_name": s.stop_name}, "count": 0, "departures": []}
+        return {"stop": {"stop_id": s.stop_id, "stop_name": s.stop_name, "lat": s.lat, "lon": s.lon}, "count": 0, "departures": []}
 
     calendar_ignored = False
     if IGNORE_CALENDAR_IF_OUTSIDE_RANGE:
-        # if today has no active calendar ranges, allow anyway but warn
         calendar_ignored = determine_calendar_ignored(service_dates[-1])
 
-    # Build live matching (vehicle -> trip) once per date
-    live_vehicles = []
+    live_vehicles: List[Dict[str, Any]] = []
     live_by_trip: Dict[Tuple[str, date], Dict[str, Any]] = {}
-    expected_by_trip_stop: Dict[Tuple[str, date, str], datetime] = {}  # (trip, date, stop_id) -> expected_dt
+    expected_by_trip_stop: Dict[Tuple[str, date, str], datetime] = {}
     delay_by_trip: Dict[Tuple[str, date], int] = {}
 
     if DFT_API_KEY:
@@ -818,12 +793,10 @@ async def departures(
         except Exception:
             live_vehicles = []
 
-    # Pre-build trip indexes per service_date
     trip_index_by_date: Dict[date, Dict[str, List[Dict[str, Any]]]] = {}
     for d in service_dates:
         trip_index_by_date[d] = build_trip_index_for_date(d)
 
-    # Match each vehicle to a GTFS trip on its dataframe date
     for v in live_vehicles:
         df = (v.get("data_frame_ref") or "").strip()
         vdate = None
@@ -834,13 +807,11 @@ async def departures(
             vdate = None
 
         if vdate is None:
-            # fallback: use "recorded_at" date
             ra = parse_dt_iso(v.get("recorded_at") or "")
             vdate = ra.date() if ra else None
 
         if vdate is None:
             continue
-
         idx = trip_index_by_date.get(vdate)
         if not idx:
             continue
@@ -851,7 +822,7 @@ async def departures(
 
         tid = match["trip_id"]
         key = (tid, vdate)
-        # If already matched, keep the one with newest recorded_at
+
         prev = live_by_trip.get(key)
         if prev is None:
             live_by_trip[key] = v
@@ -861,7 +832,6 @@ async def departures(
             if ndt > pdt:
                 live_by_trip[key] = v
 
-    # Compute expected times for trips that are matched (only for dates we care about)
     for (tid, d), v in live_by_trip.items():
         if d not in service_dates:
             continue
@@ -886,7 +856,6 @@ async def departures(
     window_start = n - timedelta(minutes=5)
 
     dep_rows = []
-
     for d in service_dates:
         for st in st_list:
             t = GTFS_DATA.trips.get(st.trip_id)
@@ -897,7 +866,7 @@ async def departures(
                 if not GTFS_DATA.is_service_active(t.service_id, d):
                     continue
 
-            # REMOVE terminations: if this stop is last stop of the trip -> skip
+            # Termináló sorok kiszűrése
             max_seq = GTFS_DATA.trip_max_seq.get(st.trip_id, -1)
             if max_seq != -1 and st.stop_sequence >= max_seq:
                 continue
@@ -909,7 +878,6 @@ async def departures(
             route_short = GTFS_DATA.route_id_to_short.get(t.route_id, "")
             headsign = t.headsign or ""
 
-            # LIVE: if vehicle matched, use expected time for this stop
             expected_dt = expected_by_trip_stop.get((st.trip_id, d, stop_id))
             delay_sec = delay_by_trip.get((st.trip_id, d))
             live_delay_min = None
@@ -965,7 +933,6 @@ async def trip(trip_id: str, service_date: str) -> Dict[str, Any]:
     if not sts:
         return {"trip_id": trip_id, "service_date": service_date, "stops": []}
 
-    # Try find live vehicle that matches this trip/date
     live_vehicle = None
     expected_map: Dict[str, datetime] = {}
     delay_sec = None
@@ -976,9 +943,9 @@ async def trip(trip_id: str, service_date: str) -> Dict[str, Any]:
             live_vehicles = await get_live_vehicles()
         except Exception:
             live_vehicles = []
-        # Build trip index for this date once
+
         idx = build_trip_index_for_date(d)
-        # Find best matching vehicle whose matched trip is THIS one
+
         best_dt = None
         for v in live_vehicles:
             df = (v.get("data_frame_ref") or "").strip()
@@ -1037,7 +1004,6 @@ async def trip(trip_id: str, service_date: str) -> Dict[str, Any]:
             }
         })
 
-    # Overall delay indicator (top right)
     overall_delay_min = None
     if delay_sec is not None:
         overall_delay_min = int(round(delay_sec / 60.0))
