@@ -5,252 +5,41 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bluestar & Unilink – Live + GTFS</title>
 
-  <!-- Leaflet (map) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <style>
     :root{
-      --bg:#0f1115;
-      --panel:#171a21;
-      --panel2:#1d2230;
-      --text:#e9eef7;
-      --muted:#a9b2c3;
-      --border:#2a3142;
-      --blue:#1e88e5;
-      --green:#2e7d32;
-      --amber:#f9a825;
-      --red:#c62828;
-      --shadow: 0 10px 30px rgba(0,0,0,.35);
-      --radius:16px;
+      --bg:#0f1115; --panel:#171a21; --text:#e9eef7; --muted:#a9b2c3; --border:#2a3142;
+      --shadow: 0 10px 30px rgba(0,0,0,.35); --radius:16px;
     }
     *{box-sizing:border-box}
-    body{
-      margin:0;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-    }
-    .topbar{
-      position: sticky;
-      top:0;
-      z-index: 50;
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:12px;
-      padding: 14px 14px;
-      background: linear-gradient(180deg, #1a1d26, #141724);
-      border-bottom:1px solid var(--border);
-    }
-    .brand{
-      display:flex; gap:10px; align-items:center;
-      font-weight:800;
-      letter-spacing:.2px;
-    }
-    .pill{
-      padding:6px 10px;
-      border:1px solid var(--border);
-      border-radius: 999px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .tabs{
-      display:flex; gap:8px;
-      align-items:center;
-    }
-    .tabbtn{
-      border:1px solid var(--border);
-      background: rgba(255,255,255,.02);
-      color: var(--text);
-      padding: 10px 12px;
-      border-radius: 999px;
-      font-weight:700;
-      cursor:pointer;
-    }
-    .tabbtn.active{
-      background: rgba(30,136,229,.18);
-      border-color: rgba(30,136,229,.35);
-    }
-
-    .wrap{
-      padding: 14px;
-      max-width: 980px;
-      margin: 0 auto;
-    }
-
-    .card{
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      overflow:hidden;
-    }
-
-    .row{
-      display:flex; gap:12px; align-items:center;
-      padding: 12px 12px;
-      border-top:1px solid rgba(255,255,255,.04);
-    }
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);}
+    .topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px;background:linear-gradient(180deg,#1a1d26,#141724);border-bottom:1px solid var(--border);}
+    .brand{display:flex;gap:10px;align-items:center;font-weight:800;}
+    .pill{padding:6px 10px;border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:12px;max-width:60vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .tabs{display:flex;gap:8px;align-items:center;}
+    .tabbtn{border:1px solid var(--border);background:rgba(255,255,255,.02);color:var(--text);padding:10px 12px;border-radius:999px;font-weight:700;cursor:pointer;}
+    .tabbtn.active{background:rgba(255,255,255,.06);}
+    .wrap{padding:14px;max-width:980px;margin:0 auto;}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
+    .row{display:flex;gap:12px;align-items:center;padding:12px;border-top:1px solid rgba(255,255,255,.04);}
     .row:first-child{border-top:0}
-    .row:hover{background: rgba(255,255,255,.03)}
     .grow{flex:1}
-    .small{color: var(--muted); font-size: 12px}
-    .h1{font-size: 16px; font-weight: 800; margin:0}
-    .h2{font-size: 14px; font-weight: 800; margin:0}
-    .mono{font-variant-numeric: tabular-nums; font-feature-settings:"tnum" 1}
-
-    .searchbox{
-      display:flex; gap:10px; align-items:center;
-      padding: 12px;
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,.03);
-    }
-    .searchbox input{
-      width:100%;
-      border:0;
-      outline:none;
-      background: transparent;
-      color: var(--text);
-      font-size: 16px;
-    }
-    .iconbtn{
-      width:40px; height:40px;
-      display:grid; place-items:center;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,.02);
-      cursor:pointer;
-      color: var(--text);
-    }
-    .iconbtn:hover{background: rgba(255,255,255,.05)}
-
-    .badge-route{
-      min-width: 44px;
-      height: 34px;
-      padding: 0 10px;
-      display:flex; align-items:center; justify-content:center;
-      background: rgba(30,136,229,.22);
-      border:1px solid rgba(30,136,229,.45);
-      color: #e8f3ff;
-      border-radius: 10px;
-      font-weight: 900;
-    }
-    .badge-delay{
-      padding: 6px 10px;
-      border-radius: 999px;
-      font-weight: 900;
-      font-size: 12px;
-      border:1px solid var(--border);
-      color: var(--text);
-      background: rgba(255,255,255,.03);
-    }
-    .delay-green{ background: rgba(46,125,50,.25); border-color: rgba(46,125,50,.45); }
-    .delay-amber{ background: rgba(249,168,37,.22); border-color: rgba(249,168,37,.45); }
-    .delay-red{ background: rgba(198,40,40,.22); border-color: rgba(198,40,40,.45); }
-
-    .star{
-      color: rgba(255,255,255,.35);
-      font-size: 18px;
-      user-select:none;
-    }
-    .star.on{ color: #ffd54f; }
-
-    .sectionTitle{
-      margin: 14px 2px 10px;
-      display:flex; align-items:center; justify-content:space-between;
-      gap:10px;
-    }
-
-    /* Trip list scrolling like the app */
-    .scrollBox{
-      max-height: 62vh;
-      overflow:auto;
-    }
-
-    /* Map */
-    #map{
-      height: calc(100vh - 120px);
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      overflow:hidden;
-    }
-    .mapHud{
-      position:absolute;
-      top: 12px;
-      left: 12px;
-      right: 12px;
-      z-index: 400;
-      display:flex;
-      gap:10px;
-      align-items:center;
-      pointer-events:none;
-    }
-    .mapHud > *{ pointer-events:auto; }
-    .select{
-      flex:1;
-      padding: 10px 12px;
-      border-radius: 14px;
-      border: 1px solid var(--border);
-      background: rgba(17,20,28,.85);
-      color: var(--text);
-      outline:none;
-    }
-
-    /* Bustimes-like bus marker */
-    .busMarker{
-      position: relative;
-      width: 44px;
-      height: 30px;
-      border-radius: 8px;
-      background: #1e88e5;
-      border: 2px solid rgba(255,255,255,.9);
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      color: #fff;
-      font-weight: 900;
-      box-shadow: 0 10px 18px rgba(0,0,0,.35);
-    }
-    .busMarker .tri{
-      position:absolute;
-      left:50%;
-      transform: translateX(-50%);
-      bottom: -10px;
-      width: 0; height: 0;
-      border-left: 9px solid transparent;
-      border-right: 9px solid transparent;
-      border-top: 12px solid rgba(255,255,255,.95);
-      filter: drop-shadow(0 8px 10px rgba(0,0,0,.35));
-      transform-origin: 50% 0%;
-    }
-    .busMarker .triInner{
-      position:absolute;
-      left:50%;
-      bottom:-8px;
-      transform: translateX(-50%);
-      width: 0; height: 0;
-      border-left: 7px solid transparent;
-      border-right: 7px solid transparent;
-      border-top: 10px solid #1e88e5;
-      transform-origin: 50% 0%;
-    }
-
-    .hint{
-      color: var(--muted);
-      font-size: 13px;
-      margin: 10px 2px 0;
-    }
-
-    .link{
-      color: #8fc7ff;
-      text-decoration:none;
-      font-weight:800;
-      cursor:pointer;
-    }
-    .link:hover{ text-decoration: underline; }
-
+    .small{color:var(--muted);font-size:12px}
+    .h2{font-size:14px;font-weight:800;margin:0}
+    .mono{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+    .searchbox{display:flex;gap:10px;align-items:center;padding:12px;border-radius:var(--radius);border:1px solid var(--border);background:rgba(255,255,255,.03);}
+    .searchbox input{width:100%;border:0;outline:none;background:transparent;color:var(--text);font-size:16px;}
+    .iconbtn{width:40px;height:40px;display:grid;place-items:center;border-radius:12px;border:1px solid var(--border);background:rgba(255,255,255,.02);cursor:pointer;color:var(--text);}
+    .iconbtn:hover{background:rgba(255,255,255,.05)}
+    .badge-route{min-width:44px;height:34px;padding:0 10px;display:flex;align-items:center;justify-content:center;background:rgba(30,136,229,.22);border:1px solid rgba(30,136,229,.45);color:#e8f3ff;border-radius:10px;font-weight:900;}
+    .star{color:rgba(255,255,255,.35);font-size:18px;user-select:none;}
+    .star.on{color:#ffd54f;}
+    .sectionTitle{margin:14px 2px 10px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+    .scrollBox{max-height:62vh;overflow:auto;}
+    #map{height:calc(100vh - 120px);border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;}
     .hidden{display:none !important;}
+    .hint{color:var(--muted);font-size:13px;margin:10px 2px 0;}
   </style>
 </head>
 
@@ -261,7 +50,6 @@
       <span>Bluestar & Unilink</span>
       <span id="livePill" class="pill">LIVE: …</span>
     </div>
-
     <div class="tabs">
       <button class="tabbtn active" id="tabSearch">Keresés</button>
       <button class="tabbtn" id="tabFav">Kedvencek</button>
@@ -270,42 +58,32 @@
   </div>
 
   <div class="wrap">
-    <!-- SEARCH VIEW -->
     <div id="viewSearch">
       <div class="searchbox">
-        <span title="Keresés">🔎</span>
+        <span>🔎</span>
         <input id="q" placeholder="Megálló vagy járat keresése (pl. Hanover, Winchester, 1, U1...)" />
         <button class="iconbtn" id="clearBtn" title="Törlés">✕</button>
       </div>
 
       <div class="sectionTitle">
         <div class="h2">Találatok</div>
-        <div class="small">Megállók + járatok egyben</div>
+        <div class="small">Megállók + járatok</div>
       </div>
 
       <div class="card" id="resultsCard">
-        <div class="row">
-          <div class="small">Kezdj el gépelni…</div>
-        </div>
+        <div class="row"><div class="small">Kezdj el gépelni…</div></div>
       </div>
 
-      <div class="hint">
-        Tipp: csillaggal ★ hozzáadhatsz megállót/járatot kedvencekhez.
-      </div>
+      <div class="hint">Ha a menetrend üres: nézd meg a /api/debug/gtfs endpointot (calendar end_max).</div>
     </div>
 
-    <!-- FAVORITES VIEW -->
     <div id="viewFav" class="hidden">
-      <div class="sectionTitle">
-        <div class="h2">Kedvencek</div>
-        <div class="small">Megállók + járatok + járat@megálló</div>
-      </div>
+      <div class="sectionTitle"><div class="h2">Kedvencek</div></div>
       <div class="card" id="favCard">
         <div class="row"><div class="small">Nincs még kedvenced.</div></div>
       </div>
     </div>
 
-    <!-- STOP VIEW -->
     <div id="viewStop" class="hidden">
       <div class="sectionTitle">
         <div>
@@ -313,8 +91,6 @@
           <div class="small mono" id="stopId"></div>
         </div>
         <div style="display:flex; gap:8px;">
-          <button class="iconbtn" id="stopStar" title="Kedvenc">★</button>
-          <button class="iconbtn" id="stopToMap" title="Térképen">🗺️</button>
           <button class="iconbtn" id="stopBack" title="Vissza">←</button>
         </div>
       </div>
@@ -322,90 +98,19 @@
       <div class="card" id="departuresCard">
         <div class="row"><div class="small">Betöltés…</div></div>
       </div>
+      <div class="hint" id="stopHint"></div>
     </div>
 
-    <!-- ROUTE VIEW -->
-    <div id="viewRoute" class="hidden">
-      <div class="sectionTitle">
-        <div style="display:flex; gap:10px; align-items:center;">
-          <div class="badge-route" id="routeBadge">?</div>
-          <div>
-            <div class="h2" id="routeTitle">Járat</div>
-            <div class="small" id="routeSub"></div>
-          </div>
-        </div>
-        <div style="display:flex; gap:8px;">
-          <button class="iconbtn" id="routeStar" title="Kedvenc">★</button>
-          <button class="iconbtn" id="routeToMap" title="Térképen">🗺️</button>
-          <button class="iconbtn" id="routeBack" title="Vissza">←</button>
-        </div>
-      </div>
-
-      <div style="display:flex; gap:10px; margin: 8px 0 12px;">
-        <button class="tabbtn active" id="dirIn">Inbound</button>
-        <button class="tabbtn" id="dirOut">Outbound</button>
-      </div>
-
-      <div class="card" id="routeTripsCard">
-        <div class="row"><div class="small">Betöltés…</div></div>
-      </div>
-    </div>
-
-    <!-- TRIP VIEW -->
-    <div id="viewTrip" class="hidden">
-      <div class="sectionTitle">
-        <div style="display:flex; gap:10px; align-items:center;">
-          <div class="badge-route" id="tripBadge">?</div>
-          <div>
-            <div class="h2" id="tripTitle">Trip</div>
-            <div class="small" id="tripSub"></div>
-          </div>
-        </div>
-        <div style="display:flex; gap:8px;">
-          <button class="iconbtn" id="tripFav" title="Kedvenc (járat@megálló nélkül)">★</button>
-          <button class="iconbtn" id="tripToMap" title="Térképen">🗺️</button>
-          <button class="iconbtn" id="tripBack" title="Vissza">←</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="row" id="tripLiveRow">
-          <div class="small">Live: …</div>
-        </div>
-        <div class="scrollBox" id="tripStopsBox">
-          <div class="row"><div class="small">Betöltés…</div></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- MAP VIEW -->
-    <div id="viewMap" class="hidden" style="position:relative;">
-      <div class="mapHud">
-        <select class="select" id="mapFilter">
-          <option value="">Összes járat (LIVE)</option>
-        </select>
-        <button class="iconbtn" id="mapBack" title="Vissza">←</button>
-      </div>
-      <div id="map" class="card"></div>
-      <div class="hint">A busz marker bustimes-szerű: kék téglalap + fehér járatszám + irányháromszög.</div>
+    <div id="viewMap" class="hidden">
+      <div class="card" id="map"></div>
+      <div class="hint">Ha üres a térkép: /api/debug/live megmondja mi a baj (kulcs/HTTP/XML).</div>
     </div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
-    // =========================
-    // Small helpers
-    // =========================
     const $ = (id) => document.getElementById(id);
-
-    function normLine(s){
-      s = (s||"").trim().replaceAll(" ","");
-      if(/^\d+$/.test(s)){
-        s = s.replace(/^0+/,"") || "0";
-      }
-      return s.toUpperCase();
-    }
 
     async function api(path){
       const r = await fetch(path, {cache:"no-store"});
@@ -413,60 +118,34 @@
       return await r.json();
     }
 
-    function minutesLabel(mins){
-      if(mins <= 0) return "Due";
-      if(mins === 1) return "1 min";
-      return mins + " min";
-    }
-
-    // =========================
-    // Favorites (localStorage)
-    // =========================
-    const FKEY = "bsu_favs_v1";
-    function loadFavs(){
-      try { return JSON.parse(localStorage.getItem(FKEY) || "[]"); } catch(e){ return []; }
-    }
-    function saveFavs(f){ localStorage.setItem(FKEY, JSON.stringify(f)); }
-    function isFav(id){ return loadFavs().some(x => x.id === id); }
-    function toggleFav(item){
-      const favs = loadFavs();
-      const i = favs.findIndex(x => x.id === item.id);
-      if(i >= 0) favs.splice(i,1);
-      else favs.unshift(item);
-      saveFavs(favs.slice(0,100));
-      renderFavs();
-    }
-
-    // =========================
-    // View state
-    // =========================
-    const views = ["viewSearch","viewFav","viewStop","viewRoute","viewTrip","viewMap"];
+    const views = ["viewSearch","viewFav","viewStop","viewMap"];
     function show(viewId){
       views.forEach(v => $(v).classList.toggle("hidden", v !== viewId));
-      // tabs active
       $("tabSearch").classList.toggle("active", viewId==="viewSearch");
       $("tabFav").classList.toggle("active", viewId==="viewFav");
       $("tabMap").classList.toggle("active", viewId==="viewMap");
     }
 
-    // =========================
-    // Search
-    // =========================
-    let searchTimer = null;
+    $("tabSearch").onclick = () => show("viewSearch");
+    $("tabFav").onclick = () => show("viewFav");
+    $("tabMap").onclick = () => show("viewMap");
 
-    $("clearBtn").onclick = () => { $("q").value=""; renderResultsHint(); };
+    $("clearBtn").onclick = () => { $("q").value=""; $("resultsCard").innerHTML=`<div class="row"><div class="small">Kezdj el gépelni…</div></div>`; };
+
+    let t = null;
     $("q").addEventListener("input", () => {
-      clearTimeout(searchTimer);
+      clearTimeout(t);
       const q = $("q").value.trim();
-      if(!q){ renderResultsHint(); return; }
-      searchTimer = setTimeout(() => runSearch(q), 180);
+      if(!q){
+        $("resultsCard").innerHTML=`<div class="row"><div class="small">Kezdj el gépelni…</div></div>`;
+        return;
+      }
+      t = setTimeout(() => runSearch(q), 180);
     });
 
-    function renderResultsHint(){
-      $("resultsCard").innerHTML = `<div class="row"><div class="small">Kezdj el gépelni…</div></div>`;
+    function esc(s){
+      return (s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
     }
-
-    function starSpan(on){ return `<span class="star ${on?"on":""}">★</span>`; }
 
     async function runSearch(q){
       const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
@@ -477,117 +156,53 @@
       if(stops.length){
         html += `<div class="row" style="background:rgba(255,255,255,.02)"><div class="small">Megállók</div></div>`;
         for(const s of stops){
-          const favId = `stop:${s.stop_id}`;
           html += `
-            <div class="row">
+            <div class="row" data-stop="${esc(s.stop_id)}">
               <div style="width:34px">📍</div>
               <div class="grow">
-                <div class="h2">${escapeHtml(s.stop_name || s.stop_id)}</div>
-                <div class="small mono">${escapeHtml(s.stop_id)}</div>
+                <div class="h2">${esc(s.stop_name || s.stop_id)}</div>
+                <div class="small mono">${esc(s.stop_id)}</div>
               </div>
-              <div class="iconbtn" data-star="${favId}" title="Kedvenc">${starSpan(isFav(favId))}</div>
-            </div>
-          `;
+              <div class="iconbtn">›</div>
+            </div>`;
         }
       }
 
       if(routes.length){
         html += `<div class="row" style="background:rgba(255,255,255,.02)"><div class="small">Járatok</div></div>`;
         for(const r of routes){
-          const favId = `route:${r.route_id}`;
           html += `
             <div class="row">
-              <div class="badge-route">${escapeHtml(r.route_short_name || "?")}</div>
+              <div class="badge-route">${esc(r.route_short_name || "?")}</div>
               <div class="grow">
-                <div class="h2">${escapeHtml(r.route_long_name || "Járat")}</div>
-                <div class="small">${escapeHtml(r.agency_name || "")}</div>
+                <div class="h2">${esc(r.route_long_name || "Járat")}</div>
+                <div class="small">${esc(r.agency_name || "")}</div>
               </div>
-              <div class="iconbtn" data-star="${favId}" title="Kedvenc">${starSpan(isFav(favId))}</div>
-            </div>
-          `;
+            </div>`;
         }
       }
 
-      if(!html){
-        html = `<div class="row"><div class="small">Nincs találat.</div></div>`;
-      }
-
+      if(!html) html = `<div class="row"><div class="small">Nincs találat.</div></div>`;
       $("resultsCard").innerHTML = html;
 
-      // wire click handlers
-      $("resultsCard").querySelectorAll(".row").forEach((row) => {
-        const stopIdEl = row.querySelector(".mono");
-        const badge = row.querySelector(".badge-route");
-        const starBtn = row.querySelector("[data-star]");
-
-        if(starBtn){
-          starBtn.onclick = (e) => {
-            e.stopPropagation();
-            const id = starBtn.getAttribute("data-star");
-            if(id.startsWith("stop:")){
-              const sid = id.split(":")[1];
-              const name = row.querySelector(".h2")?.textContent || sid;
-              toggleFav({id, type:"stop", stop_id:sid, name});
-            }else{
-              const rid = id.split(":")[1];
-              const shortn = badge?.textContent || "";
-              const name = row.querySelector(".h2")?.textContent || "";
-              toggleFav({id, type:"route", route_id:rid, short:shortn, name});
-            }
-          };
-        }
-
-        row.onclick = () => {
-          if(stopIdEl){
-            openStop(stopIdEl.textContent.trim());
-          }else if(badge){
-            // find route_id by matching in routes list (safe for this render)
-            const shortn = badge.textContent.trim();
-            // find first matching by short name in result set:
-            const found = routes.find(x => (x.route_short_name||"").trim() === shortn);
-            if(found) openRoute(found.route_id);
-          }
-        };
+      document.querySelectorAll("[data-stop]").forEach(el => {
+        el.onclick = () => openStop(el.getAttribute("data-stop"));
       });
     }
 
-    function escapeHtml(s){
-      return (s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
-    }
-
-    // =========================
-    // Stop view
-    // =========================
-    let stopRefresh = null;
-    let currentStop = null;
-
-    async function openStop(stop_id){
-      currentStop = stop_id;
+    async function openStop(stopId){
       show("viewStop");
+      $("stopHint").textContent = "";
       $("departuresCard").innerHTML = `<div class="row"><div class="small">Betöltés…</div></div>`;
-      const s = await api(`/api/stop/${encodeURIComponent(stop_id)}`);
-      $("stopName").textContent = s.stop_name || stop_id;
-      $("stopId").textContent = stop_id;
+      const s = await api(`/api/stop/${encodeURIComponent(stopId)}`);
+      $("stopName").textContent = s.stop_name || stopId;
+      $("stopId").textContent = stopId;
+      $("stopBack").onclick = () => show("viewSearch");
 
-      const favId = `stop:${stop_id}`;
-      $("stopStar").innerHTML = starSpan(isFav(favId));
-      $("stopStar").onclick = () => toggleFav({id:favId, type:"stop", stop_id, name:(s.stop_name||stop_id)});
+      const dep = await api(`/api/stop/${encodeURIComponent(stopId)}/departures?minutes=240&limit=60&group=1`);
+      const deps = dep.departures || [];
 
-      $("stopBack").onclick = () => { clearInterval(stopRefresh); show("viewSearch"); };
-
-      $("stopToMap").onclick = () => {
-        mapFocus = {type:"stop", stop:s};
-        openMap();
-      };
-
-      await loadDepartures(stop_id);
-      clearInterval(stopRefresh);
-      stopRefresh = setInterval(() => loadDepartures(stop_id), 20000);
-    }
-
-    async function loadDepartures(stop_id){
-      const data = await api(`/api/stop/${encodeURIComponent(stop_id)}/departures?minutes=180&limit=45`);
-      const deps = data.departures || [];
+      if(dep.hint) $("stopHint").textContent = dep.hint;
 
       if(!deps.length){
         $("departuresCard").innerHTML = `<div class="row"><div class="small">Nincs közelgő indulás.</div></div>`;
@@ -596,452 +211,40 @@
 
       let html = "";
       for(const d of deps){
-        const live = d.live;
-        const badge = escapeHtml(d.route_short_name || "?");
-        const head = escapeHtml(d.headsign || d.route_long_name || "");
-        const hhmm = d.scheduled_hhmm || "";
-        const mins = d.minutes_to ?? 0;
-
-        const liveDot = live ? ` <span class="badge-delay delay-green" title="Live jármű elérhető">LIVE</span>` : ``;
-
-        html += `
-          <div class="row" data-trip="${escapeHtml(d.trip_id)}">
-            <div style="width:76px">
-              <div class="mono" style="font-weight:900; font-size:18px">${hhmm}</div>
-              <div class="small mono">${minutesLabel(mins)}</div>
-            </div>
-            <div class="badge-route">${badge}</div>
-            <div class="grow">
-              <div class="h2">${head || "–"}</div>
-              <div class="small">Trip: <span class="mono">${escapeHtml(d.trip_id).slice(0,18)}…</span>${liveDot}</div>
-            </div>
-            <div class="iconbtn" title="Trip megnyitása">›</div>
-          </div>
-        `;
-      }
-
-      $("departuresCard").innerHTML = html;
-
-      $("departuresCard").querySelectorAll(".row[data-trip]").forEach(row => {
-        row.onclick = () => openTrip(row.getAttribute("data-trip"));
-      });
-    }
-
-    // =========================
-    // Route view
-    // =========================
-    let currentRoute = null;
-    let currentDir = 0;
-    let routeRefresh = null;
-
-    $("dirIn").onclick = () => { currentDir = 0; $("dirIn").classList.add("active"); $("dirOut").classList.remove("active"); if(currentRoute) loadRouteTrips(); };
-    $("dirOut").onclick = () => { currentDir = 1; $("dirOut").classList.add("active"); $("dirIn").classList.remove("active"); if(currentRoute) loadRouteTrips(); };
-
-    async function openRoute(route_id){
-      currentRoute = route_id;
-      show("viewRoute");
-      $("routeTripsCard").innerHTML = `<div class="row"><div class="small">Betöltés…</div></div>`;
-
-      const r = await api(`/api/route/${encodeURIComponent(route_id)}`);
-      $("routeBadge").textContent = r.route_short_name || "?";
-      $("routeTitle").textContent = r.route_long_name || "Járat";
-      $("routeSub").textContent = r.agency_name || "";
-
-      const favId = `route:${route_id}`;
-      $("routeStar").innerHTML = starSpan(isFav(favId));
-      $("routeStar").onclick = () => toggleFav({id:favId, type:"route", route_id, short:(r.route_short_name||""), name:(r.route_long_name||"")});
-
-      $("routeBack").onclick = () => { clearInterval(routeRefresh); show("viewSearch"); };
-
-      $("routeToMap").onclick = () => {
-        mapFocus = {type:"route", route:r, direction:currentDir};
-        openMap();
-      };
-
-      await loadRouteTrips();
-      clearInterval(routeRefresh);
-      routeRefresh = setInterval(loadRouteTrips, 20000);
-    }
-
-    async function loadRouteTrips(){
-      if(!currentRoute) return;
-      const data = await api(`/api/route/${encodeURIComponent(currentRoute)}/trips?direction_id=${currentDir}&minutes=480&limit=35`);
-      const trips = data.trips || [];
-      if(!trips.length){
-        $("routeTripsCard").innerHTML = `<div class="row"><div class="small">Nincs közelgő indulás.</div></div>`;
-        return;
-      }
-      let html = "";
-      for(const t of trips){
-        const live = t.live;
-        const mins = t.minutes_to ?? 0;
-        const dot = live ? `<span class="badge-delay delay-green">LIVE</span>` : `<span class="badge-delay">GTFS</span>`;
-        html += `
-          <div class="row" data-trip="${escapeHtml(t.trip_id)}">
-            <div style="width:76px">
-              <div class="mono" style="font-weight:900; font-size:18px">${escapeHtml(t.start_hhmm)}</div>
-              <div class="small mono">${minutesLabel(mins)}</div>
-            </div>
-            <div class="grow">
-              <div class="h2">${escapeHtml(t.headsign || t.dest_stop_name || "")}</div>
-              <div class="small">${escapeHtml(t.origin_stop_name || "")} → ${escapeHtml(t.dest_stop_name || "")}</div>
-            </div>
-            ${dot}
-            <div class="iconbtn" title="Trip">›</div>
-          </div>
-        `;
-      }
-      $("routeTripsCard").innerHTML = html;
-      $("routeTripsCard").querySelectorAll(".row[data-trip]").forEach(row => {
-        row.onclick = () => openTrip(row.getAttribute("data-trip"));
-      });
-    }
-
-    // =========================
-    // Trip view
-    // =========================
-    let currentTrip = null;
-    let tripRefresh = null;
-
-    async function openTrip(trip_id){
-      currentTrip = trip_id;
-      show("viewTrip");
-      $("tripStopsBox").innerHTML = `<div class="row"><div class="small">Betöltés…</div></div>`;
-      $("tripLiveRow").innerHTML = `<div class="small">Live: …</div>`;
-
-      $("tripBack").onclick = () => { clearInterval(tripRefresh); show("viewSearch"); };
-
-      const data = await api(`/api/trip/${encodeURIComponent(trip_id)}`);
-      $("tripBadge").textContent = data.route_short_name || "?";
-      $("tripTitle").textContent = data.headsign || data.route_long_name || "Trip";
-      $("tripSub").textContent = `Trip: ${trip_id}`;
-
-      const favId = `trip:${trip_id}`;
-      $("tripFav").innerHTML = starSpan(isFav(favId));
-      $("tripFav").onclick = () => toggleFav({id:favId, type:"trip", trip_id, short:data.route_short_name||"", name:data.headsign||""});
-
-      $("tripToMap").onclick = () => {
-        mapFocus = {type:"trip", trip:data};
-        openMap();
-      };
-
-      renderTripStops(data);
-      renderTripLive(data);
-
-      clearInterval(tripRefresh);
-      tripRefresh = setInterval(async () => {
-        const fresh = await api(`/api/trip/${encodeURIComponent(trip_id)}`);
-        renderTripLive(fresh);
-      }, 12000);
-    }
-
-    function renderTripStops(data){
-      const stops = data.stops || [];
-      let html = "";
-      for(const s of stops){
-        const arr = s.arrival_s;
-        const dep = s.departure_s;
-        const tsec = (dep != null) ? dep : arr;
-        const hhmm = tsec != null ? secToHHMM(tsec) : "";
         html += `
           <div class="row">
             <div style="width:76px">
-              <div class="mono" style="font-weight:900; font-size:18px">${hhmm}</div>
-              <div class="small mono">${escapeHtml(String(s.stop_sequence))}</div>
+              <div class="mono" style="font-weight:900; font-size:18px">${esc(d.scheduled_hhmm)}</div>
+              <div class="small mono">${esc(String(d.minutes_to))} min</div>
             </div>
+            <div class="badge-route">${esc(d.route_short_name || "?")}</div>
             <div class="grow">
-              <div class="h2">${escapeHtml(s.stop_name || s.stop_id)}</div>
-              <div class="small mono">${escapeHtml(s.stop_id)}</div>
+              <div class="h2">${esc(d.headsign || d.route_long_name || "")}</div>
+              <div class="small mono">platform: ${esc(d.served_stop_id || "")} ${d.live ? " · LIVE" : ""}</div>
             </div>
-            <div class="iconbtn" title="Megálló megnyitása">📍</div>
           </div>
         `;
       }
-      $("tripStopsBox").innerHTML = html;
-      $("tripStopsBox").querySelectorAll(".row").forEach((row, idx) => {
-        row.onclick = () => openStop(stops[idx].stop_id);
-      });
+      $("departuresCard").innerHTML = html;
     }
 
-    function renderTripLive(data){
-      const live = data.live;
-      if(!live){
-        $("tripLiveRow").innerHTML = `<div class="small">Live: nincs hozzárendelt jármű ehhez a triphez (csak GTFS menetrend).</div>`;
-        return;
-      }
-      const line = live.publishedLineName || live.lineRef || "";
-      const dest = live.destinationName || "";
-      const vref = live.vehicleRef || "";
-      $("tripLiveRow").innerHTML = `
-        <div class="grow">
-          <div class="h2">LIVE – ${escapeHtml(line)} → ${escapeHtml(dest)}</div>
-          <div class="small mono">VehicleRef: ${escapeHtml(vref)} · ${escapeHtml(live.latitude)} , ${escapeHtml(live.longitude)} · bearing ${escapeHtml(String(live.bearing||0))}°</div>
-        </div>
-        <div class="badge-delay delay-green">LIVE</div>
-      `;
-    }
-
-    function secToHHMM(sec){
-      const s = Math.max(0, sec|0);
-      const hh = Math.floor(s/3600);
-      const mm = Math.floor((s%3600)/60);
-      return String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");
-    }
-
-    // =========================
-    // Favorites view
-    // =========================
-    function renderFavs(){
-      const favs = loadFavs();
-      if(!favs.length){
-        $("favCard").innerHTML = `<div class="row"><div class="small">Nincs még kedvenced.</div></div>`;
-        return;
-      }
-      let html = "";
-      for(const f of favs){
-        if(f.type === "stop"){
-          html += `
-            <div class="row" data-open="stop:${escapeHtml(f.stop_id)}">
-              <div style="width:34px">📍</div>
-              <div class="grow">
-                <div class="h2">${escapeHtml(f.name || f.stop_id)}</div>
-                <div class="small mono">${escapeHtml(f.stop_id)}</div>
-              </div>
-              <div class="iconbtn" data-remove="${escapeHtml(f.id)}" title="Törlés">🗑️</div>
-            </div>
-          `;
-        }else if(f.type === "route"){
-          html += `
-            <div class="row" data-open="route:${escapeHtml(f.route_id)}">
-              <div class="badge-route">${escapeHtml(f.short || "?")}</div>
-              <div class="grow">
-                <div class="h2">${escapeHtml(f.name || "Járat")}</div>
-                <div class="small">Kedvenc járat</div>
-              </div>
-              <div class="iconbtn" data-remove="${escapeHtml(f.id)}" title="Törlés">🗑️</div>
-            </div>
-          `;
-        }else if(f.type === "trip"){
-          html += `
-            <div class="row" data-open="trip:${escapeHtml(f.trip_id)}">
-              <div class="badge-route">${escapeHtml(f.short || "?")}</div>
-              <div class="grow">
-                <div class="h2">${escapeHtml(f.name || "Trip")}</div>
-                <div class="small mono">${escapeHtml(f.trip_id)}</div>
-              </div>
-              <div class="iconbtn" data-remove="${escapeHtml(f.id)}" title="Törlés">🗑️</div>
-            </div>
-          `;
-        }
-      }
-      $("favCard").innerHTML = html;
-
-      $("favCard").querySelectorAll("[data-remove]").forEach(btn => {
-        btn.onclick = (e) => {
-          e.stopPropagation();
-          const id = btn.getAttribute("data-remove");
-          toggleFav({id});
-        };
-      });
-
-      $("favCard").querySelectorAll(".row[data-open]").forEach(row => {
-        row.onclick = async () => {
-          const v = row.getAttribute("data-open");
-          const [type, id] = v.split(":");
-          if(type==="stop") openStop(id);
-          if(type==="route") openRoute(id);
-          if(type==="trip") openTrip(id);
-        };
-      });
-    }
-
-    // =========================
-    // Map view (Leaflet)
-    // =========================
-    let map = null;
-    let markers = new Map(); // vehicleRef -> marker
-    let routeLine = null;
-    let mapFocus = null;
-    let mapTimer = null;
-
-    function makeBusIcon(lineText, bearing){
-      const b = (bearing || 0) % 360;
-      const html = `
-        <div class="busMarker">
-          <div>${escapeHtml(lineText || "?")}</div>
-          <div class="tri" style="transform: translateX(-50%) rotate(${b}deg);"></div>
-          <div class="triInner" style="transform: translateX(-50%) rotate(${b}deg);"></div>
-        </div>
-      `;
-      return L.divIcon({className:"", html, iconSize:[44, 44], iconAnchor:[22, 36]});
-    }
-
-    function initMap(){
-      if(map) return;
-      map = L.map("map", {zoomControl:true});
-      // Dark tiles (CartoDB Dark Matter)
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-        attribution: '&copy; OpenStreetMap & Carto',
-        maxZoom: 20
-      }).addTo(map);
-
-      // Southampton-ish default
-      map.setView([50.91, -1.40], 12);
-    }
-
-    async function openMap(){
-      show("viewMap");
-      initMap();
-      await fillMapFilter();
-      await refreshMap();
-      clearInterval(mapTimer);
-      mapTimer = setInterval(refreshMap, 10000);
-
-      $("mapBack").onclick = () => {
-        clearInterval(mapTimer);
-        // return to most relevant view
-        if(currentTrip) show("viewTrip");
-        else if(currentRoute) show("viewRoute");
-        else if(currentStop) show("viewStop");
-        else show("viewSearch");
-      };
-    }
-
-    async function fillMapFilter(){
-      // Build filter options from current live vehicles (quick)
-      try{
-        const data = await api("/api/live/vehicles");
-        const vs = data.vehicles || [];
-        const lines = Array.from(new Set(vs.map(v => normLine(v.publishedLineName || v.lineRef || "")))).filter(Boolean).sort();
-        const sel = $("mapFilter");
-        const current = sel.value;
-        sel.innerHTML = `<option value="">Összes járat (LIVE)</option>` + lines.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join("");
-        sel.value = current;
-      }catch(e){
-        // ignore
-      }
-    }
-
-    $("mapFilter").onchange = () => refreshMap();
-
-    async function refreshMap(){
-      initMap();
-
-      const filter = $("mapFilter").value || "";
-      const url = filter ? `/api/live/vehicles?line=${encodeURIComponent(filter)}` : "/api/live/vehicles";
-      const data = await api(url);
-      const vs = data.vehicles || [];
-
-      // update markers
-      const seen = new Set();
-
-      for(const v of vs){
-        const lat = v.latitude, lon = v.longitude;
-        if(lat == null || lon == null) continue;
-        const vref = v.vehicleRef || (v.itemIdentifier || "") || Math.random().toString(16);
-        seen.add(vref);
-
-        const line = v.publishedLineName || v.lineRef || "?";
-        const icon = makeBusIcon(line, v.bearing || 0);
-
-        if(!markers.has(vref)){
-          const m = L.marker([lat, lon], {icon}).addTo(map);
-          m.on("click", () => {
-            const tripId = v.tripId || "";
-            const html = `
-              <div style="min-width:200px">
-                <div style="font-weight:900; margin-bottom:4px">${escapeHtml(line)} ${escapeHtml(v.directionRef || "")}</div>
-                <div style="color:#cfe6ff; font-weight:800">${escapeHtml(v.originName || "")} → ${escapeHtml(v.destinationName || "")}</div>
-                <div style="font-size:12px; opacity:.9; margin-top:6px">
-                  VehicleRef: <span style="font-family:monospace">${escapeHtml(v.vehicleRef || "")}</span><br/>
-                  TripId: <span style="font-family:monospace">${escapeHtml(tripId || "—")}</span>
-                </div>
-                ${tripId ? `<div style="margin-top:10px"><span class="link" onclick="window.__openTripFromPopup('${encodeURIComponent(tripId)}')">Trip megnyitása</span></div>` : ""}
-              </div>
-            `;
-            m.bindPopup(html).openPopup();
-          });
-          markers.set(vref, m);
-        }else{
-          const m = markers.get(vref);
-          m.setLatLng([lat, lon]);
-          m.setIcon(icon);
-        }
-      }
-
-      // remove old
-      for(const [k, m] of markers.entries()){
-        if(!seen.has(k)){
-          map.removeLayer(m);
-          markers.delete(k);
-        }
-      }
-
-      // focus overlays (trip/stop/route)
-      await applyMapFocus();
-    }
-
-    window.__openTripFromPopup = async (encodedTripId) => {
-      const tripId = decodeURIComponent(encodedTripId);
-      clearInterval(mapTimer);
-      await openTrip(tripId);
-    };
-
-    async function applyMapFocus(){
-      if(routeLine){
-        map.removeLayer(routeLine);
-        routeLine = null;
-      }
-
-      if(!mapFocus) return;
-
-      if(mapFocus.type === "stop"){
-        const s = mapFocus.stop;
-        if(s.stop_lat != null && s.stop_lon != null){
-          map.setView([s.stop_lat, s.stop_lon], 16);
-        }
-      }
-
-      if(mapFocus.type === "trip"){
-        const trip = mapFocus.trip;
-        const shapeId = trip.shape_id;
-        if(shapeId){
-          try{
-            const sh = await api(`/api/shape/${encodeURIComponent(shapeId)}`);
-            const pts = (sh.points || []).map(p => [p.lat, p.lon]);
-            if(pts.length){
-              routeLine = L.polyline(pts, {weight:5, opacity:0.9}).addTo(map);
-              map.fitBounds(routeLine.getBounds(), {padding:[20,20]});
-            }
-          }catch(e){}
-        }
-      }
-    }
-
-    // =========================
-    // Tabs wiring
-    // =========================
-    $("tabSearch").onclick = () => { currentTrip=null; currentRoute=null; currentStop=null; mapFocus=null; show("viewSearch"); };
-    $("tabFav").onclick = () => { renderFavs(); show("viewFav"); };
-    $("tabMap").onclick = () => { openMap(); };
-
-    // =========================
-    // Live pill
-    // =========================
     async function refreshPill(){
       try{
         const h = await api("/api/health");
-        $("livePill").textContent = `LIVE: ${h.liveConfigured ? "ON" : "OFF"} · GTFS: ${h.gtfsLoaded ? "OK" : "NO"}`;
+        if(!h.liveKeyPresent){
+          $("livePill").textContent = "LIVE: OFF (nincs BODS_API_KEY) · GTFS: " + (h.gtfsLoaded ? "OK" : "NO");
+        }else if(h.liveLastError){
+          $("livePill").textContent = `LIVE: ERROR (${h.liveLastHttpStatus||"?"}) · ${h.liveLastError} · GTFS: ${h.gtfsLoaded?"OK":"NO"}`;
+        }else{
+          $("livePill").textContent = `LIVE: ON (${h.liveVehicleCount}) · GTFS: ${h.gtfsLoaded?"OK":"NO"}`;
+        }
       }catch(e){
         $("livePill").textContent = "LIVE: ? · GTFS: ?";
       }
     }
 
-    // init
-    renderResultsHint();
-    renderFavs();
     refreshPill();
-    setInterval(refreshPill, 30000);
+    setInterval(refreshPill, 15000);
   </script>
 </body>
 </html>
