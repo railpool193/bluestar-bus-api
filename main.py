@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 import logging
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional, Any
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlunparse
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
@@ -33,23 +33,23 @@ TZ = ZoneInfo(APP_TZ)
 
 BODS_FEED_ID = os.getenv("BODS_FEED_ID", "7721").strip()
 
-# Accept multiple env names (people often set different ones on Railway)
-BODS_API_KEY = (
+# Accept multiple env names
+RAW_BODS_API_KEY = (
     os.getenv("BODS_API_KEY", "").strip()
     or os.getenv("BODS_KEY", "").strip()
     or os.getenv("API_KEY", "").strip()
     or os.getenv("BODS_APIKEY", "").strip()
 )
 
-BODS_FEED_URL = os.getenv(
+RAW_BODS_FEED_URL = os.getenv(
     "BODS_FEED_URL",
     f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/{BODS_FEED_ID}/",
 ).strip()
 
-LIVE_REFRESH_SECONDS = int(os.getenv("LIVE_REFRESH_SECONDS", "10"))  # cache TTL
+LIVE_REFRESH_SECONDS = int(os.getenv("LIVE_REFRESH_SECONDS", "10"))
 LIVE_HTTP_TIMEOUT = float(os.getenv("LIVE_HTTP_TIMEOUT", "15"))
 
-# IMPORTANT FIX:
+# IMPORTANT:
 # default: NO filtering (keep all agencies). If you want filter, set env:
 #   AGENCY_NAME_ALLOW="bluestar,unilink"
 AGENCY_NAME_ALLOW = os.getenv("AGENCY_NAME_ALLOW", "").strip()
@@ -64,10 +64,6 @@ def now_tz() -> dt.datetime:
 
 
 def parse_gtfs_time_to_seconds(s: str) -> Optional[int]:
-    """
-    GTFS time can be HH:MM:SS and HH may exceed 24.
-    Returns seconds since service-day midnight.
-    """
     if not s:
         return None
     s = s.strip()
@@ -117,6 +113,60 @@ def safe_int(x: Any) -> Optional[int]:
         return None
 
 
+def _extract_key_from_url(url: str) -> str:
+    try:
+        q = parse_qs(urlparse(url).query)
+        k = (q.get("api_key") or [""])[0].strip()
+        return k
+    except Exception:
+        return ""
+
+
+def _strip_query(url: str) -> str:
+    """Remove query + fragment from URL."""
+    try:
+        p = urlparse(url)
+        return urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
+    except Exception:
+        return url.split("?")[0].split("#")[0]
+
+
+def _looks_like_url(s: str) -> bool:
+    s = (s or "").strip().lower()
+    return s.startswith("http://") or s.startswith("https://")
+
+
+def _extract_key_any(value: str) -> str:
+    """
+    Accepts:
+      - raw key string
+      - full URL that contains ?api_key=...
+    Returns key or "".
+    """
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if _looks_like_url(value):
+        k = _extract_key_from_url(value)
+        return k.strip() if k else ""
+    # Some people paste "api_key=XXXX" only
+    if "api_key=" in value.lower():
+        # try to parse as if it's a URL query
+        fake = "https://x/?" + value.split("?", 1)[-1]
+        k = _extract_key_from_url(fake)
+        return k.strip() if k else ""
+    return value
+
+
+def _mask_key(k: str) -> str:
+    k = (k or "").strip()
+    if not k:
+        return ""
+    if len(k) <= 8:
+        return "***"
+    return f"{k[:4]}…{k[-4:]}"
+
+
 # =========================
 # GTFS store
 # =========================
@@ -136,15 +186,14 @@ class GTFSStore:
         self.routes: Dict[str, Dict[str, Any]] = {}
         self.trips: Dict[str, Dict[str, Any]] = {}
         self.calendar: Dict[str, Dict[str, Any]] = {}
-        self.calendar_dates: Dict[str, Dict[str, int]] = {}  # service_id -> yyyymmdd -> exception_type
+        self.calendar_dates: Dict[str, Dict[str, int]] = {}
         self.trip_stop_times: Dict[str, List[StopTimeRow]] = {}
-        self.stop_departures_index: Dict[str, List[Tuple[str, int, int]]] = {}  # stop_id -> (trip_id, dep_s, seq)
+        self.stop_departures_index: Dict[str, List[Tuple[str, int, int]]] = {}
         self.trip_meta: Dict[str, Dict[str, Any]] = {}
         self.route_short_to_ids: Dict[str, List[str]] = {}
         self.shapes: Dict[str, List[Tuple[float, float, int]]] = {}
         self.trip_key_index: Dict[Tuple[str, int, str, str], List[Tuple[str, int, int]]] = {}
 
-        # NEW: stop grouping (parent_station / children)
         self.parent_to_children: Dict[str, List[str]] = {}
 
     def _open_reader(self, base: str, filename: str):
@@ -241,7 +290,7 @@ class GTFSStore:
                 continue
             self.route_short_to_ids.setdefault(k, []).append(rid)
 
-        # stops.txt (NEW: parent_station / location_type)
+        # stops.txt
         h = self._open_reader(base, "stops.txt")
         if not h:
             raise RuntimeError("stops.txt missing from GTFS.")
@@ -355,22 +404,7 @@ class GTFSStore:
         for sid, lst in self.stop_departures_index.items():
             lst.sort(key=lambda x: x[1])
 
-        # shapes.txt (optional)
-        h = self._open_reader(base, "shapes.txt")
-        if h:
-            handle, reader = h
-            for r in reader:
-                shape_id = (r.get("shape_id") or "").strip()
-                lat = safe_float(r.get("shape_pt_lat"))
-                lon = safe_float(r.get("shape_pt_lon"))
-                seq = safe_int(r.get("shape_pt_sequence")) or 0
-                if shape_id and lat is not None and lon is not None:
-                    self.shapes.setdefault(shape_id, []).append((lat, lon, seq))
-            self._close_reader(handle)
-            for sh, pts in self.shapes.items():
-                pts.sort(key=lambda x: x[2])
-
-        # live mapping index (line + direction + originRef + destRef)
+        # live mapping index
         for tid, t in self.trips.items():
             rid = t["route_id"]
             rshort = self.routes[rid].get("route_short_norm") or ""
@@ -414,7 +448,6 @@ class GTFSStore:
 
         cal = self.calendar.get(service_id)
         if not cal:
-            # no calendar.txt -> assume active
             return True
 
         start = cal.get("start_date")
@@ -428,7 +461,6 @@ class GTFSStore:
         return (cal.get(weekday) or "0").strip() == "1"
 
     def calendar_range(self) -> Dict[str, str]:
-        # returns min start_date and max end_date from calendar.txt (if exists)
         starts = []
         ends = []
         for s in self.calendar.values():
@@ -446,10 +478,8 @@ class GTFSStore:
         parent = (s.get("parent_station") or "").strip()
         loc_type = int(s.get("location_type") or 0)
 
-        # If it is a child -> group by same parent
         if parent:
             return sorted(self.parent_to_children.get(parent, [stop_id]))
-        # If it is a parent/station -> include children
         if loc_type == 1 and stop_id in self.parent_to_children:
             return sorted(self.parent_to_children.get(stop_id, [stop_id]))
         return [stop_id]
@@ -471,6 +501,8 @@ _live_cache: Dict[str, Any] = {
     "last_error": "",
     "last_http_status": None,
     "last_fetch_time": "",
+    "effective_url": "",
+    "key_preview": "",
 }
 
 
@@ -511,15 +543,6 @@ def _direction_to_id(direction_ref: str) -> int:
     if d.isdigit():
         return int(d)
     return 0
-
-
-def _extract_key_from_url(url: str) -> str:
-    try:
-        q = parse_qs(urlparse(url).query)
-        k = (q.get("api_key") or [""])[0].strip()
-        return k
-    except Exception:
-        return ""
 
 
 def _best_trip_match_for_vehicle(v: Dict[str, Any]) -> Optional[str]:
@@ -569,30 +592,41 @@ def _best_trip_match_for_vehicle(v: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def fetch_live_siri_vm() -> Tuple[List[Dict[str, Any]], Optional[int], str]:
+def fetch_live_siri_vm() -> Tuple[List[Dict[str, Any]], Optional[int], str, str, str]:
     """
-    returns: (vehicles, http_status, error_message)
+    returns: (vehicles, http_status, error_message, effective_url, key_preview)
     """
-    key = BODS_API_KEY or _extract_key_from_url(BODS_FEED_URL)
+    # FIX: key can be pasted as URL by mistake -> we extract it.
+    key = _extract_key_any(RAW_BODS_API_KEY) or _extract_key_any(RAW_BODS_FEED_URL)
     if not key:
-        return [], None, "Missing BODS API key. Set env BODS_API_KEY (or include api_key in BODS_FEED_URL)."
+        return [], None, "Missing BODS API key. Set env BODS_API_KEY (key only).", _strip_query(RAW_BODS_FEED_URL), ""
+
+    url = _strip_query(RAW_BODS_FEED_URL)
+    key_preview = _mask_key(key)
 
     params = {"api_key": key}
-    url = BODS_FEED_URL
+    headers = {
+        "User-Agent": "BluestarUnilinkApp/1.0 (+Railway)"
+    }
 
     try:
-        with httpx.Client(timeout=LIVE_HTTP_TIMEOUT, follow_redirects=True) as client:
+        with httpx.Client(timeout=LIVE_HTTP_TIMEOUT, follow_redirects=True, headers=headers) as client:
             r = client.get(url, params=params)
             status = r.status_code
-            r.raise_for_status()
+            if status >= 400:
+                snippet = (r.text or "")[:300]
+                return [], status, f"HTTP {status} from BODS. Response snippet: {snippet}", url, key_preview
             xml = r.text
     except Exception as e:
-        return [], getattr(e, "response", None).status_code if hasattr(e, "response") and e.response else None, f"HTTP error: {e}"
+        st = None
+        if hasattr(e, "response") and e.response is not None:
+            st = e.response.status_code
+        return [], st, f"HTTP error: {e}", url, key_preview
 
     try:
         root = ET.fromstring(xml)
     except Exception as e:
-        return [], status, f"XML parse error: {e}"
+        return [], status, f"XML parse error: {e}", url, key_preview
 
     vehicles: List[Dict[str, Any]] = []
 
@@ -658,7 +692,6 @@ def fetch_live_siri_vm() -> Tuple[List[Dict[str, Any]], Optional[int], str]:
             **ext_info,
         }
 
-        # internal dt for matching
         v["originAimedDepartureDT"] = o_aimed
         v["destinationAimedArrivalDT"] = d_aimed
         trip_id = _best_trip_match_for_vehicle(v)
@@ -666,11 +699,10 @@ def fetch_live_siri_vm() -> Tuple[List[Dict[str, Any]], Optional[int], str]:
         v.pop("originAimedDepartureDT", None)
         v.pop("destinationAimedArrivalDT", None)
 
-        # keep only if coords exist
         if v.get("latitude") is not None and v.get("longitude") is not None:
             vehicles.append(v)
 
-    return vehicles, status, ""
+    return vehicles, status, "", url, key_preview
 
 
 def get_live_cached() -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
@@ -683,8 +715,10 @@ def get_live_cached() -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     trip_map: Dict[str, Dict[str, Any]] = {}
     last_error = ""
     http_status = None
+    eff_url = ""
+    key_preview = ""
 
-    vehicles, http_status, last_error = fetch_live_siri_vm()
+    vehicles, http_status, last_error, eff_url, key_preview = fetch_live_siri_vm()
     for v in vehicles:
         tid = (v.get("tripId") or "").strip()
         if tid:
@@ -697,6 +731,8 @@ def get_live_cached() -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
         _live_cache["last_error"] = last_error
         _live_cache["last_http_status"] = http_status
         _live_cache["last_fetch_time"] = now_tz().isoformat()
+        _live_cache["effective_url"] = eff_url
+        _live_cache["key_preview"] = key_preview
 
     if last_error:
         log.warning("LIVE fetch issue: %s (status=%s)", last_error, http_status)
@@ -735,13 +771,12 @@ def home():
 
 
 # =========================
-# Diagnostics endpoints
+# Diagnostics
 # =========================
 @app.get("/api/health")
 def health():
-    # refresh cache lightly (won't spam because ttl)
     vehicles, _ = get_live_cached()
-    key_present = bool(BODS_API_KEY or _extract_key_from_url(BODS_FEED_URL))
+    key_present = bool(_extract_key_any(RAW_BODS_API_KEY) or _extract_key_any(RAW_BODS_FEED_URL))
     return {
         "ok": True,
         "gtfsLoaded": GTFS.loaded,
@@ -767,8 +802,9 @@ def health():
 def debug_live():
     vehicles, _ = get_live_cached()
     return {
-        "feedUrl": BODS_FEED_URL,
-        "keyPresent": bool(BODS_API_KEY or _extract_key_from_url(BODS_FEED_URL)),
+        "effectiveFeedUrl": _live_cache.get("effective_url", _strip_query(RAW_BODS_FEED_URL)),
+        "keyPreview": _live_cache.get("key_preview", ""),
+        "keyPresent": bool(_extract_key_any(RAW_BODS_API_KEY) or _extract_key_any(RAW_BODS_FEED_URL)),
         "vehicleCount": len(vehicles),
         "lastError": _live_cache.get("last_error", ""),
         "lastHttpStatus": _live_cache.get("last_http_status"),
@@ -794,7 +830,7 @@ def debug_gtfs():
 
 
 # =========================
-# API endpoints
+# API
 # =========================
 @app.get("/api/search")
 def search(q: str = Query("", min_length=0, max_length=80)):
@@ -842,7 +878,6 @@ def stop_info(stop_id: str):
 
 
 def _service_dates_to_consider(now: dt.datetime) -> List[dt.date]:
-    # After midnight, GTFS may use 24:xx+ times from previous service day
     if now.hour < 5:
         return [now.date() - dt.timedelta(days=1), now.date()]
     return [now.date()]
@@ -853,8 +888,8 @@ def stop_departures(
     stop_id: str,
     minutes: int = Query(180, ge=10, le=720),
     limit: int = Query(60, ge=5, le=200),
-    group: int = Query(1, ge=0, le=1),  # NEW: default ON -> tries platform group
-    date: str = Query("", max_length=10),  # optional: YYYY-MM-DD
+    group: int = Query(1, ge=0, le=1),
+    date: str = Query("", max_length=10),
 ):
     s = GTFS.stops.get(stop_id)
     if not s:
@@ -862,13 +897,11 @@ def stop_departures(
 
     now = now_tz()
 
-    # allow manual date test
     if date:
         try:
             base_date = dt.date.fromisoformat(date)
             service_dates = [base_date]
-            now_for_window = dt.datetime(base_date.year, base_date.month, base_date.day, 0, 0, 0, tzinfo=TZ)
-            now = now_for_window  # for "minutes_to" from midnight test
+            now = dt.datetime(base_date.year, base_date.month, base_date.day, 0, 0, 0, tzinfo=TZ)
         except Exception:
             raise HTTPException(400, "Invalid date, use YYYY-MM-DD")
     else:
@@ -877,7 +910,6 @@ def stop_departures(
     end = now + dt.timedelta(minutes=minutes)
     _, live_trip_map = get_live_cached()
 
-    # NEW: platform grouping
     stop_ids = [stop_id]
     if group == 1:
         stop_ids = GTFS.stop_group_ids(stop_id)
@@ -919,7 +951,7 @@ def stop_departures(
                         "scheduled_departure": dep_dt.isoformat(),
                         "scheduled_hhmm": dep_dt.strftime("%H:%M"),
                         "minutes_to": int((dep_dt - now).total_seconds() // 60),
-                        "served_stop_id": sid,  # which platform actually matched
+                        "served_stop_id": sid,
                         "live": live or None,
                     }
                 )
@@ -932,14 +964,13 @@ def stop_departures(
 
     results.sort(key=lambda x: x["scheduled_departure"])
 
-    # add helpful hint if empty
     hint = ""
     if not results:
         cr = GTFS.calendar_range()
         if cr.get("calendar_end_max"):
-            hint = f"No departures found. Check GTFS calendar range (end_max={cr.get('calendar_end_max')}). If it's old, update gtfs.zip."
+            hint = f"No departures found. Check GTFS calendar range (end_max={cr.get('calendar_end_max')})."
         else:
-            hint = "No departures found. GTFS may have no calendar.txt or no trips for this stop/time."
+            hint = "No departures found."
 
     return {
         "stop": s,
@@ -953,7 +984,6 @@ def stop_departures(
 def live_vehicles(line: str = Query("", max_length=20)):
     vehicles, _ = get_live_cached()
     if not vehicles:
-        # now we return the actual reason too
         return {
             "vehicles": [],
             "note": _live_cache.get("last_error") or "No live data.",
