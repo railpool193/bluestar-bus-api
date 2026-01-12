@@ -2,571 +2,1003 @@
 <html lang="hu">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bluestar & Unilink – Menetrend / Live</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>Bluestar & Unilink</title>
 
-  <link rel="preconnect" href="https://unpkg.com" />
+  <link rel="preconnect" href="https://unpkg.com">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
   <style>
     :root{
-      --bg:#0b0f14;
-      --card:#111824;
-      --card2:#0f1620;
-      --text:#e9eef6;
-      --muted:#9fb0c7;
-      --accent:#6aa7ff;
-      --danger:#ff6a6a;
-      --ok:#65d48b;
-      --border: rgba(255,255,255,.08);
+      --bg:#0b1220;
+      --panel:#101a2d;
+      --panel2:#0f1a2a;
+      --border:rgba(255,255,255,.08);
+      --text:rgba(255,255,255,.92);
+      --muted:rgba(255,255,255,.65);
+      --muted2:rgba(255,255,255,.45);
+      --accent:#5aa7ff;
+      --danger:#ff5a7a;
+      --ok:#55d38a;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --radius:18px;
+      --radius2:24px;
+      --font: system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Helvetica Neue", sans-serif;
     }
-    *{box-sizing:border-box}
+
+    *{ box-sizing:border-box; }
     body{
       margin:0;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
+      font-family:var(--font);
+      background: radial-gradient(1200px 600px at 20% -20%, rgba(90,167,255,.14), transparent 50%),
+                  radial-gradient(900px 500px at 110% 10%, rgba(85,211,138,.10), transparent 50%),
+                  var(--bg);
+      color:var(--text);
     }
-    .app{
-      max-width: 860px;
+
+    .wrap{
+      max-width: 940px;
       margin: 0 auto;
-      padding: 12px;
-      min-height: 100vh;
-      display:flex;
-      flex-direction: column;
-      gap: 10px;
+      padding: 16px 14px 24px;
     }
+
     .topbar{
       display:flex;
       align-items:center;
-      justify-content: space-between;
-      gap:10px;
-      padding: 12px 12px;
-      border: 1px solid var(--border);
+      justify-content:space-between;
+      gap:12px;
+      padding: 12px 14px;
       background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
-      border-radius: 16px;
+      border:1px solid var(--border);
+      border-radius: var(--radius2);
+      box-shadow: var(--shadow);
     }
-    .title{
-      font-weight: 800;
+
+    .brand{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+      min-width: 0;
+    }
+    .brand .title{
+      font-weight: 750;
       letter-spacing:.2px;
       font-size: 16px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
     }
-    .pill{
+    .brand .sub{
+      color:var(--muted);
       font-size: 12px;
-      color: var(--muted);
-      border:1px solid var(--border);
-      padding: 6px 10px;
-      border-radius: 999px;
-      white-space: nowrap;
     }
+
+    .pill{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 10px;
+      border:1px solid var(--border);
+      border-radius:999px;
+      background: rgba(0,0,0,.12);
+      color:var(--muted);
+      font-size:12px;
+      white-space:nowrap;
+    }
+    .dot{
+      width:8px; height:8px;
+      border-radius:999px;
+      background: var(--muted2);
+    }
+    .dot.ok{ background: var(--ok); }
+    .dot.bad{ background: var(--danger); }
+
     .tabs{
       display:flex;
-      gap: 8px;
-      padding: 6px;
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,.03);
-      border-radius: 16px;
+      gap:10px;
+      margin-top: 12px;
+      padding: 8px;
+      border:1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(0,0,0,.12);
     }
     .tab{
       flex:1;
-      text-align:center;
-      padding: 10px 8px;
-      border-radius: 12px;
-      border: 1px solid transparent;
+      border:1px solid transparent;
+      background: transparent;
       color: var(--muted);
-      user-select:none;
-      cursor:pointer;
+      padding: 10px 12px;
+      border-radius: 999px;
       font-weight: 700;
+      letter-spacing:.25px;
     }
     .tab.active{
-      background: rgba(106,167,255,.14);
-      border-color: rgba(106,167,255,.35);
+      background: rgba(90,167,255,.14);
+      border-color: rgba(90,167,255,.25);
       color: var(--text);
     }
-    .card{
-      border: 1px solid var(--border);
-      background: rgba(17,24,36,.96); /* ne legyen “túl átlátszó” */
-      border-radius: 16px;
+
+    .panel{
+      margin-top: 12px;
+      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+      border:1px solid var(--border);
+      border-radius: var(--radius2);
+      box-shadow: var(--shadow);
       overflow:hidden;
     }
-    .cardHeader{
-      padding: 12px 12px 10px;
-      border-bottom: 1px solid var(--border);
+    .panel .hdr{
       display:flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding: 14px 14px 12px;
+      border-bottom: 1px solid var(--border);
     }
-    .cardHeader h2{
+    .panel .hdr h2{
       margin:0;
-      font-size: 16px;
-      letter-spacing:.2px;
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing:.15px;
     }
+
     .btn{
       border:1px solid var(--border);
-      background: rgba(255,255,255,.05);
+      background: rgba(0,0,0,.18);
       color: var(--text);
       padding: 10px 12px;
-      border-radius: 12px;
-      cursor:pointer;
+      border-radius: 14px;
       font-weight: 700;
+      cursor:pointer;
+      transition: transform .06s ease;
     }
-    .btn:active{transform: translateY(1px)}
-    .row{display:flex; gap:10px; padding:12px}
-    .col{flex:1; min-width:0}
-    input{
+    .btn:active{ transform: scale(.98); }
+    .btn.primary{
+      background: rgba(90,167,255,.15);
+      border-color: rgba(90,167,255,.25);
+    }
+
+    .content{ padding: 14px; }
+    .row{ display:flex; gap:12px; align-items:center; }
+    .row.wrap{ flex-wrap:wrap; }
+    .field{
+      position:relative;
+      flex:1;
+      min-width: 240px;
+    }
+    .input{
       width:100%;
       padding: 12px 12px;
-      border-radius: 12px;
-      border:1px solid var(--border);
-      background: rgba(0,0,0,.25);
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,.22);
       color: var(--text);
-      outline:none;
-      font-size: 14px;
+      outline: none;
+      font-size: 15px;
     }
-    .hint{color: var(--muted); font-size: 12px; padding: 0 12px 12px}
-    .list{
+    .help{
+      margin-top: 8px;
+      color: var(--muted2);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .results{
+      margin-top: 12px;
       display:flex;
-      flex-direction: column;
-      gap: 8px;
-      padding: 12px;
+      flex-direction:column;
+      gap:10px;
     }
-    .item{
+
+    .card{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      padding: 12px 12px;
       border:1px solid var(--border);
-      background: rgba(255,255,255,.03);
-      border-radius: 14px;
-      padding: 10px 10px;
+      border-radius: 18px;
+      background: rgba(0,0,0,.12);
+    }
+    .left{
       display:flex;
-      justify-content: space-between;
-      gap: 10px;
-      cursor:pointer;
+      align-items:center;
+      gap:12px;
+      min-width:0;
     }
-    .itemTitle{font-weight:800}
-    .itemSub{color: var(--muted); font-size: 12px; margin-top: 2px}
-    .time{font-weight:900; color: var(--accent)}
-    .error{
-      margin: 12px;
-      border:1px solid rgba(255,106,106,.35);
-      background: rgba(255,106,106,.12);
-      color: #ffd9d9;
+    .badge{
+      min-width: 56px;
+      height: 44px;
+      padding: 0 10px;
       border-radius: 14px;
-      padding: 10px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-weight: 900;
+      letter-spacing:.2px;
+      background: rgba(255,255,255,.08);
+      border:1px solid rgba(255,255,255,.10);
+    }
+    .textblock{
+      min-width:0;
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+    }
+    .textblock .main{
+      font-weight: 800;
+      font-size: 15px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      max-width: 56vw;
+    }
+    .textblock .sub{
+      color: var(--muted);
+      font-size: 12px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      max-width: 62vw;
+    }
+    .right{
+      display:flex;
+      flex-direction:column;
+      align-items:flex-end;
+      gap:4px;
+      white-space:nowrap;
+    }
+    .mins{
+      font-weight: 900;
+      font-size: 16px;
+    }
+    .mins.ok{ color: var(--ok); }
+    .mins.bad{ color: var(--danger); }
+    .time{
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .err{
+      margin-top: 12px;
+      padding: 12px 12px;
+      border-radius: 18px;
+      border:1px solid rgba(255,90,122,.25);
+      background: rgba(255,90,122,.10);
+      color: rgba(255,255,255,.92);
+      font-size: 13px;
+      line-height: 1.35;
       white-space: pre-wrap;
+    }
+    .okbox{
+      margin-top: 12px;
+      padding: 12px 12px;
+      border-radius: 18px;
+      border:1px solid rgba(85,211,138,.25);
+      background: rgba(85,211,138,.10);
+      color: rgba(255,255,255,.92);
+      font-size: 13px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+    }
+
+    /* Trip modal */
+    .modalBack{
+      position:fixed;
+      inset:0;
+      background: rgba(0,0,0,.65);
+      backdrop-filter: blur(6px);
+      display:none;
+      z-index: 60;
+      padding: 16px 14px;
+      overflow:auto;
+    }
+    .modal{
+      max-width: 940px;
+      margin: 0 auto;
+      border-radius: 24px;
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+      border:1px solid var(--border);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .modalHdr{
+      padding: 14px 14px;
+      border-bottom:1px solid var(--border);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .modalHdr .leftHdr{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      min-width:0;
+    }
+    .modalHdr .title{
+      font-weight: 900;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      max-width: 64vw;
+    }
+    .modalHdr .meta{
+      color: var(--muted);
       font-size: 12px;
+      margin-top: 2px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      max-width: 64vw;
     }
-    .ok{
-      margin: 12px;
-      border:1px solid rgba(101,212,139,.35);
-      background: rgba(101,212,139,.10);
-      color: #d9ffe6;
-      border-radius: 14px;
-      padding: 10px;
-      font-size: 12px;
-    }
-    #mapLive, #mapTrip{
-      height: 300px;
-      width:100%;
-    }
+
+    .modalBody{ padding: 14px; }
     .split{
       display:grid;
-      grid-template-columns: 1fr;
-      gap: 10px;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 12px;
+      align-items:start;
     }
-    @media (min-width: 860px){
-      .split{grid-template-columns: 1.1fr .9fr;}
-      #mapLive, #mapTrip{height: 360px;}
+    @media (max-width: 860px){
+      .split{ grid-template-columns: 1fr; }
+      .textblock .main{ max-width: 62vw; }
+      .textblock .sub{ max-width: 66vw; }
     }
-    .scrollBox{
-      max-height: 360px; /* TRIP nézet görgethető */
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      padding: 12px;
+
+    #tripMap{
+      width:100%;
+      height: 320px;
+      border-radius: 18px;
+      border:1px solid var(--border);
+      overflow:hidden;
+    }
+    .stopList{
+      max-height: 320px;
+      overflow:auto;
+      border-radius: 18px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.10);
     }
     .stopRow{
       display:flex;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 10px 10px;
-      border:1px solid var(--border);
-      border-radius: 14px;
-      background: rgba(255,255,255,.03);
-      margin-bottom: 8px;
+      justify-content:space-between;
+      gap:10px;
+      padding: 10px 12px;
+      border-bottom:1px solid var(--border);
     }
-    .stopName{font-weight:800}
-    .stopCode{color: var(--muted); font-size: 12px}
-    .muted{color: var(--muted)}
-    .badge{
-      font-size: 12px;
-      font-weight: 900;
-      padding: 4px 8px;
-      border-radius: 999px;
-      border:1px solid var(--border);
+    .stopRow:last-child{ border-bottom:none; }
+    .stopRow .sname{
+      font-weight: 800;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      max-width: 60vw;
+    }
+    .stopRow .stime{
       color: var(--muted);
-      white-space: nowrap;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
     }
+
+    /* Live map */
+    #liveMap{
+      width:100%;
+      height: 420px;
+      border-radius: 18px;
+      border:1px solid var(--border);
+      overflow:hidden;
+      margin-top: 12px;
+    }
+
+    /* Leaflet tweaks on dark bg */
+    .leaflet-container{ background: #0b1323; }
+    .leaflet-control-attribution{ display:none; }
   </style>
 </head>
+
 <body>
-  <div class="app">
+  <div class="wrap">
     <div class="topbar">
-      <div class="title">Bluestar & Unilink</div>
-      <div class="pill" id="pillStatus">API: …</div>
+      <div class="brand">
+        <div class="title">Bluestar &amp; Unilink</div>
+        <div class="sub" id="subline">Southampton · BODS + GTFS</div>
+      </div>
+      <div class="pill" id="apiPill"><span class="dot" id="apiDot"></span><span id="apiTxt">API: …</span></div>
     </div>
 
-    <div class="tabs">
-      <div class="tab active" data-tab="stop">MEGÁLLÓ</div>
-      <div class="tab" data-tab="trip">MENETREND</div>
-      <div class="tab" data-tab="live">LIVE</div>
+    <div class="tabs" role="tablist">
+      <button class="tab active" id="tabStop">MEGÁLLÓ</button>
+      <button class="tab" id="tabRoute">MENETREND</button>
+      <button class="tab" id="tabLive">LIVE</button>
     </div>
 
-    <!-- STOP -->
-    <div class="card" id="viewStop">
-      <div class="cardHeader">
-        <h2>Megálló keresés</h2>
-        <button class="btn" id="btnHealth">Health</button>
+    <!-- STOP VIEW -->
+    <div class="panel" id="viewStop">
+      <div class="hdr">
+        <h2>Megálló</h2>
+        <button class="btn" id="btnStopRefresh">Frissítés</button>
       </div>
-      <div class="row">
-        <div class="col">
-          <input id="stopQuery" placeholder="Írj be megálló nevet vagy kódot (pl. 1900HA...)" />
-          <div class="hint">Tipp: ha nincs LIVE adat, a LIVE nézetben látod a backend hibát (pl. 403).</div>
-        </div>
-      </div>
-      <div id="stopResults" class="list"></div>
-      <div id="stopError" class="error" style="display:none"></div>
-    </div>
-
-    <!-- TRIP -->
-    <div class="card" id="viewTrip" style="display:none">
-      <div class="cardHeader">
-        <h2 id="tripTitle">Trip</h2>
-        <button class="btn" id="btnBackToStop">Vissza</button>
-      </div>
-
-      <div class="split">
-        <div class="card" style="margin:12px;">
-          <div id="mapTrip"></div>
-          <div class="hint" id="tripMeta"></div>
-        </div>
-
-        <div class="card" style="margin:12px;">
-          <div class="cardHeader" style="border-bottom:none">
-            <h2>Megállók</h2>
-            <span class="badge" id="tripStopCount">0</span>
+      <div class="content">
+        <div class="row wrap">
+          <div class="field" style="flex:2; min-width:260px;">
+            <input class="input" id="stopSearch" placeholder="Megálló keresése (név vagy NaPTAN kód)"/>
+            <div class="help">Példa: <b>Shirley Precinct</b> vagy <b>1980SN12368B</b></div>
           </div>
-          <div class="scrollBox" id="tripStops"></div>
+          <div class="field" style="flex:1; min-width:220px;">
+            <input class="input" id="stopId" placeholder="Stop ID (NaPTAN)"/>
+            <div class="help">Ha beírod, azonnal lekérjük a következő indulásokat.</div>
+          </div>
         </div>
-      </div>
 
-      <div id="tripError" class="error" style="display:none"></div>
+        <div class="okbox" id="stopInfo" style="display:none;"></div>
+        <div class="err" id="stopErr" style="display:none;"></div>
+
+        <div class="results" id="departures"></div>
+      </div>
     </div>
 
-    <!-- LIVE -->
-    <div class="card" id="viewLive" style="display:none">
-      <div class="cardHeader">
-        <h2>Élő térkép</h2>
-        <button class="btn" id="btnRefreshLive">Frissítés</button>
+    <!-- ROUTE VIEW -->
+    <div class="panel" id="viewRoute" style="display:none;">
+      <div class="hdr">
+        <h2>Menetrend (GTFS)</h2>
+        <button class="btn" id="btnRoutesReload">Újratöltés</button>
       </div>
-      <div class="row">
-        <div class="col">
-          <input id="operatorRefs" value="BLUS,UNIL" />
-          <div class="hint">OperatorRef (NOC) vesszővel: pl. <b>BLUS,UNIL</b></div>
+      <div class="content">
+        <div class="row wrap">
+          <div class="field" style="flex:2; min-width:260px;">
+            <input class="input" id="routeSearch" placeholder="Viszonylat keresése (pl. 1, 18, U1)"/>
+            <div class="help">A listában ráböksz egy járatra → kiválaszthatsz egy konkrét trip-et.</div>
+          </div>
+        </div>
+
+        <div class="err" id="routeErr" style="display:none;"></div>
+        <div class="results" id="routesList"></div>
+
+        <div class="panel" id="tripsPanel" style="margin-top:12px; display:none;">
+          <div class="hdr">
+            <h2 id="tripsTitle">Trip-ek</h2>
+            <button class="btn" id="btnTripsClose">Bezár</button>
+          </div>
+          <div class="content">
+            <div class="results" id="tripsList"></div>
+          </div>
         </div>
       </div>
-      <div style="padding: 0 12px 12px;">
-        <div id="mapLive"></div>
+    </div>
+
+    <!-- LIVE VIEW -->
+    <div class="panel" id="viewLive" style="display:none;">
+      <div class="hdr">
+        <h2>Élő térkép (BODS)</h2>
+        <button class="btn primary" id="btnLiveRefresh">Frissítés</button>
       </div>
-      <div id="liveError" class="error" style="display:none"></div>
-      <div class="hint" id="liveMeta"></div>
+      <div class="content">
+        <div class="row wrap">
+          <div class="field" style="flex:2; min-width:260px;">
+            <input class="input" id="liveOperator" value="BLUS,UNIL" placeholder="OperatorRef (NOC), vesszővel"/>
+            <div class="help">Példa: <b>BLUS,UNIL</b> (nagybetű nem kötelező)</div>
+          </div>
+          <div class="field" style="flex:1; min-width:220px;">
+            <input class="input" id="liveLine" placeholder="LineRef (opcionális)"/>
+            <div class="help">Ha csak egy viszonylat kell (pl. 1, 18), ide írd.</div>
+          </div>
+        </div>
+
+        <div id="liveMap"></div>
+
+        <div class="err" id="liveErr" style="display:none;"></div>
+        <div class="okbox" id="liveInfo" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TRIP MODAL -->
+  <div class="modalBack" id="tripBack">
+    <div class="modal">
+      <div class="modalHdr">
+        <div class="leftHdr">
+          <div class="badge" id="tripBadge">—</div>
+          <div style="min-width:0;">
+            <div class="title" id="tripTitle">Trip</div>
+            <div class="meta" id="tripMeta">—</div>
+          </div>
+        </div>
+        <div style="display:flex; gap:10px;">
+          <button class="btn" id="btnTripClose">Bezár</button>
+        </div>
+      </div>
+      <div class="modalBody">
+        <div class="split">
+          <div>
+            <div id="tripMap"></div>
+          </div>
+          <div class="stopList" id="tripStops"></div>
+        </div>
+        <div class="err" id="tripErr" style="display:none; margin-top:12px;"></div>
+      </div>
     </div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const $ = (sel) => document.querySelector(sel);
+    // ----------------------------
+    // Small helpers
+    // ----------------------------
+    const $ = (id) => document.getElementById(id);
+    const show = (el, yes=true) => el.style.display = yes ? "" : "none";
+    const setText = (el, txt) => el.textContent = txt;
 
-    // Tabs
-    const tabs = document.querySelectorAll(".tab");
-    tabs.forEach(t => t.addEventListener("click", () => {
-      tabs.forEach(x => x.classList.remove("active"));
-      t.classList.add("active");
-      showView(t.dataset.tab);
-    }));
-
-    function showView(name){
-      $("#viewStop").style.display = (name === "stop") ? "" : "none";
-      $("#viewTrip").style.display = (name === "trip") ? "" : "none";
-      $("#viewLive").style.display = (name === "live") ? "" : "none";
-      if(name === "live"){
-        setTimeout(() => { liveMap?.invalidateSize(); }, 100);
-      }
-      if(name === "trip"){
-        setTimeout(() => { tripMap?.invalidateSize(); }, 100);
-      }
+    function escapeHtml(s){
+      return (s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
     }
-
-    // Health
-    $("#btnHealth").addEventListener("click", async () => {
-      const h = await apiGet("/health");
-      if(h.ok){
-        $("#pillStatus").textContent = "API: OK";
-      }else{
-        $("#pillStatus").textContent = "API: HIBA";
-      }
-    });
 
     async function apiGet(path){
-      try{
-        const r = await fetch(path, { cache: "no-store" });
-        const ct = (r.headers.get("content-type")||"").toLowerCase();
-        let data = null;
-        if(ct.includes("application/json")) data = await r.json();
-        else data = await r.text();
-        if(!r.ok) return { ok:false, status:r.status, data };
-        return { ok:true, status:r.status, data };
-      }catch(e){
-        return { ok:false, status:0, data: String(e) };
+      const r = await fetch(path, {headers: {"Accept":"application/json"}});
+      const txt = await r.text();
+      let data = null;
+      try { data = JSON.parse(txt); } catch(e){ data = {raw: txt}; }
+      if(!r.ok){
+        const msg = data && (data.detail || data.message || data.error) ? JSON.stringify(data.detail || data.message || data.error) : txt;
+        throw new Error(`HTTP ${r.status}: ${msg}`);
       }
+      return data;
     }
 
-    // Stop search (debounce)
-    let stopTimer = null;
-    $("#stopQuery").addEventListener("input", () => {
-      clearTimeout(stopTimer);
-      stopTimer = setTimeout(runStopSearch, 250);
-    });
-
-    async function runStopSearch(){
-      const q = $("#stopQuery").value.trim();
-      $("#stopError").style.display = "none";
-      $("#stopResults").innerHTML = "";
-      if(q.length < 2) return;
-
-      // FONTOS: limit INT -> NE legyen "20/" !!
-      const res = await apiGet(`/api/stops/search?q=${encodeURIComponent(q)}&limit=20`);
-      if(!res.ok){
-        $("#stopError").style.display = "";
-        $("#stopError").textContent = formatErr(res);
-        return;
-      }
-
-      const stops = res.data.stops || [];
-      if(!stops.length){
-        $("#stopResults").innerHTML = `<div class="hint">Nincs találat.</div>`;
-        return;
-      }
-
-      $("#stopResults").innerHTML = stops.map(s => `
-        <div class="item" data-stop="${s.stop_id}">
-          <div>
-            <div class="itemTitle">${escapeHtml(s.stop_name || s.stop_id)}</div>
-            <div class="itemSub">${escapeHtml(s.stop_id)}</div>
-          </div>
-          <div class="time">→</div>
-        </div>
-      `).join("");
-
-      document.querySelectorAll("#stopResults .item").forEach(el => {
-        el.addEventListener("click", () => openStop(el.dataset.stop));
-      });
+    function minsClass(m){
+      if(m === null || m === undefined) return "";
+      if(m <= 3) return "ok";
+      if(m >= 30) return "";
+      return "";
     }
 
-    async function openStop(stopId){
-      // Megnyitjuk a MENETREND / TRIP listát úgy, hogy lekérjük a megálló indulásait
-      tabs.forEach(x => x.classList.remove("active"));
-      document.querySelector(`.tab[data-tab="trip"]`).classList.add("active");
-      showView("trip");
-
-      $("#tripTitle").textContent = `Stop → ${stopId}`;
-      $("#tripError").style.display = "none";
-      $("#tripStops").innerHTML = "";
-      $("#tripStopCount").textContent = "…";
-      $("#tripMeta").textContent = "";
-
-      const today = new Date();
-      const yyyy = today.getFullYear();
-      const mm = String(today.getMonth()+1).padStart(2,"0");
-      const dd = String(today.getDate()).padStart(2,"0");
-      const serviceDate = `${yyyy}-${mm}-${dd}`;
-
-      // FONTOS: max_results INT -> NE legyen "20/" !!
-      const dep = await apiGet(`/api/stop/${encodeURIComponent(stopId)}/departures?service_date=${serviceDate}&max_results=25`);
-      if(!dep.ok){
-        $("#tripError").style.display = "";
-        $("#tripError").textContent = formatErr(dep);
-        return;
-      }
-
-      const deps = dep.data.departures || [];
-      $("#tripMeta").textContent = `${dep.data.stop?.stop_name || stopId} • ${dep.data.service_date} • from ${dep.data.time_from}`;
-      $("#tripStopCount").textContent = deps.length;
-
-      // trip nézet itt most indulás-lista lesz: rákatt -> trip detail
-      $("#tripStops").innerHTML = deps.map(d => `
-        <div class="stopRow" data-trip="${escapeAttr(d.trip_id)}">
-          <div>
-            <div class="stopName">${escapeHtml((d.route_short_name || "") + " → " + (d.headsign || ""))}</div>
-            <div class="stopCode">${escapeHtml(d.trip_id)}</div>
-          </div>
-          <div class="time">${escapeHtml(d.departure_time || "")}</div>
-        </div>
-      `).join("");
-
-      document.querySelectorAll("#tripStops .stopRow").forEach(el => {
-        el.addEventListener("click", () => openTrip(el.dataset.trip, serviceDate));
-      });
-
-      // Térkép: középre Southampton környéke default
-      initTripMapIfNeeded();
-      clearTripMap();
-      tripMap.setView([50.91, -1.40], 11);
+    function formatRight(departure_time, in_minutes){
+      if(in_minutes === null || in_minutes === undefined) return `<div class="mins">${escapeHtml(departure_time||"")}</div>`;
+      const cls = minsClass(in_minutes);
+      return `
+        <div class="mins ${cls}">${in_minutes}p</div>
+        <div class="time">${escapeHtml(departure_time||"")}</div>
+      `;
     }
 
-    $("#btnBackToStop").addEventListener("click", () => {
-      tabs.forEach(x => x.classList.remove("active"));
-      document.querySelector(`.tab[data-tab="stop"]`).classList.add("active");
-      showView("stop");
-    });
+    // ----------------------------
+    // Tabs
+    // ----------------------------
+    const tabStop = $("tabStop");
+    const tabRoute = $("tabRoute");
+    const tabLive = $("tabLive");
+    const viewStop = $("viewStop");
+    const viewRoute = $("viewRoute");
+    const viewLive = $("viewLive");
 
-    // Trip detail view + polyline
-    let tripMap = null;
-    let tripLine = null;
-    let tripMarkers = [];
-    function initTripMapIfNeeded(){
-      if(tripMap) return;
-      tripMap = L.map("mapTrip");
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(tripMap);
-    }
-    function clearTripMap(){
-      if(tripLine){ tripMap.removeLayer(tripLine); tripLine = null; }
-      tripMarkers.forEach(m => tripMap.removeLayer(m));
-      tripMarkers = [];
-    }
+    function setTab(which){
+      [tabStop, tabRoute, tabLive].forEach(t => t.classList.remove("active"));
+      show(viewStop, false);
+      show(viewRoute, false);
+      show(viewLive, false);
 
-    async function openTrip(tripId, serviceDate){
-      $("#tripTitle").textContent = `Trip: ${tripId}`;
-      $("#tripError").style.display = "none";
-      $("#tripMeta").textContent = `service_date: ${serviceDate}`;
-      $("#tripStops").innerHTML = "";
-      $("#tripStopCount").textContent = "…";
-
-      initTripMapIfNeeded();
-      clearTripMap();
-
-      const res = await apiGet(`/api/trip?trip_id=${encodeURIComponent(tripId)}&service_date=${encodeURIComponent(serviceDate)}`);
-      if(!res.ok){
-        $("#tripError").style.display = "";
-        $("#tripError").textContent = formatErr(res);
-        return;
-      }
-
-      const t = res.data;
-      const route = t.route || {};
-      $("#tripMeta").textContent = `${route.route_short_name || ""} ${route.route_long_name || ""} • ${t.headsign || ""} • ${t.service_date}`;
-      const stops = t.stops || [];
-      $("#tripStopCount").textContent = stops.length;
-
-      // Stops list scrollable
-      $("#tripStops").innerHTML = stops.map(s => `
-        <div class="stopRow">
-          <div>
-            <div class="stopName">${escapeHtml(s.stop_name || s.stop_id)}</div>
-            <div class="stopCode">${escapeHtml(s.stop_id)}</div>
-          </div>
-          <div class="muted">${escapeHtml((s.departure_time || "").slice(0,5))}</div>
-        </div>
-      `).join("");
-
-      // Draw shape polyline
-      const shape = t.shape || [];
-      if(shape.length){
-        const latlngs = shape.map(p => [p.lat, p.lon]);
-        tripLine = L.polyline(latlngs).addTo(tripMap);
-        tripMap.fitBounds(tripLine.getBounds(), { padding:[16,16] });
+      if(which === "stop"){
+        tabStop.classList.add("active");
+        show(viewStop, true);
+        stopAutoRefresh(true);
+        liveAutoRefresh(false);
+      }else if(which === "route"){
+        tabRoute.classList.add("active");
+        show(viewRoute, true);
+        stopAutoRefresh(false);
+        liveAutoRefresh(false);
       }else{
-        // fallback: fit to stops if coords exist
-        const coords = stops.filter(s => s.stop_lat && s.stop_lon).map(s => [s.stop_lat, s.stop_lon]);
-        if(coords.length){
-          tripLine = L.polyline(coords).addTo(tripMap);
-          tripMap.fitBounds(tripLine.getBounds(), { padding:[16,16] });
-        }else{
-          tripMap.setView([50.91, -1.40], 11);
-        }
+        tabLive.classList.add("active");
+        show(viewLive, true);
+        stopAutoRefresh(false);
+        liveAutoRefresh(true);
+        setTimeout(() => liveRefresh(), 50);
       }
+    }
+    tabStop.onclick = () => setTab("stop");
+    tabRoute.onclick = () => setTab("route");
+    tabLive.onclick = () => setTab("live");
 
-      // Optional: megálló pöttyök
-      stops.forEach(s => {
-        if(s.stop_lat && s.stop_lon){
-          const m = L.circleMarker([s.stop_lat, s.stop_lon], { radius:4 });
-          m.addTo(tripMap);
-          tripMarkers.push(m);
+    // ----------------------------
+    // API health
+    // ----------------------------
+    async function refreshHealth(){
+      try{
+        const d = await apiGet("/api/health");
+        $("apiDot").className = "dot ok";
+        setText($("apiTxt"), "API: OK");
+        $("subline").textContent = `Southampton · ${new Date(d.time).toLocaleString()}`;
+      }catch(e){
+        $("apiDot").className = "dot bad";
+        setText($("apiTxt"), "API: HIBA");
+      }
+    }
+    refreshHealth();
+    setInterval(refreshHealth, 30000);
+
+    // ----------------------------
+    // STOP VIEW
+    // ----------------------------
+    const stopSearch = $("stopSearch");
+    const stopId = $("stopId");
+    const stopErr = $("stopErr");
+    const stopInfo = $("stopInfo");
+    const departures = $("departures");
+
+    let stopRefreshTimer = null;
+
+    function stopAutoRefresh(on){
+      if(stopRefreshTimer){ clearInterval(stopRefreshTimer); stopRefreshTimer=null; }
+      if(on){
+        stopRefreshTimer = setInterval(() => {
+          if(stopId.value.trim()) loadDepartures();
+        }, 15000);
+      }
+    }
+
+    async function loadStopDetail(id){
+      const s = await apiGet(`/api/stop/${encodeURIComponent(id)}`);
+      show(stopInfo, true);
+      stopInfo.textContent = `${s.stop_name || "Megálló"}  ·  ${s.stop_id}`;
+    }
+
+    async function loadDepartures(){
+      const id = stopId.value.trim();
+      if(!id) return;
+
+      show(stopErr,false);
+      departures.innerHTML = "";
+      try{
+        await loadStopDetail(id);
+        const d = await apiGet(`/api/stop/${encodeURIComponent(id)}/departures?limit=25`);
+        const list = d.departures || [];
+        if(list.length === 0){
+          departures.innerHTML = `<div class="card"><div class="textblock"><div class="main">Nincs találat</div><div class="sub">Lehet, hogy épp nincs indulás a következő órákban.</div></div></div>`;
+          return;
         }
+        departures.innerHTML = list.map(it => {
+          const badge = escapeHtml(it.route_short_name || "—");
+          const dest = escapeHtml(it.headsign || it.route_long_name || "—");
+          const sub = escapeHtml(it.trip_id || "");
+          const right = formatRight(it.departure_time, it.in_minutes);
+          return `
+            <div class="card dep" data-trip="${escapeHtml(it.trip_id)}">
+              <div class="left">
+                <div class="badge">${badge}</div>
+                <div class="textblock">
+                  <div class="main">${badge} → ${dest}</div>
+                  <div class="sub">${sub}</div>
+                </div>
+              </div>
+              <div class="right">${right}</div>
+            </div>
+          `;
+        }).join("");
+
+        document.querySelectorAll(".dep").forEach(el => {
+          el.onclick = () => openTrip(el.getAttribute("data-trip"));
+        });
+      }catch(e){
+        show(stopInfo,false);
+        show(stopErr,true);
+        stopErr.textContent = String(e.message || e);
+      }
+    }
+
+    $("btnStopRefresh").onclick = loadDepartures;
+
+    stopId.addEventListener("change", loadDepartures);
+    stopId.addEventListener("keyup", (ev) => {
+      if(ev.key === "Enter") loadDepartures();
+    });
+
+    // Search helper (simple: fetch top matches and auto-fill stopId)
+    let searchDebounce = null;
+    stopSearch.addEventListener("input", () => {
+      const q = stopSearch.value.trim();
+      if(searchDebounce) clearTimeout(searchDebounce);
+      if(q.length < 2) return;
+      searchDebounce = setTimeout(async () => {
+        try{
+          const d = await apiGet(`/api/stops/search?q=${encodeURIComponent(q)}&limit=8`);
+          const r = d.results || [];
+          if(r.length === 0) return;
+
+          // Build a lightweight suggestion list under departures (only if no stop selected)
+          if(!stopId.value.trim()){
+            departures.innerHTML = r.map(s => `
+              <div class="card pickStop" data-stop="${escapeHtml(s.stop_id)}">
+                <div class="left">
+                  <div class="badge">🚌</div>
+                  <div class="textblock">
+                    <div class="main">${escapeHtml(s.stop_name || s.stop_id)}</div>
+                    <div class="sub">${escapeHtml(s.stop_id)}</div>
+                  </div>
+                </div>
+                <div class="right"><div class="time">Megnyitás</div></div>
+              </div>
+            `).join("");
+            document.querySelectorAll(".pickStop").forEach(el => {
+              el.onclick = async () => {
+                const sid = el.getAttribute("data-stop");
+                stopId.value = sid;
+                stopSearch.value = "";
+                await loadDepartures();
+              };
+            });
+          }
+        }catch(e){
+          // ignore
+        }
+      }, 250);
+    });
+
+    // ----------------------------
+    // TRIP MODAL
+    // ----------------------------
+    const tripBack = $("tripBack");
+    const tripErr = $("tripErr");
+    const tripStops = $("tripStops");
+    let tripMap = null;
+    let tripLayer = null;
+
+    $("btnTripClose").onclick = () => closeTrip();
+    tripBack.addEventListener("click", (ev) => {
+      if(ev.target === tripBack) closeTrip();
+    });
+
+    function closeTrip(){
+      show(tripBack,false);
+      tripErr.textContent = "";
+      show(tripErr,false);
+      tripStops.innerHTML = "";
+      if(tripMap){
+        tripMap.remove();
+        tripMap = null;
+        tripLayer = null;
+      }
+    }
+
+    async function openTrip(tripId){
+      if(!tripId) return;
+      show(tripBack,true);
+      show(tripErr,false);
+      tripStops.innerHTML = "";
+
+      try{
+        const d = await apiGet(`/api/trip/${encodeURIComponent(tripId)}`);
+        $("tripBadge").textContent = d.route_short_name || "—";
+        $("tripTitle").textContent = `${d.route_short_name || "—"} → ${d.trip_headsign || d.route_long_name || ""}`;
+        $("tripMeta").textContent = `${d.trip_id}`;
+
+        // Stops list
+        const stops = d.stops || [];
+        tripStops.innerHTML = stops.map(s => `
+          <div class="stopRow">
+            <div class="sname">${escapeHtml(s.stop_name || s.stop_id)}</div>
+            <div class="stime">${escapeHtml(s.departure_time || "")}</div>
+          </div>
+        `).join("");
+
+        // Map
+        tripMap = L.map("tripMap", { zoomControl: true });
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(tripMap);
+
+        const pts = [];
+        if((d.shape||[]).length > 0){
+          for(const p of d.shape){
+            pts.push([p.lat, p.lon]);
+          }
+          tripLayer = L.polyline(pts, { weight: 4, opacity: 0.9 }).addTo(tripMap);
+        }else{
+          // fall back: connect stops
+          for(const s of stops){
+            if(s.lat && s.lon) pts.push([s.lat, s.lon]);
+          }
+          if(pts.length >= 2){
+            tripLayer = L.polyline(pts, { weight: 4, opacity: 0.9, dashArray: "6 8" }).addTo(tripMap);
+          }
+        }
+
+        // Stop markers (light)
+        for(const s of stops){
+          if(s.lat && s.lon){
+            L.circleMarker([s.lat, s.lon], { radius: 4, opacity: 0.9, fillOpacity: 0.5 }).addTo(tripMap)
+              .bindPopup(`<b>${escapeHtml(s.stop_name || "")}</b><br>${escapeHtml(s.departure_time||"")}`);
+          }
+        }
+
+        if(pts.length > 0){
+          tripMap.fitBounds(pts, { padding: [18,18] });
+        }else{
+          tripMap.setView([50.91, -1.40], 12);
+        }
+      }catch(e){
+        show(tripErr,true);
+        tripErr.textContent = String(e.message || e);
+      }
+    }
+
+    // ----------------------------
+    // ROUTES VIEW
+    // ----------------------------
+    const routesList = $("routesList");
+    const routeErr = $("routeErr");
+    const routeSearch = $("routeSearch");
+    const tripsPanel = $("tripsPanel");
+    const tripsTitle = $("tripsTitle");
+    const tripsList = $("tripsList");
+
+    let allRoutes = [];
+
+    async function loadRoutes(){
+      show(routeErr,false);
+      routesList.innerHTML = "";
+      try{
+        const d = await apiGet("/api/routes?limit=600");
+        allRoutes = d.routes || [];
+        renderRoutes();
+      }catch(e){
+        show(routeErr,true);
+        routeErr.textContent = String(e.message || e);
+      }
+    }
+
+    function renderRoutes(){
+      const q = routeSearch.value.trim().toLowerCase();
+      const list = allRoutes.filter(r => {
+        if(!q) return true;
+        return (r.route_short_name||"").toLowerCase().includes(q) || (r.route_long_name||"").toLowerCase().includes(q);
+      }).slice(0, 80);
+
+      routesList.innerHTML = list.map(r => `
+        <div class="card route" data-route="${escapeHtml(r.route_id)}" data-short="${escapeHtml(r.route_short_name||"")}">
+          <div class="left">
+            <div class="badge">${escapeHtml(r.route_short_name||"—")}</div>
+            <div class="textblock">
+              <div class="main">${escapeHtml((r.route_short_name||"—") + " · " + (r.route_long_name||""))}</div>
+              <div class="sub">${escapeHtml(r.route_id||"")}</div>
+            </div>
+          </div>
+          <div class="right"><div class="time">Megnyitás</div></div>
+        </div>
+      `).join("");
+
+      document.querySelectorAll(".route").forEach(el => {
+        el.onclick = () => openRouteTrips(el.getAttribute("data-route"), el.getAttribute("data-short"));
       });
     }
 
-    // LIVE map
+    routeSearch.addEventListener("input", () => renderRoutes());
+    $("btnRoutesReload").onclick = loadRoutes;
+
+    $("btnTripsClose").onclick = () => show(tripsPanel,false);
+
+    async function openRouteTrips(routeId, shortName){
+      show(tripsPanel,true);
+      tripsTitle.textContent = `Trip-ek: ${shortName || ""}`;
+      tripsList.innerHTML = `<div class="card"><div class="textblock"><div class="main">Tipp</div><div class="sub">A GTFS-ben nagyon sok trip lehet. Itt most a trip_id-k alapján nyitjuk meg.</div></div></div>`;
+
+      // Minimal: list a few trip_ids that belong to this route by querying stop departures from a few central stops is expensive.
+      // So here we give the user a simple input to open a trip by ID.
+      tripsList.innerHTML = `
+        <div class="card">
+          <div class="left">
+            <div class="badge">ID</div>
+            <div class="textblock">
+              <div class="main">Trip megnyitása</div>
+              <div class="sub">Írd be a trip_id-t (amit a megálló listában látsz), majd Enter.</div>
+            </div>
+          </div>
+          <div class="right"></div>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <div class="field" style="flex:1;">
+            <input class="input" id="tripIdInput" placeholder="trip_id (pl. BLUS:...)" />
+          </div>
+          <button class="btn primary" id="btnOpenTrip">Megnyitás</button>
+        </div>
+      `;
+      const inp = document.getElementById("tripIdInput");
+      const btn = document.getElementById("btnOpenTrip");
+      const go = () => {
+        const v = (inp.value||"").trim();
+        if(v) openTrip(v);
+      };
+      btn.onclick = go;
+      inp.addEventListener("keyup", (ev) => { if(ev.key === "Enter") go(); });
+      inp.focus();
+    }
+
+    // ----------------------------
+    // LIVE VIEW (Leaflet)
+    // ----------------------------
     let liveMap = null;
     let liveMarkers = [];
-    function initLiveMapIfNeeded(){
+    let liveTimer = null;
+
+    function initLiveMap(){
       if(liveMap) return;
-      liveMap = L.map("mapLive");
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(liveMap);
-      liveMap.setView([50.91, -1.40], 11);
+      liveMap = L.map("liveMap", { zoomControl: true });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(liveMap);
+      liveMap.setView([50.91, -1.40], 12);
     }
+
+    function liveAutoRefresh(on){
+      if(liveTimer){ clearInterval(liveTimer); liveTimer=null; }
+      if(on){
+        liveTimer = setInterval(() => liveRefresh(), 10000);
+      }
+    }
+
     function clearLiveMarkers(){
-      liveMarkers.forEach(m => liveMap.removeLayer(m));
+      for(const m of liveMarkers){
+        try{ m.remove(); }catch(e){}
+      }
       liveMarkers = [];
     }
 
-    $("#btnRefreshLive").addEventListener("click", refreshLive);
+    async function liveRefresh(){
+      initLiveMap();
+      show($("liveErr"), false);
+      show($("liveInfo"), false);
 
-    async function refreshLive(){
-      initLiveMapIfNeeded();
-      clearLiveMarkers();
-      $("#liveError").style.display = "none";
-      $("#liveMeta").textContent = "";
+      const op = $("liveOperator").value.trim();
+      const line = $("liveLine").value.trim();
+      let url = `/api/live/vehicles?operatorRef=${encodeURIComponent(op)}`;
+      if(line) url += `&lineRef=${encodeURIComponent(line)}`;
 
-      const op = $("#operatorRefs").value.trim() || "BLUS,UNIL";
-      const res = await apiGet(`/api/live/vehicles?operatorRef=${encodeURIComponent(op)}`);
-      if(!res.ok){
-        $("#liveError").style.display = "";
-        $("#liveError").textContent = formatErr(res);
-        return;
-      }
-
-      const meta = res.data.meta || {};
-      $("#liveMeta").textContent = `LIVE: ${res.data.count} jármű • cached=${!!meta.cached} • status=${meta.status}`;
-
-      const vehicles = res.data.vehicles || [];
-      vehicles.forEach(v => {
-        if(!v.latitude || !v.longitude) return;
-        const label = `${v.publishedLineName || v.lineRef || "?"} → ${v.destinationName || v.destinationRef || ""}\nveh: ${v.vehicleRef || ""}`;
-        const m = L.marker([v.latitude, v.longitude]).addTo(liveMap).bindPopup(escapeHtml(label));
-        liveMarkers.push(m);
-      });
-    }
-
-    function formatErr(res){
-      if(typeof res.data === "string") return `HTTP ${res.status}\n${res.data}`;
       try{
-        return `HTTP ${res.status}\n${JSON.stringify(res.data, null, 2)}`;
+        const d = await apiGet(url);
+        const vehicles = d.vehicles || [];
+        clearLiveMarkers();
+
+        if(vehicles.length === 0){
+          show($("liveInfo"), true);
+          $("liveInfo").textContent = d.warning ? `Nincs jármű / nincs parse: ${d.warning}` : "Nincs jármű a szűrőre.";
+          return;
+        }
+
+        // Fit bounds
+        const pts = [];
+        for(const v of vehicles){
+          if(v.lat && v.lon) pts.push([v.lat, v.lon]);
+        }
+        if(pts.length){
+          liveMap.fitBounds(pts, { padding: [18,18] });
+        }
+
+        for(const v of vehicles){
+          const label = (v.publishedLineName || v.lineRef || "").toString();
+          const head = (v.destinationName || "").toString();
+          const title = label ? `${label} → ${head}` : (head || "Jármű");
+          const popup = `
+            <div style="font-family: var(--font);">
+              <div style="font-weight:900; margin-bottom:4px;">${escapeHtml(title)}</div>
+              <div style="font-size:12px; color:rgba(0,0,0,.70);">
+                <b>vehicleRef:</b> ${escapeHtml(v.vehicleRef||"—")}<br/>
+                <b>operatorRef:</b> ${escapeHtml(v.operatorRef||"—")}<br/>
+                <b>recordedAt:</b> ${escapeHtml(v.recordedAtTime||"—")}<br/>
+                <b>vehicleJourneyRef:</b> ${escapeHtml(v.vehicleJourneyRef||"—")}
+              </div>
+            </div>
+          `;
+          const m = L.circleMarker([v.lat, v.lon], { radius: 7, opacity: 0.9, fillOpacity: 0.6 }).addTo(liveMap);
+          m.bindPopup(popup);
+          liveMarkers.push(m);
+        }
+
+        show($("liveInfo"), true);
+        $("liveInfo").textContent = `Járművek: ${vehicles.length} · Frissítve: ${new Date().toLocaleTimeString()}`;
       }catch(e){
-        return `HTTP ${res.status}\n${String(res.data)}`;
+        show($("liveErr"), true);
+        $("liveErr").textContent = String(e.message || e);
       }
     }
-    function escapeHtml(s){
-      return String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    }
-    function escapeAttr(s){
-      return escapeHtml(s).replace(/"/g, "&quot;");
-    }
 
-    // initial health
-    (async () => {
-      const h = await apiGet("/health");
-      $("#pillStatus").textContent = h.ok ? "API: OK" : "API: HIBA";
-      // előkészít maps (lazy)
-      initLiveMapIfNeeded();
-    })();
+    $("btnLiveRefresh").onclick = liveRefresh;
+
+    // Initial loads
+    loadRoutes();
   </script>
 </body>
 </html>
