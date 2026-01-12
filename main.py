@@ -1,102 +1,96 @@
 import os
-import io
 import csv
 import time
-import zipfile
 import asyncio
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Any
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, date
+from typing import Optional, Dict, List, Tuple, Any
+
+from zoneinfo import ZoneInfo
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, FileResponse, Response, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 import httpx
-from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+from xml.etree import ElementTree as ET
 
-try:
-    from zoneinfo import ZoneInfo
-except Exception:
-    ZoneInfo = None  # type: ignore
 
-APP_TZ = os.getenv("APP_TZ", "Europe/London")
-TZ = ZoneInfo(APP_TZ) if ZoneInfo else timezone.utc
-
-GTFS_ZIP_PATH = os.getenv("GTFS_ZIP_PATH", "gtfs.zip")
+# =========================
+# Config
+# =========================
+UK_TZ = ZoneInfo("Europe/London")
 
 DFT_API_KEY = os.getenv("DFT_API_KEY", "").strip()
-DFT_VM_URL = os.getenv("DFT_VM_URL", "https://data.bus-data.dft.gov.uk/api/v1/datafeed/").strip()
-DFT_OPERATOR_REF = os.getenv("DFT_OPERATOR_REF", "BLUS").strip()
+DFT_BASE_URL = "https://data.bus-data.dft.gov.uk/api/v1/datafeed/"
 
-LIVE_CACHE_TTL_SEC = int(os.getenv("LIVE_CACHE_TTL_SEC", "12"))
-LIVE_HTTP_TIMEOUT = float(os.getenv("LIVE_HTTP_TIMEOUT", "12"))
+DEFAULT_OPERATOR_REFS = os.getenv("DEFAULT_OPERATOR_REFS", "BLUS,UNIL").strip()
+GTFS_DIR = os.getenv("GTFS_DIR", "gtfs").strip()
 
-# Optional bounding box (minLon,minLat,maxLon,maxLat) – ha üres, akkor nincs bbox szűrés
-DFT_VM_BBOX = os.getenv("DFT_VM_BBOX", "").strip()
+LIVE_CACHE_TTL_SECONDS = int(os.getenv("LIVE_CACHE_TTL_SECONDS", "10"))  # csökkenti 403 kockázatot
+HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "20"))
 
-# ------------------------
-# Small helpers
-# ------------------------
+APP_NAME_UA = os.getenv("APP_USER_AGENT", "Bluestar-Unilink-App/1.0 (FastAPI; contact: dev)")
 
-def now_local() -> datetime:
-    return datetime.now(TZ)
 
-def iso(dt: Optional[datetime]) -> Optional[str]:
-    return dt.isoformat() if dt else None
+# =========================
+# Helpers
+# =========================
+def _now_uk() -> datetime:
+    return datetime.now(UK_TZ)
 
-def parse_date(s: str) -> date:
-    return datetime.strptime(s, "%Y-%m-%d").date()
 
-def strip_ns(tag: str) -> str:
-    # "{namespace}Tag" -> "Tag"
-    if "}" in tag:
-        return tag.split("}", 1)[1]
-    return tag
-
-def safe_int(x: Any, default: Optional[int] = None) -> Optional[int]:
-    try:
-        return int(str(x).strip())
-    except Exception:
+def _parse_int_loose(value: Optional[str], default: int, min_v: int = 1, max_v: int = 200) -> int:
+    """
+    Kibékíti az olyan inputot mint: "5/" vagy " 25 " vagy "25abc".
+    """
+    if value is None:
         return default
-
-def safe_float(x: Any, default: Optional[float] = None) -> Optional[float]:
-    try:
-        return float(str(x).strip())
-    except Exception:
+    s = str(value).strip()
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
         return default
+    try:
+        n = int(digits)
+    except ValueError:
+        return default
+    n = max(min_v, min(max_v, n))
+    return n
 
-def read_text_file_from_zip(zf: zipfile.ZipFile, filename: str) -> str:
-    with zf.open(filename) as f:
-        return f.read().decode("utf-8-sig", errors="replace")
 
-def gtfs_time_to_seconds(t: str) -> int:
-    # "25:10:00" is allowed in GTFS
-    hh, mm, ss = t.split(":")
-    return int(hh) * 3600 + int(mm) * 60 + int(ss)
+def _split_csv_param(value: str) -> List[str]:
+    items = []
+    for part in (value or "").split(","):
+        p = part.strip()
+        if p:
+            items.append(p)
+    return items
 
-def seconds_to_hhmm(seconds: int) -> str:
-    if seconds < 0:
-        seconds = 0
-    hh = seconds // 3600
-    mm = (seconds % 3600) // 60
-    return f"{hh:02d}:{mm:02d}"
 
-# ------------------------
-# GTFS in-memory model
-# ------------------------
+def _safe_excerpt(text: str, limit: int = 600) -> str:
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
 
+
+# =========================
+# GTFS (minimal, de használható)
+# =========================
 @dataclass
 class Stop:
     stop_id: str
     stop_name: str
     stop_lat: Optional[float]
     stop_lon: Optional[float]
-    platform_code: Optional[str]
+
 
 @dataclass
 class Route:
     route_id: str
-    short_name: str
-    long_name: str
+    route_short_name: str
+    route_long_name: str
+
 
 @dataclass
 class Trip:
@@ -104,8 +98,9 @@ class Trip:
     route_id: str
     service_id: str
     trip_headsign: str
-    direction_id: Optional[int]
+    direction_id: Optional[str]
     shape_id: Optional[str]
+
 
 @dataclass
 class StopTime:
@@ -115,592 +110,689 @@ class StopTime:
     stop_id: str
     stop_sequence: int
 
-class GTFS:
-    def __init__(self) -> None:
-        self.loaded = False
-        self.stops: Dict[str, Stop] = {}
-        self.routes: Dict[str, Route] = {}
-        self.trips: Dict[str, Trip] = {}
-        self.stop_times_by_trip: Dict[str, List[StopTime]] = {}
-        self.stop_times_by_stop: Dict[str, List[StopTime]] = {}
-        self.shapes: Dict[str, List[Tuple[float, float]]] = {}
 
-        # calendar
-        self.calendar: Dict[str, Dict[str, Any]] = {}         # service_id -> calendar row
-        self.calendar_dates: Dict[Tuple[str, date], int] = {} # (service_id, date) -> exception_type
+@dataclass
+class ShapePoint:
+    shape_id: str
+    shape_pt_lat: float
+    shape_pt_lon: float
+    shape_pt_sequence: int
 
-    def load(self, zip_path: str) -> None:
-        if not os.path.exists(zip_path):
-            raise FileNotFoundError(f"GTFS zip not found: {zip_path}")
 
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            # stops
-            if "stops.txt" in zf.namelist():
-                txt = read_text_file_from_zip(zf, "stops.txt")
-                for r in csv.DictReader(io.StringIO(txt)):
-                    stop_id = r.get("stop_id", "").strip()
-                    if not stop_id:
-                        continue
-                    name = r.get("stop_name", "").strip()
-                    lat = safe_float(r.get("stop_lat"))
-                    lon = safe_float(r.get("stop_lon"))
-                    platform = (r.get("platform_code") or "").strip() or None
-                    self.stops[stop_id] = Stop(stop_id, name, lat, lon, platform)
+@dataclass
+class CalendarService:
+    service_id: str
+    start_date: date
+    end_date: date
+    mon: bool
+    tue: bool
+    wed: bool
+    thu: bool
+    fri: bool
+    sat: bool
+    sun: bool
 
-            # routes
-            if "routes.txt" in zf.namelist():
-                txt = read_text_file_from_zip(zf, "routes.txt")
-                for r in csv.DictReader(io.StringIO(txt)):
-                    route_id = r.get("route_id", "").strip()
-                    if not route_id:
-                        continue
-                    short_name = (r.get("route_short_name") or "").strip()
-                    long_name = (r.get("route_long_name") or "").strip()
-                    self.routes[route_id] = Route(route_id, short_name, long_name)
 
-            # trips
-            if "trips.txt" in zf.namelist():
-                txt = read_text_file_from_zip(zf, "trips.txt")
-                for r in csv.DictReader(io.StringIO(txt)):
-                    trip_id = r.get("trip_id", "").strip()
-                    if not trip_id:
-                        continue
-                    route_id = (r.get("route_id") or "").strip()
-                    service_id = (r.get("service_id") or "").strip()
-                    headsign = (r.get("trip_headsign") or "").strip()
-                    direction_id = safe_int(r.get("direction_id"))
-                    shape_id = (r.get("shape_id") or "").strip() or None
-                    self.trips[trip_id] = Trip(trip_id, route_id, service_id, headsign, direction_id, shape_id)
-
-            # stop_times
-            if "stop_times.txt" in zf.namelist():
-                txt = read_text_file_from_zip(zf, "stop_times.txt")
-                for r in csv.DictReader(io.StringIO(txt)):
-                    trip_id = (r.get("trip_id") or "").strip()
-                    stop_id = (r.get("stop_id") or "").strip()
-                    if not trip_id or not stop_id:
-                        continue
-                    arr = (r.get("arrival_time") or "").strip()
-                    dep = (r.get("departure_time") or "").strip()
-                    seq = safe_int(r.get("stop_sequence"), 0) or 0
-                    st = StopTime(trip_id, arr, dep, stop_id, seq)
-
-                    self.stop_times_by_trip.setdefault(trip_id, []).append(st)
-                    self.stop_times_by_stop.setdefault(stop_id, []).append(st)
-
-                for tid in self.stop_times_by_trip:
-                    self.stop_times_by_trip[tid].sort(key=lambda x: x.stop_sequence)
-                for sid in self.stop_times_by_stop:
-                    self.stop_times_by_stop[sid].sort(key=lambda x: (x.departure_time, x.trip_id, x.stop_sequence))
-
-            # shapes
-            if "shapes.txt" in zf.namelist():
-                txt = read_text_file_from_zip(zf, "shapes.txt")
-                tmp: Dict[str, List[Tuple[int, float, float]]] = {}
-                for r in csv.DictReader(io.StringIO(txt)):
-                    shape_id = (r.get("shape_id") or "").strip()
-                    if not shape_id:
-                        continue
-                    lat = safe_float(r.get("shape_pt_lat"))
-                    lon = safe_float(r.get("shape_pt_lon"))
-                    seq = safe_int(r.get("shape_pt_sequence"), 0) or 0
-                    if lat is None or lon is None:
-                        continue
-                    tmp.setdefault(shape_id, []).append((seq, lat, lon))
-                for sid, pts in tmp.items():
-                    pts.sort(key=lambda x: x[0])
-                    self.shapes[sid] = [(lat, lon) for _, lat, lon in pts]
-
-            # calendar
-            if "calendar.txt" in zf.namelist():
-                txt = read_text_file_from_zip(zf, "calendar.txt")
-                for r in csv.DictReader(io.StringIO(txt)):
-                    service_id = (r.get("service_id") or "").strip()
-                    if not service_id:
-                        continue
-                    self.calendar[service_id] = r
-
-            if "calendar_dates.txt" in zf.namelist():
-                txt = read_text_file_from_zip(zf, "calendar_dates.txt")
-                for r in csv.DictReader(io.StringIO(txt)):
-                    service_id = (r.get("service_id") or "").strip()
-                    ds = (r.get("date") or "").strip()
-                    et = safe_int(r.get("exception_type"), 0) or 0
-                    if not service_id or not ds:
-                        continue
-                    d = datetime.strptime(ds, "%Y%m%d").date()
-                    self.calendar_dates[(service_id, d)] = et
-
-        self.loaded = True
-
-    def service_active(self, service_id: str, d: date) -> bool:
-        # calendar_dates override first
-        ex = self.calendar_dates.get((service_id, d))
-        if ex == 1:
-            return True
-        if ex == 2:
-            return False
-
-        row = self.calendar.get(service_id)
-        if not row:
-            # ha nincs calendar, akkor csak calendar_dates alapján tudnánk – itt false
-            return False
-
-        start = datetime.strptime(row["start_date"], "%Y%m%d").date()
-        end = datetime.strptime(row["end_date"], "%Y%m%d").date()
-        if d < start or d > end:
-            return False
-
-        weekday = d.weekday()  # Mon=0..Sun=6
-        keys = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
-        return (row.get(keys[weekday], "0").strip() == "1")
-
-GTFS_DB = GTFS()
-
-# ------------------------
-# LIVE cache
-# ------------------------
-
-LIVE_CACHE: Dict[str, Any] = {
-    "last_fetch_epoch": 0.0,
-    "last_fetch_iso": None,
-    "vehicles": [],
-    "error": None,
-    "error_detail": None,
+# In-memory store
+GTFS: Dict[str, Any] = {
+    "loaded": False,
+    "stops": {},             # stop_id -> Stop
+    "routes": {},            # route_id -> Route
+    "trips": {},             # trip_id -> Trip
+    "stop_times_by_stop": {},# stop_id -> List[StopTime]
+    "stop_times_by_trip": {},# trip_id -> List[StopTime]
+    "shapes": {},            # shape_id -> List[ShapePoint]
+    "calendar": {},          # service_id -> CalendarService
+    "calendar_dates": {},    # (service_id, date)-> exception_type (1 add, 2 remove)
 }
 
+
+def _read_csv(path: str) -> List[Dict[str, str]]:
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _parse_yyyymmdd(s: str) -> date:
+    return date(int(s[0:4]), int(s[4:6]), int(s[6:8]))
+
+
+def _gtfs_time_to_minutes(t: str) -> Optional[int]:
+    """
+    GTFS idő lehet 24:10:00 is.
+    """
+    if not t:
+        return None
+    parts = t.split(":")
+    if len(parts) < 2:
+        return None
+    try:
+        hh = int(parts[0])
+        mm = int(parts[1])
+        ss = int(parts[2]) if len(parts) > 2 else 0
+    except ValueError:
+        return None
+    return hh * 60 + mm + (1 if ss >= 30 else 0)
+
+
+def _service_runs_on(service_id: str, d: date) -> bool:
+    cal: Optional[CalendarService] = GTFS["calendar"].get(service_id)
+    # exceptions:
+    ex = GTFS["calendar_dates"].get((service_id, d))
+    if ex == 2:
+        return False
+    if ex == 1:
+        return True
+
+    if not cal:
+        # ha nincs calendar, inkább engedjük (külön feedek néha csak calendar_dates-et használnak)
+        return True
+
+    if d < cal.start_date or d > cal.end_date:
+        return False
+
+    wd = d.weekday()  # mon=0
+    flags = [cal.mon, cal.tue, cal.wed, cal.thu, cal.fri, cal.sat, cal.sun]
+    return bool(flags[wd])
+
+
+def load_gtfs() -> None:
+    if GTFS["loaded"]:
+        return
+
+    base = GTFS_DIR
+    if not os.path.isdir(base):
+        # nincs GTFS mappa – a live ettől még működik
+        GTFS["loaded"] = True
+        return
+
+    # Stops
+    stops_path = os.path.join(base, "stops.txt")
+    if os.path.exists(stops_path):
+        for row in _read_csv(stops_path):
+            sid = row.get("stop_id", "").strip()
+            if not sid:
+                continue
+            lat = row.get("stop_lat", "").strip()
+            lon = row.get("stop_lon", "").strip()
+            GTFS["stops"][sid] = Stop(
+                stop_id=sid,
+                stop_name=(row.get("stop_name", "") or "").strip(),
+                stop_lat=float(lat) if lat else None,
+                stop_lon=float(lon) if lon else None,
+            )
+
+    # Routes
+    routes_path = os.path.join(base, "routes.txt")
+    if os.path.exists(routes_path):
+        for row in _read_csv(routes_path):
+            rid = row.get("route_id", "").strip()
+            if not rid:
+                continue
+            GTFS["routes"][rid] = Route(
+                route_id=rid,
+                route_short_name=(row.get("route_short_name", "") or "").strip(),
+                route_long_name=(row.get("route_long_name", "") or "").strip(),
+            )
+
+    # Trips
+    trips_path = os.path.join(base, "trips.txt")
+    if os.path.exists(trips_path):
+        for row in _read_csv(trips_path):
+            tid = row.get("trip_id", "").strip()
+            if not tid:
+                continue
+            GTFS["trips"][tid] = Trip(
+                trip_id=tid,
+                route_id=(row.get("route_id", "") or "").strip(),
+                service_id=(row.get("service_id", "") or "").strip(),
+                trip_headsign=(row.get("trip_headsign", "") or "").strip(),
+                direction_id=(row.get("direction_id", "") or "").strip() or None,
+                shape_id=(row.get("shape_id", "") or "").strip() or None,
+            )
+
+    # Calendar
+    cal_path = os.path.join(base, "calendar.txt")
+    if os.path.exists(cal_path):
+        for row in _read_csv(cal_path):
+            sid = (row.get("service_id", "") or "").strip()
+            if not sid:
+                continue
+            GTFS["calendar"][sid] = CalendarService(
+                service_id=sid,
+                start_date=_parse_yyyymmdd((row.get("start_date") or "").strip()),
+                end_date=_parse_yyyymmdd((row.get("end_date") or "").strip()),
+                mon=(row.get("monday") == "1"),
+                tue=(row.get("tuesday") == "1"),
+                wed=(row.get("wednesday") == "1"),
+                thu=(row.get("thursday") == "1"),
+                fri=(row.get("friday") == "1"),
+                sat=(row.get("saturday") == "1"),
+                sun=(row.get("sunday") == "1"),
+            )
+
+    # Calendar dates
+    cald_path = os.path.join(base, "calendar_dates.txt")
+    if os.path.exists(cald_path):
+        for row in _read_csv(cald_path):
+            sid = (row.get("service_id", "") or "").strip()
+            ds = (row.get("date", "") or "").strip()
+            et = (row.get("exception_type", "") or "").strip()
+            if not (sid and ds and et):
+                continue
+            GTFS["calendar_dates"][(sid, _parse_yyyymmdd(ds))] = int(et)
+
+    # Stop times
+    st_path = os.path.join(base, "stop_times.txt")
+    if os.path.exists(st_path):
+        by_stop: Dict[str, List[StopTime]] = {}
+        by_trip: Dict[str, List[StopTime]] = {}
+        for row in _read_csv(st_path):
+            tid = (row.get("trip_id", "") or "").strip()
+            sid = (row.get("stop_id", "") or "").strip()
+            if not (tid and sid):
+                continue
+            seq_s = (row.get("stop_sequence", "") or "0").strip()
+            try:
+                seq = int(seq_s)
+            except ValueError:
+                seq = 0
+            st = StopTime(
+                trip_id=tid,
+                arrival_time=(row.get("arrival_time", "") or "").strip(),
+                departure_time=(row.get("departure_time", "") or "").strip(),
+                stop_id=sid,
+                stop_sequence=seq,
+            )
+            by_stop.setdefault(sid, []).append(st)
+            by_trip.setdefault(tid, []).append(st)
+
+        # sort
+        for sid, lst in by_stop.items():
+            lst.sort(key=lambda x: (_gtfs_time_to_minutes(x.departure_time) or 10**9, x.stop_sequence))
+        for tid, lst in by_trip.items():
+            lst.sort(key=lambda x: x.stop_sequence)
+
+        GTFS["stop_times_by_stop"] = by_stop
+        GTFS["stop_times_by_trip"] = by_trip
+
+    # Shapes
+    shapes_path = os.path.join(base, "shapes.txt")
+    if os.path.exists(shapes_path):
+        shapes: Dict[str, List[ShapePoint]] = {}
+        for row in _read_csv(shapes_path):
+            shid = (row.get("shape_id", "") or "").strip()
+            if not shid:
+                continue
+            try:
+                lat = float((row.get("shape_pt_lat") or "").strip())
+                lon = float((row.get("shape_pt_lon") or "").strip())
+                seq = int((row.get("shape_pt_sequence") or "0").strip())
+            except ValueError:
+                continue
+            shapes.setdefault(shid, []).append(ShapePoint(shid, lat, lon, seq))
+        for shid, lst in shapes.items():
+            lst.sort(key=lambda x: x.shape_pt_sequence)
+        GTFS["shapes"] = shapes
+
+    GTFS["loaded"] = True
+
+
+# =========================
+# LIVE (DfT) cache + fetch
+# =========================
+_live_cache: Dict[Tuple[Tuple[str, str], ...], Tuple[float, bytes, int, str]] = {}
 _live_lock = asyncio.Lock()
 
-async def fetch_dft_siri_vm() -> Dict[str, Any]:
-    """
-    Fetch DfT Bus Open Data SIRI-VM feed and parse vehicles.
-    Always return a dict with keys: ok, status, vehicles, error, error_detail.
-    """
+
+def _cache_key(params: Dict[str, str]) -> Tuple[Tuple[str, str], ...]:
+    return tuple(sorted((k, v) for k, v in params.items() if v is not None and v != ""))
+
+
+async def fetch_dft_xml(params: Dict[str, str]) -> Tuple[bytes, int, str]:
     if not DFT_API_KEY:
-        return {
-            "ok": False,
-            "status": None,
-            "vehicles": [],
-            "error": "Missing DFT_API_KEY",
-            "error_detail": None,
-        }
+        raise HTTPException(status_code=500, detail="DFT_API_KEY nincs beállítva (Railway env var).")
 
-    url = DFT_VM_URL.rstrip("/") + "/"
-    params = {
-        "operatorRef": DFT_OPERATOR_REF,
-        "api_key": DFT_API_KEY,  # query param (DfT gyakran ezt kéri)
-    }
+    full_params = dict(params)
+    full_params["api_key"] = DFT_API_KEY
 
-    # Optional bbox: "minLon,minLat,maxLon,maxLat"
-    if DFT_VM_BBOX:
-        params["boundingBox"] = DFT_VM_BBOX
-
-    # Headeres kulcs (van, ahol ezt kéri)
     headers = {
-        "User-Agent": "BluestarLive/1.0",
-        "Ocp-Apim-Subscription-Key": DFT_API_KEY,
+        "User-Agent": APP_NAME_UA,
+        "Accept": "application/xml,text/xml,*/*",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
     }
 
+    async with httpx.AsyncClient(
+        timeout=HTTP_TIMEOUT_SECONDS,
+        headers=headers,
+        http2=True,
+        follow_redirects=True,
+    ) as client:
+        r = await client.get(DFT_BASE_URL, params=full_params)
+
+    content_type = (r.headers.get("content-type") or "").lower()
+    text_excerpt = ""
+    if "text" in content_type or "html" in content_type:
+        try:
+            text_excerpt = _safe_excerpt(r.text, 900)
+        except Exception:
+            text_excerpt = ""
+    return (r.content, r.status_code, text_excerpt)
+
+
+def parse_siri_vm(xml_bytes: bytes) -> List[Dict[str, Any]]:
+    """
+    SIRI-VM: VehicleMonitoringDelivery / VehicleActivity / MonitoredVehicleJourney
+    """
+    if not xml_bytes:
+        return []
+
     try:
-        async with httpx.AsyncClient(timeout=LIVE_HTTP_TIMEOUT) as client:
-            r = await client.get(url, params=params, headers=headers)
-            status = r.status_code
-            text = r.text
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return []
 
-        if status != 200:
-            return {
-                "ok": False,
-                "status": status,
-                "vehicles": [],
-                "error": f"DfT HTTP {status}",
-                "error_detail": (text[:500] if text else None),
-            }
+    ns = {"siri": "http://www.siri.org.uk/siri"}
 
-        vehicles = parse_siri_vm_xml(text, operator_ref=DFT_OPERATOR_REF)
-
-        return {
-            "ok": True,
-            "status": 200,
-            "vehicles": vehicles,
-            "error": None,
-            "error_detail": None,
-        }
-
-    except Exception as e:
-        return {
-            "ok": False,
-            "status": None,
-            "vehicles": [],
-            "error": "DfT fetch exception",
-            "error_detail": str(e),
-        }
-
-def parse_siri_vm_xml(xml_text: str, operator_ref: str) -> List[Dict[str, Any]]:
-    import xml.etree.ElementTree as ET
     vehicles: List[Dict[str, Any]] = []
-
-    try:
-        root = ET.fromstring(xml_text)
-    except Exception:
-        # néha zip/json jön vissza rossz URL-nél – akkor ezt látod majd error_detail-ben
-        return vehicles
-
-    # We walk through all VehicleActivity elements regardless of namespace
-    for va in root.iter():
-        if strip_ns(va.tag) != "VehicleActivity":
-            continue
-
-        mvj = None
-        recorded_at = None
-
-        # find RecordedAtTime + MonitoredVehicleJourney under this VehicleActivity
-        for child in list(va):
-            t = strip_ns(child.tag)
-            if t == "RecordedAtTime":
-                recorded_at = (child.text or "").strip() or None
-            elif t == "MonitoredVehicleJourney":
-                mvj = child
-
+    for va in root.findall(".//siri:VehicleActivity", ns):
+        recorded_at = va.findtext("./siri:RecordedAtTime", default="", namespaces=ns) or ""
+        mvj = va.find("./siri:MonitoredVehicleJourney", ns)
         if mvj is None:
             continue
 
-        def mvj_text(name: str) -> Optional[str]:
-            for x in mvj.iter():
-                if strip_ns(x.tag) == name:
-                    return (x.text or "").strip() or None
-            return None
+        line_ref = mvj.findtext("./siri:LineRef", default="", namespaces=ns) or ""
+        published_line = mvj.findtext("./siri:PublishedLineName", default="", namespaces=ns) or ""
+        operator_ref = mvj.findtext("./siri:OperatorRef", default="", namespaces=ns) or ""
+        direction_ref = mvj.findtext("./siri:DirectionRef", default="", namespaces=ns) or ""
+        vehicle_ref = mvj.findtext("./siri:VehicleRef", default="", namespaces=ns) or ""
 
-        op = mvj_text("OperatorRef")
-        if operator_ref and op and op.strip() != operator_ref:
-            continue
+        origin_ref = mvj.findtext("./siri:OriginRef", default="", namespaces=ns) or ""
+        origin_name = mvj.findtext("./siri:OriginName", default="", namespaces=ns) or ""
+        dest_ref = mvj.findtext("./siri:DestinationRef", default="", namespaces=ns) or ""
+        dest_name = mvj.findtext("./siri:DestinationName", default="", namespaces=ns) or ""
 
-        line = mvj_text("LineRef") or mvj_text("PublishedLineName")
-        direction = mvj_text("DirectionRef")
-        destination = mvj_text("DestinationName") or mvj_text("DestinationRef")
-        veh_ref = mvj_text("VehicleRef") or mvj_text("VehicleUniqueId")
+        lon = mvj.findtext("./siri:VehicleLocation/siri:Longitude", default="", namespaces=ns) or ""
+        lat = mvj.findtext("./siri:VehicleLocation/siri:Latitude", default="", namespaces=ns) or ""
+        bearing = mvj.findtext("./siri:Bearing", default="", namespaces=ns) or ""
+        block_ref = mvj.findtext("./siri:BlockRef", default="", namespaces=ns) or ""
 
-        lon = None
-        lat = None
-        for loc in mvj.iter():
-            if strip_ns(loc.tag) == "VehicleLocation":
-                for ll in list(loc):
-                    if strip_ns(ll.tag) == "Longitude":
-                        lon = safe_float(ll.text)
-                    if strip_ns(ll.tag) == "Latitude":
-                        lat = safe_float(ll.text)
+        # FramedVehicleJourneyRef bits (nem mindig kell, de hasznos)
+        dated_vjr = mvj.findtext("./siri:FramedVehicleJourneyRef/siri:DatedVehicleJourneyRef", default="", namespaces=ns) or ""
+        data_frame = mvj.findtext("./siri:FramedVehicleJourneyRef/siri:DataFrameRef", default="", namespaces=ns) or ""
 
-        dated_vjr = mvj_text("DatedVehicleJourneyRef")
-        framed = None
-        for f in mvj.iter():
-            if strip_ns(f.tag) == "FramedVehicleJourneyRef":
-                framed = f
-                break
+        # Extensions / JourneyCode (nem minden szolgáltatónál)
+        journey_code = ""
+        ext = va.find("./siri:Extensions", ns)
+        if ext is not None:
+            # lazán keresünk bármely JourneyCode tagre
+            jc = ext.find(".//JourneyCode")
+            if jc is not None and (jc.text or "").strip():
+                journey_code = (jc.text or "").strip()
 
-        data_frame_ref = None
-        vehicle_journey_ref = None
-        if framed is not None:
-            for ff in framed.iter():
-                if strip_ns(ff.tag) == "DataFrameRef":
-                    data_frame_ref = (ff.text or "").strip() or None
-                if strip_ns(ff.tag) == "DatedVehicleJourneyRef":
-                    # sometimes repeated; keep outer dated_vjr too
-                    pass
-                if strip_ns(ff.tag) == "VehicleJourneyRef":
-                    vehicle_journey_ref = (ff.text or "").strip() or None
-
-        # Delay – optional, SIRI duration format "PT120S" etc – próbáljuk mp-re
-        delay_sec = None
-        delay_txt = mvj_text("Delay")
-        if delay_txt:
-            # rough parse: PT###S
-            try:
-                if delay_txt.startswith("PT") and delay_txt.endswith("S"):
-                    delay_sec = int(delay_txt[2:-1])
-            except Exception:
-                delay_sec = None
+        try:
+            lat_f = float(lat) if lat else None
+        except ValueError:
+            lat_f = None
+        try:
+            lon_f = float(lon) if lon else None
+        except ValueError:
+            lon_f = None
+        try:
+            bearing_f = float(bearing) if bearing else None
+        except ValueError:
+            bearing_f = None
 
         vehicles.append({
-            "vehicle_id": veh_ref,
-            "line": line,
-            "destination": destination,
-            "direction": direction,
-            "lat": lat,
-            "lon": lon,
             "recorded_at": recorded_at,
-            "operator_ref": op,
-            "dated_vehicle_journey_ref": dated_vjr,
-            "vehicle_journey_ref": vehicle_journey_ref,
-            "data_frame_ref": data_frame_ref,
-            "delay_sec": delay_sec,
+            "operatorRef": operator_ref,
+            "lineRef": line_ref,
+            "publishedLineName": published_line,
+            "directionRef": direction_ref,
+            "vehicleRef": vehicle_ref,
+            "originRef": origin_ref,
+            "originName": origin_name,
+            "destinationRef": dest_ref,
+            "destinationName": dest_name,
+            "latitude": lat_f,
+            "longitude": lon_f,
+            "bearing": bearing_f,
+            "blockRef": block_ref,
+            "datedVehicleJourneyRef": dated_vjr,
+            "dataFrameRef": data_frame,
+            "journeyCode": journey_code,
         })
 
-    # sanity: drop ones without coordinates
-    vehicles = [v for v in vehicles if v.get("lat") is not None and v.get("lon") is not None]
     return vehicles
 
-async def get_live_cache(force: bool = False) -> Dict[str, Any]:
+
+async def get_live_cached(params: Dict[str, str]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    key = _cache_key(params)
+    now = time.time()
+
     async with _live_lock:
-        now = time.time()
-        age = now - float(LIVE_CACHE.get("last_fetch_epoch") or 0.0)
-        if (not force) and LIVE_CACHE["vehicles"] and age < LIVE_CACHE_TTL_SEC:
-            return LIVE_CACHE
+        cached = _live_cache.get(key)
+        if cached:
+            ts, xml_bytes, status, excerpt = cached
+            if now - ts <= LIVE_CACHE_TTL_SECONDS and status == 200 and xml_bytes:
+                return parse_siri_vm(xml_bytes), {"cached": True, "status": status, "excerpt": excerpt}
 
-        result = await fetch_dft_siri_vm()
-        LIVE_CACHE["last_fetch_epoch"] = now
-        LIVE_CACHE["last_fetch_iso"] = now_local().isoformat()
-        LIVE_CACHE["vehicles"] = result.get("vehicles", [])
-        LIVE_CACHE["error"] = result.get("error")
-        LIVE_CACHE["error_detail"] = result.get("error_detail")
-        return LIVE_CACHE
+    xml_bytes, status, excerpt = await fetch_dft_xml(params)
 
-# ------------------------
+    async with _live_lock:
+        _live_cache[key] = (now, xml_bytes, status, excerpt)
+
+    if status != 200:
+        # adjunk vissza értelmes hibát
+        raise HTTPException(
+            status_code=status,
+            detail={
+                "message": "DfT BODS hiba",
+                "status": status,
+                "excerpt": excerpt or "No excerpt",
+                "hint": "Ellenőrizd az API key-t, és hogy nem túl sűrűn hívod. A backend cache-eli 10s-ig.",
+            },
+        )
+
+    return parse_siri_vm(xml_bytes), {"cached": False, "status": status, "excerpt": excerpt}
+
+
+# =========================
 # FastAPI app
-# ------------------------
-
-app = FastAPI(title="Bluestar API", version="1.0.0")
+# =========================
+app = FastAPI(title="Bluestar & Unilink API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # same-originnál mindegy, de mobil webview néha hisztizik
-    allow_credentials=True,
+    allow_origins=["*"],  # saját domainre szűkítheted
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
 @app.on_event("startup")
-async def startup() -> None:
-    # GTFS load
-    if not GTFS_DB.loaded:
-        GTFS_DB.load(GTFS_ZIP_PATH)
+async def _startup():
+    load_gtfs()
+
+
+# Static front-end
+if os.path.isdir("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 @app.get("/", response_class=HTMLResponse)
-def root() -> HTMLResponse:
-    # index.html-t a filesystemből szolgáljuk ki
-    if os.path.exists("index.html"):
-        with open("index.html", "r", encoding="utf-8") as f:
-            return HTMLResponse(f.read())
-    return HTMLResponse("<h1>index.html missing</h1>", status_code=500)
+async def root():
+    # serve static/index.html if exists
+    idx = os.path.join("static", "index.html")
+    if os.path.exists(idx):
+        return FileResponse(idx)
+    return HTMLResponse("<h1>API OK</h1><p>Hiányzik a static/index.html</p>")
 
-@app.get("/api/health")
-async def health() -> Dict[str, Any]:
+
+@app.get("/health")
+async def health():
     return {
         "ok": True,
-        "time": now_local().isoformat(),
-        "stops": len(GTFS_DB.stops),
-        "trips": len(GTFS_DB.trips),
-        "dft_key": bool(DFT_API_KEY),
-        "dft_vm_url": DFT_VM_URL,
-        "operator_ref": DFT_OPERATOR_REF,
-        "live_cache_last_fetch_epoch": float(LIVE_CACHE.get("last_fetch_epoch") or 0.0),
-        "live_cache_last_fetch_iso": LIVE_CACHE.get("last_fetch_iso"),
-        "live_cache_ttl_sec": LIVE_CACHE_TTL_SEC,
-        "live_cache_last_error": LIVE_CACHE.get("error"),
+        "time_uk": _now_uk().isoformat(),
+        "gtfs_loaded": bool(GTFS["loaded"]),
+        "has_dft_key": bool(DFT_API_KEY),
+        "default_operator_refs": DEFAULT_OPERATOR_REFS,
     }
 
-@app.get("/api/stop_search")
-def stop_search(q: str = Query("", min_length=1), limit: int = 10) -> Dict[str, Any]:
-    q2 = q.strip().lower()
-    results = []
-    for s in GTFS_DB.stops.values():
-        if q2 in s.stop_name.lower() or q2 in s.stop_id.lower():
+
+# =========================
+# LIVE endpoints
+# =========================
+@app.get("/api/live/vehicles")
+async def live_vehicles(
+    operatorRef: str = Query(DEFAULT_OPERATOR_REFS, description="pl: BLUS,UNIL"),
+    lineRef: Optional[str] = Query(None),
+    vehicleRef: Optional[str] = Query(None),
+    boundingBox: Optional[str] = Query(None, description="minLon,minLat,maxLon,maxLat"),
+    originRef: Optional[str] = Query(None),
+    destinationRef: Optional[str] = Query(None),
+    routeId: Optional[str] = Query(None),
+    startTimeAfter: Optional[str] = Query(None),
+    startTimeBefore: Optional[str] = Query(None),
+):
+    """
+    Proxy + parse: SIRI-VM -> JSON
+    """
+    params: Dict[str, str] = {}
+
+    # DfT API a docs szerint operatorRef-et vár (NOC)
+    # Többet úgy küldünk: BLUS,UNIL
+    params["operatorRef"] = operatorRef
+
+    if lineRef:
+        params["lineRef"] = lineRef
+    if vehicleRef:
+        params["vehicleRef"] = vehicleRef
+    if boundingBox:
+        params["boundingBox"] = boundingBox
+    if originRef:
+        params["originRef"] = originRef
+    if destinationRef:
+        params["destinationRef"] = destinationRef
+    if routeId:
+        params["routeId"] = routeId
+    if startTimeAfter:
+        params["startTimeAfter"] = startTimeAfter
+    if startTimeBefore:
+        params["startTimeBefore"] = startTimeBefore
+
+    vehicles, meta = await get_live_cached(params)
+
+    # opcionális gyors filter PublishedLineName alapján a frontendnek
+    return {
+        "meta": meta,
+        "count": len(vehicles),
+        "vehicles": vehicles,
+    }
+
+
+@app.get("/api/live/raw")
+async def live_raw(
+    operatorRef: str = Query(DEFAULT_OPERATOR_REFS),
+):
+    params = {"operatorRef": operatorRef}
+    xml_bytes, status, excerpt = await fetch_dft_xml(params)
+    if status != 200:
+        return JSONResponse(
+            status_code=status,
+            content={"status": status, "excerpt": excerpt},
+        )
+    return Response(content=xml_bytes, media_type="application/xml")
+
+
+@app.get("/api/live/test")
+async def live_test(operatorRef: str = Query(DEFAULT_OPERATOR_REFS)):
+    """
+    Debug: Railway-ről látod, hogy 200 vagy 403, és kapsz excerptet.
+    """
+    params = {"operatorRef": operatorRef}
+    xml_bytes, status, excerpt = await fetch_dft_xml(params)
+    return {
+        "status": status,
+        "content_bytes": len(xml_bytes or b""),
+        "excerpt": excerpt,
+        "hint": "Ha 403: ellenőrizd az API key-t + cache TTL-t; és ne hívd másodpercenként.",
+    }
+
+
+# =========================
+# GTFS endpoints
+# =========================
+@app.get("/api/stops/search")
+async def stops_search(
+    q: str = Query("", description="név vagy stop_id részlet"),
+    limit: str = Query("20", description="int, de elfogadunk '20/'-t is"),
+):
+    load_gtfs()
+    lim = _parse_int_loose(limit, 20, 1, 100)
+
+    qn = (q or "").strip().lower()
+    results: List[Dict[str, Any]] = []
+
+    if not qn:
+        return {"count": 0, "stops": []}
+
+    for s in GTFS["stops"].values():
+        if qn in s.stop_id.lower() or qn in s.stop_name.lower():
             results.append({
                 "stop_id": s.stop_id,
                 "stop_name": s.stop_name,
-                "lat": s.stop_lat,
-                "lon": s.stop_lon,
+                "stop_lat": s.stop_lat,
+                "stop_lon": s.stop_lon,
             })
-        if len(results) >= limit:
-            break
+            if len(results) >= lim:
+                break
+
     return {"count": len(results), "stops": results}
 
-@app.get("/api/stop/{stop_id}/departures")
-def stop_departures(stop_id: str, minutes: int = 60) -> Dict[str, Any]:
-    if stop_id not in GTFS_DB.stops:
+
+@app.get("/api/stop/{stop_id}")
+async def stop_info(stop_id: str):
+    load_gtfs()
+    s: Optional[Stop] = GTFS["stops"].get(stop_id)
+    if not s:
         raise HTTPException(status_code=404, detail="Stop not found")
+    return {
+        "stop_id": s.stop_id,
+        "stop_name": s.stop_name,
+        "stop_lat": s.stop_lat,
+        "stop_lon": s.stop_lon,
+    }
 
-    now = now_local()
-    d = now.date()
-    now_sec = now.hour * 3600 + now.minute * 60 + now.second
-    end_sec = now_sec + minutes * 60
 
-    deps = []
-    for st in GTFS_DB.stop_times_by_stop.get(stop_id, []):
-        trip = GTFS_DB.trips.get(st.trip_id)
+@app.get("/api/stop/{stop_id}/departures")
+async def stop_departures(
+    stop_id: str,
+    service_date: str = Query("", description="YYYY-MM-DD"),
+    time_hhmm: str = Query("", alias="time", description="HH:MM (opcionális)"),
+    max_results: str = Query("20", description="int, de elfogadunk '20/'-t is"),
+):
+    load_gtfs()
+
+    lim = _parse_int_loose(max_results, 20, 1, 200)
+
+    if not service_date:
+        d = _now_uk().date()
+    else:
+        try:
+            d = datetime.strptime(service_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="service_date format: YYYY-MM-DD")
+
+    if time_hhmm:
+        try:
+            hh, mm = time_hhmm.split(":")
+            now_min = int(hh) * 60 + int(mm)
+        except Exception:
+            raise HTTPException(status_code=400, detail="time format: HH:MM")
+    else:
+        # ha ma: most, ha nem ma: 00:00
+        now_min = (_now_uk().hour * 60 + _now_uk().minute) if d == _now_uk().date() else 0
+
+    st_list: List[StopTime] = GTFS["stop_times_by_stop"].get(stop_id, [])
+    out: List[Dict[str, Any]] = []
+
+    for st in st_list:
+        trip: Optional[Trip] = GTFS["trips"].get(st.trip_id)
         if not trip:
             continue
-        if not GTFS_DB.service_active(trip.service_id, d):
+
+        # calendar filter
+        if trip.service_id and not _service_runs_on(trip.service_id, d):
             continue
 
-        dep_sec = gtfs_time_to_seconds(st.departure_time)
-        # only within [now..end]
-        if dep_sec < now_sec or dep_sec > end_sec:
+        dep_min = _gtfs_time_to_minutes(st.departure_time)
+        if dep_min is None:
             continue
 
-        route = GTFS_DB.routes.get(trip.route_id)
-        line = (route.short_name if route else "") or ""
-        headsign = trip.trip_headsign or (route.long_name if route else "")
+        if dep_min < now_min:
+            continue
 
-        mins = int((dep_sec - now_sec) / 60)
-        deps.append({
-            "time": st.departure_time[:5],
+        route = GTFS["routes"].get(trip.route_id)
+        out.append({
             "trip_id": st.trip_id,
-            "service_date": d.isoformat(),
-            "line": line,
-            "headsign": headsign,
-            "minutes": mins,
+            "route_id": trip.route_id,
+            "route_short_name": route.route_short_name if route else "",
+            "route_long_name": route.route_long_name if route else "",
+            "headsign": trip.trip_headsign,
+            "direction_id": trip.direction_id,
+            "departure_time": st.departure_time,
         })
 
-    deps.sort(key=lambda x: (x["time"], x["trip_id"]))
+        if len(out) >= lim:
+            break
+
+    stop_obj = GTFS["stops"].get(stop_id)
     return {
         "stop": {
             "stop_id": stop_id,
-            "stop_name": GTFS_DB.stops[stop_id].stop_name,
-            "lat": GTFS_DB.stops[stop_id].stop_lat,
-            "lon": GTFS_DB.stops[stop_id].stop_lon,
+            "stop_name": stop_obj.stop_name if stop_obj else stop_id,
         },
-        "now": now.isoformat(),
-        "count": len(deps),
-        "departures": deps,
+        "service_date": d.isoformat(),
+        "time_from": f"{now_min//60:02d}:{now_min%60:02d}",
+        "count": len(out),
+        "departures": out,
     }
 
-def trip_shape_polyline(trip: Trip) -> List[List[float]]:
-    if trip.shape_id and trip.shape_id in GTFS_DB.shapes:
-        return [[lat, lon] for (lat, lon) in GTFS_DB.shapes[trip.shape_id]]
-    # fallback: stop coords
-    pts: List[List[float]] = []
-    for st in GTFS_DB.stop_times_by_trip.get(trip.trip_id, []):
-        s = GTFS_DB.stops.get(st.stop_id)
-        if s and s.stop_lat is not None and s.stop_lon is not None:
-            pts.append([s.stop_lat, s.stop_lon])
-    return pts
 
-@app.get("/api/trip/{trip_id}")
-async def trip_view(trip_id: str, service_date: str) -> Dict[str, Any]:
-    trip = GTFS_DB.trips.get(trip_id)
+@app.get("/api/trip")
+async def trip_detail(
+    trip_id: str = Query("", description="GTFS trip_id"),
+    service_date: str = Query("", description="YYYY-MM-DD (opcionális)"),
+):
+    load_gtfs()
+    if not trip_id:
+        raise HTTPException(status_code=400, detail="trip_id required")
+
+    trip: Optional[Trip] = GTFS["trips"].get(trip_id)
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
 
-    d = parse_date(service_date)
-    if not GTFS_DB.service_active(trip.service_id, d):
-        # ettől még megmutatjuk a megállókat, csak jelezzük
-        active = False
-    else:
-        active = True
+    d = _now_uk().date()
+    if service_date:
+        try:
+            d = datetime.strptime(service_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="service_date format: YYYY-MM-DD")
 
-    route = GTFS_DB.routes.get(trip.route_id)
-    line = (route.short_name if route else "") or ""
-    headsign = trip.trip_headsign or (route.long_name if route else "")
+    route = GTFS["routes"].get(trip.route_id)
 
-    st_list = GTFS_DB.stop_times_by_trip.get(trip_id, [])
-    stops = []
-    for st in st_list:
-        s = GTFS_DB.stops.get(st.stop_id)
-        stops.append({
-            "time": st.departure_time[:5],
+    sts: List[StopTime] = GTFS["stop_times_by_trip"].get(trip_id, [])
+    stops_out: List[Dict[str, Any]] = []
+    for st in sts:
+        s = GTFS["stops"].get(st.stop_id)
+        stops_out.append({
             "stop_id": st.stop_id,
-            "stop_name": (s.stop_name if s else st.stop_id),
-            "lat": (s.stop_lat if s else None),
-            "lon": (s.stop_lon if s else None),
+            "stop_name": s.stop_name if s else st.stop_id,
+            "stop_lat": s.stop_lat if s else None,
+            "stop_lon": s.stop_lon if s else None,
+            "arrival_time": st.arrival_time,
+            "departure_time": st.departure_time,
+            "stop_sequence": st.stop_sequence,
         })
 
-    # Live match (heurisztika): line + destination/headsign + time proximity
-    live_cache = await get_live_cache(force=False)
-    vehicles = live_cache.get("vehicles", [])
-    match = best_vehicle_match(line=line, headsign=headsign, trip_stops=stops, vehicles=vehicles)
+    shape_points: List[Dict[str, float]] = []
+    if trip.shape_id and trip.shape_id in GTFS["shapes"]:
+        for p in GTFS["shapes"][trip.shape_id]:
+            shape_points.append({"lat": p.shape_pt_lat, "lon": p.shape_pt_lon})
 
     return {
-        "trip": {
-            "trip_id": trip.trip_id,
-            "service_date": service_date,
-            "active": active,
-            "line": line,
-            "headsign": headsign,
+        "trip_id": trip.trip_id,
+        "service_date": d.isoformat(),
+        "route": {
+            "route_id": trip.route_id,
+            "route_short_name": route.route_short_name if route else "",
+            "route_long_name": route.route_long_name if route else "",
         },
-        "shape": trip_shape_polyline(trip),
-        "stops": stops,
-        "live": {
-            "available": bool(vehicles),
-            "last_fetch_iso": live_cache.get("last_fetch_iso"),
-            "error": live_cache.get("error"),
-            "error_detail": live_cache.get("error_detail"),
-            "match": match,
-        }
+        "headsign": trip.trip_headsign,
+        "direction_id": trip.direction_id,
+        "shape_id": trip.shape_id,
+        "shape": shape_points,
+        "stops": stops_out,
     }
-
-def best_vehicle_match(line: str, headsign: str, trip_stops: List[Dict[str, Any]], vehicles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    # very simple scoring; you already had "heuristic (50)" – itt is ilyesmi
-    if not vehicles:
-        return None
-
-    # pick a mid-trip stop coordinate as anchor
-    anchor = None
-    coords = [(s["lat"], s["lon"]) for s in trip_stops if s.get("lat") is not None and s.get("lon") is not None]
-    if coords:
-        anchor = coords[len(coords)//2]
-
-    head = (headsign or "").lower().replace("_", " ").strip()
-
-    def score(v: Dict[str, Any]) -> float:
-        sc = 0.0
-        vline = (v.get("line") or "").strip()
-        if line and vline and (vline == line):
-            sc += 50
-        elif line and vline and (line in vline or vline in line):
-            sc += 35
-
-        dest = (v.get("destination") or "").lower().replace("_", " ").strip()
-        if head and dest:
-            # partial match
-            if head == dest:
-                sc += 30
-            elif head in dest or dest in head:
-                sc += 18
-
-        # distance to anchor
-        if anchor and v.get("lat") is not None and v.get("lon") is not None:
-            lat, lon = float(v["lat"]), float(v["lon"])
-            alat, alon = anchor
-            # rough distance score (no haversine, enough for ranking)
-            dist = abs(lat - alat) + abs(lon - alon)
-            sc += max(0.0, 20.0 - dist * 300.0)
-
-        return sc
-
-    best = None
-    best_sc = -1e9
-    for v in vehicles:
-        sc = score(v)
-        if sc > best_sc:
-            best_sc = sc
-            best = v
-
-    if not best:
-        return None
-
-    out = dict(best)
-    out["score"] = round(best_sc, 1)
-    return out
-
-@app.get("/api/vehicles")
-async def vehicles(max_results: int = 20, line: Optional[str] = None) -> JSONResponse:
-    """
-    IMPORTANT:
-    - Always returns 200 JSON (even if DfT fails), so the frontend can show the error.
-    """
-    cache = await get_live_cache(force=False)
-    vehicles = cache.get("vehicles", []) or []
-
-    if line:
-        line2 = line.strip()
-        vehicles = [v for v in vehicles if (v.get("line") or "").strip() == line2]
-
-    vehicles = vehicles[:max_results]
-
-    return JSONResponse({
-        "count": len(vehicles),
-        "vehicles": vehicles,
-        "cached_ttl_sec": LIVE_CACHE_TTL_SEC,
-        "last_fetch_iso": cache.get("last_fetch_iso"),
-        "error": cache.get("error"),
-        "error_detail": cache.get("error_detail"),
-    })
