@@ -2,350 +2,570 @@
 <html lang="hu">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>bluestar</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bluestar & Unilink – Menetrend / Live</title>
 
-  <!-- Leaflet (térkép a triphez – opcionális, ha nincs koordináta, nem rajzol) -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""
-  />
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-    crossorigin=""
-  ></script>
+  <link rel="preconnect" href="https://unpkg.com" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
   <style>
     :root{
-      --bg:#0d1117; --card:#0f172a; --border:#1f2937; --text:#e5e7eb; --sub:#94a3b8;
-      --brand:#60a5fa; --live:#34d399; --sched:#e5e7eb;
+      --bg:#0b0f14;
+      --card:#111824;
+      --card2:#0f1620;
+      --text:#e9eef6;
+      --muted:#9fb0c7;
+      --accent:#6aa7ff;
+      --danger:#ff6a6a;
+      --ok:#65d48b;
+      --border: rgba(255,255,255,.08);
     }
     *{box-sizing:border-box}
-    html,body{height:100%}
-    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-    .wrap{max-width:960px;margin:0 auto;padding:0 12px}
-    header{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid var(--border);background:#0b1220}
-    header .brand{display:flex;align-items:center;gap:8px;color:#7dd3fc;font-weight:600;font-size:22px}
-    header .brand .star{filter:saturate(1.4)}
-    header .clock{color:var(--sub);font-size:12px}
-    h1{margin:14px 0 8px 0;font-size:22px}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden}
-    .section{margin:18px 0}
-    .row{display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border)}
-    .row:last-child{border-bottom:none}
-    .left{width:82px;text-align:right;padding-right:8px;font-variant-numeric:tabular-nums}
-    .middle{flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .right{width:96px;text-align:right;padding-left:8px;color:#cbd5e1;font-variant-numeric:tabular-nums}
-    .time-live{color:var(--live)}
-    .time-sched{color:var(--sched)}
-    .muted{color:var(--sub)}
-    .grid{display:grid;grid-template-columns:1fr;gap:14px}
-    #map{height:300px;border-radius:12px;overflow:hidden}
-    .pill{display:inline-block;padding:2px 8px;border:1px solid var(--border);border-radius:999px;color:var(--sub);font-size:12px}
-    .hint{font-size:12px;color:var(--sub);margin-top:6px}
-    .titlebar{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-    .titlebar .sub{color:var(--sub);font-size:14px}
-    a{color:#93c5fd;text-decoration:none}
-    a:hover{text-decoration:underline}
-    .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px}
-    .toolbar input{background:#0b1220;border:1px solid var(--border);color:var(--text);border-radius:10px;padding:8px 10px;min-width:180px}
-    .toolbar button{background:#1d4ed8;border:none;color:white;border-radius:10px;padding:8px 12px;cursor:pointer}
-    .toolbar button.secondary{background:#374151}
-    .toolbar button:disabled{opacity:.6;cursor:not-allowed}
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .app{
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 12px;
+      min-height: 100vh;
+      display:flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap:10px;
+      padding: 12px 12px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+      border-radius: 16px;
+    }
+    .title{
+      font-weight: 800;
+      letter-spacing:.2px;
+      font-size: 16px;
+    }
+    .pill{
+      font-size: 12px;
+      color: var(--muted);
+      border:1px solid var(--border);
+      padding: 6px 10px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .tabs{
+      display:flex;
+      gap: 8px;
+      padding: 6px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.03);
+      border-radius: 16px;
+    }
+    .tab{
+      flex:1;
+      text-align:center;
+      padding: 10px 8px;
+      border-radius: 12px;
+      border: 1px solid transparent;
+      color: var(--muted);
+      user-select:none;
+      cursor:pointer;
+      font-weight: 700;
+    }
+    .tab.active{
+      background: rgba(106,167,255,.14);
+      border-color: rgba(106,167,255,.35);
+      color: var(--text);
+    }
+    .card{
+      border: 1px solid var(--border);
+      background: rgba(17,24,36,.96); /* ne legyen “túl átlátszó” */
+      border-radius: 16px;
+      overflow:hidden;
+    }
+    .cardHeader{
+      padding: 12px 12px 10px;
+      border-bottom: 1px solid var(--border);
+      display:flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .cardHeader h2{
+      margin:0;
+      font-size: 16px;
+      letter-spacing:.2px;
+    }
+    .btn{
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.05);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 12px;
+      cursor:pointer;
+      font-weight: 700;
+    }
+    .btn:active{transform: translateY(1px)}
+    .row{display:flex; gap:10px; padding:12px}
+    .col{flex:1; min-width:0}
+    input{
+      width:100%;
+      padding: 12px 12px;
+      border-radius: 12px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.25);
+      color: var(--text);
+      outline:none;
+      font-size: 14px;
+    }
+    .hint{color: var(--muted); font-size: 12px; padding: 0 12px 12px}
+    .list{
+      display:flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px;
+    }
+    .item{
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.03);
+      border-radius: 14px;
+      padding: 10px 10px;
+      display:flex;
+      justify-content: space-between;
+      gap: 10px;
+      cursor:pointer;
+    }
+    .itemTitle{font-weight:800}
+    .itemSub{color: var(--muted); font-size: 12px; margin-top: 2px}
+    .time{font-weight:900; color: var(--accent)}
+    .error{
+      margin: 12px;
+      border:1px solid rgba(255,106,106,.35);
+      background: rgba(255,106,106,.12);
+      color: #ffd9d9;
+      border-radius: 14px;
+      padding: 10px;
+      white-space: pre-wrap;
+      font-size: 12px;
+    }
+    .ok{
+      margin: 12px;
+      border:1px solid rgba(101,212,139,.35);
+      background: rgba(101,212,139,.10);
+      color: #d9ffe6;
+      border-radius: 14px;
+      padding: 10px;
+      font-size: 12px;
+    }
+    #mapLive, #mapTrip{
+      height: 300px;
+      width:100%;
+    }
+    .split{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+    @media (min-width: 860px){
+      .split{grid-template-columns: 1.1fr .9fr;}
+      #mapLive, #mapTrip{height: 360px;}
+    }
+    .scrollBox{
+      max-height: 360px; /* TRIP nézet görgethető */
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 12px;
+    }
+    .stopRow{
+      display:flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 10px;
+      border:1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(255,255,255,.03);
+      margin-bottom: 8px;
+    }
+    .stopName{font-weight:800}
+    .stopCode{color: var(--muted); font-size: 12px}
+    .muted{color: var(--muted)}
+    .badge{
+      font-size: 12px;
+      font-weight: 900;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border:1px solid var(--border);
+      color: var(--muted);
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand"><span class="star">★</span><span>bluestar</span></div>
-    <div class="clock" id="clock">UK: --:--:--</div>
-  </header>
+  <div class="app">
+    <div class="topbar">
+      <div class="title">Bluestar & Unilink</div>
+      <div class="pill" id="pillStatus">API: …</div>
+    </div>
 
-  <main class="wrap">
-    <!-- TRIP NÉZET -->
-    <section class="section" id="tripSection" hidden>
-      <div class="titlebar">
-        <h1 id="tripTitle">Trip</h1>
-        <span class="sub" id="tripSub"></span>
+    <div class="tabs">
+      <div class="tab active" data-tab="stop">MEGÁLLÓ</div>
+      <div class="tab" data-tab="trip">MENETREND</div>
+      <div class="tab" data-tab="live">LIVE</div>
+    </div>
+
+    <!-- STOP -->
+    <div class="card" id="viewStop">
+      <div class="cardHeader">
+        <h2>Megálló keresés</h2>
+        <button class="btn" id="btnHealth">Health</button>
+      </div>
+      <div class="row">
+        <div class="col">
+          <input id="stopQuery" placeholder="Írj be megálló nevet vagy kódot (pl. 1900HA...)" />
+          <div class="hint">Tipp: ha nincs LIVE adat, a LIVE nézetben látod a backend hibát (pl. 403).</div>
+        </div>
+      </div>
+      <div id="stopResults" class="list"></div>
+      <div id="stopError" class="error" style="display:none"></div>
+    </div>
+
+    <!-- TRIP -->
+    <div class="card" id="viewTrip" style="display:none">
+      <div class="cardHeader">
+        <h2 id="tripTitle">Trip</h2>
+        <button class="btn" id="btnBackToStop">Vissza</button>
       </div>
 
-      <div class="toolbar">
-        <input id="tripIdInput" placeholder="tripId…" />
-        <input id="vehicleIdInput" placeholder="vehicleId (opcionális)…" />
-        <button id="tripLoadBtn">Betölt</button>
-        <span class="pill" id="tripAgencyPill">—</span>
+      <div class="split">
+        <div class="card" style="margin:12px;">
+          <div id="mapTrip"></div>
+          <div class="hint" id="tripMeta"></div>
+        </div>
+
+        <div class="card" style="margin:12px;">
+          <div class="cardHeader" style="border-bottom:none">
+            <h2>Megállók</h2>
+            <span class="badge" id="tripStopCount">0</span>
+          </div>
+          <div class="scrollBox" id="tripStops"></div>
+        </div>
       </div>
 
-      <div class="card" id="tripList"></div>
-      <div class="hint">A bal oldali idő <span class="time-live">zöld</span> ha *LIVE*, egyébként fehér (menetrend). A jobb oldalon visszaszámláló látható az érkezésig.</div>
+      <div id="tripError" class="error" style="display:none"></div>
+    </div>
 
-      <div class="section">
-        <div id="map" class="card"></div>
+    <!-- LIVE -->
+    <div class="card" id="viewLive" style="display:none">
+      <div class="cardHeader">
+        <h2>Élő térkép</h2>
+        <button class="btn" id="btnRefreshLive">Frissítés</button>
       </div>
-    </section>
-
-    <!-- MEGÁLLÓ NÉZET -->
-    <section class="section" id="stopSection" hidden>
-      <div class="titlebar">
-        <h1 id="stopTitle">Megálló</h1>
-        <span class="sub" id="stopRole"></span>
+      <div class="row">
+        <div class="col">
+          <input id="operatorRefs" value="BLUS,UNIL" />
+          <div class="hint">OperatorRef (NOC) vesszővel: pl. <b>BLUS,UNIL</b></div>
+        </div>
       </div>
-
-      <div class="toolbar">
-        <input id="stopIdInput" placeholder="stopId…" />
-        <button id="stopLoadBtn">Betölt</button>
-        <span class="pill" id="stopAgencyPill">Bluestar/Unilink szűrés aktív</span>
+      <div style="padding: 0 12px 12px;">
+        <div id="mapLive"></div>
       </div>
+      <div id="liveError" class="error" style="display:none"></div>
+      <div class="hint" id="liveMeta"></div>
+    </div>
+  </div>
 
-      <div class="card" id="stopList"></div>
-      <div class="hint">Ha a megálló **végállomás**, csak indulások látszanak (érkezők elrejtve).</div>
-    </section>
-  </main>
-
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    /* ======== KONFIG ======== */
-    const CONFIG = {
-      // API útvonalak: ha nálad más, itt állítsd
-      api: {
-        trip: (tripId) => `/api/trip/${encodeURIComponent(tripId)}`,
-        vehiclesByTrip: (tripId) => `/api/vehicles?tripId=${encodeURIComponent(tripId)}`,
-        stopBoard: (stopId) => `/api/stop/${encodeURIComponent(stopId)}/board`,
-      },
-      allowedAgencies: ["bluestar", "unilink", "uni-link", "uni link"],
-    };
-
-    /* ======== HASZNOS FÜGGVÉNYEK ======== */
     const $ = (sel) => document.querySelector(sel);
-    const pad2 = (n) => String(n).padStart(2, "0");
-    const hhmm = (ts) => {
-      if (!ts) return "—";
-      const d = new Date(ts);
-      return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-    };
-    const msUntil = (ts) => ts - Date.now();
-    const fmtCountdown = (ms) => {
-      if (ms <= 0) return "0:00";
-      const sec = Math.floor(ms / 1000);
-      const h = Math.floor(sec / 3600);
-      const m = Math.floor((sec % 3600) / 60);
-      const s = sec % 60;
-      return h > 0 ? `${h}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
-    };
-    const agencyAllowed = (a) => {
-      if (!a) return false;
-      const name = (a.name || a || "").toString().toLowerCase();
-      return CONFIG.allowedAgencies.some(x => name.includes(x));
-    };
 
-    function setClock() {
-      const d = new Date();
-      $("#clock").textContent = `UK: ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
-    }
-    setClock(); setInterval(setClock, 1000);
+    // Tabs
+    const tabs = document.querySelectorAll(".tab");
+    tabs.forEach(t => t.addEventListener("click", () => {
+      tabs.forEach(x => x.classList.remove("active"));
+      t.classList.add("active");
+      showView(t.dataset.tab);
+    }));
 
-    /* ======== TRIP NÉZET ======== */
-    const tripSection = $("#tripSection");
-    const tripList = $("#tripList");
-    const tripTitle = $("#tripTitle");
-    const tripSub = $("#tripSub");
-    const tripAgencyPill = $("#tripAgencyPill");
-    const tripIdInput = $("#tripIdInput");
-    const vehicleIdInput = $("#vehicleIdInput");
-    const tripLoadBtn = $("#tripLoadBtn");
-
-    let map, vehicleMarker, routeLine;
-    function ensureMap() {
-      if (map) return map;
-      map = L.map("map");
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: "&copy; OpenStreetMap contributors",
-      }).addTo(map);
-      map.setView([50.9097, -1.4044], 11); // Southampton környék alap nézet
-      return map;
-    }
-
-    function renderStopRow(container, stopName, schedTs, liveTs) {
-      const row = document.createElement("div"); row.className = "row";
-      const left = document.createElement("div"); left.className = "left " + (liveTs ? "time-live" : "time-sched");
-      left.textContent = hhmm(liveTs ?? schedTs);
-      const mid = document.createElement("div"); mid.className = "middle"; mid.textContent = stopName;
-      const right = document.createElement("div"); right.className = "right";
-      row.append(left, mid, right);
-      container.appendChild(row);
-
-      function tick() {
-        const ts = (liveTs ?? schedTs);
-        right.textContent = ts ? fmtCountdown(msUntil(ts)) : "";
+    function showView(name){
+      $("#viewStop").style.display = (name === "stop") ? "" : "none";
+      $("#viewTrip").style.display = (name === "trip") ? "" : "none";
+      $("#viewLive").style.display = (name === "live") ? "" : "none";
+      if(name === "live"){
+        setTimeout(() => { liveMap?.invalidateSize(); }, 100);
       }
-      tick(); const t = setInterval(tick, 1000);
-      row._timer = t;
+      if(name === "trip"){
+        setTimeout(() => { tripMap?.invalidateSize(); }, 100);
+      }
     }
 
-    async function loadTrip(tripId, vehicleId) {
-      tripList.innerHTML = `<div class="row"><div class="middle muted">Betöltés…</div></div>`;
+    // Health
+    $("#btnHealth").addEventListener("click", async () => {
+      const h = await apiGet("/health");
+      if(h.ok){
+        $("#pillStatus").textContent = "API: OK";
+      }else{
+        $("#pillStatus").textContent = "API: HIBA";
+      }
+    });
 
-      const trip = await fetch(CONFIG.api.trip(tripId)).then(r => r.json());
-      // Ügynökség szűrés
-      if (trip?.agency && !agencyAllowed(trip.agency)) {
-        tripList.innerHTML = `<div class="row"><div class="middle muted">Ez a trip nem Bluestar/Unilink ügynökséghez tartozik.</div></div>`;
-        tripTitle.textContent = "Trip";
-        tripSub.textContent = "";
-        tripAgencyPill.textContent = trip?.agency?.name ?? "—";
+    async function apiGet(path){
+      try{
+        const r = await fetch(path, { cache: "no-store" });
+        const ct = (r.headers.get("content-type")||"").toLowerCase();
+        let data = null;
+        if(ct.includes("application/json")) data = await r.json();
+        else data = await r.text();
+        if(!r.ok) return { ok:false, status:r.status, data };
+        return { ok:true, status:r.status, data };
+      }catch(e){
+        return { ok:false, status:0, data: String(e) };
+      }
+    }
+
+    // Stop search (debounce)
+    let stopTimer = null;
+    $("#stopQuery").addEventListener("input", () => {
+      clearTimeout(stopTimer);
+      stopTimer = setTimeout(runStopSearch, 250);
+    });
+
+    async function runStopSearch(){
+      const q = $("#stopQuery").value.trim();
+      $("#stopError").style.display = "none";
+      $("#stopResults").innerHTML = "";
+      if(q.length < 2) return;
+
+      // FONTOS: limit INT -> NE legyen "20/" !!
+      const res = await apiGet(`/api/stops/search?q=${encodeURIComponent(q)}&limit=20`);
+      if(!res.ok){
+        $("#stopError").style.display = "";
+        $("#stopError").textContent = formatErr(res);
         return;
       }
 
-      // Járművek (csak a triphez tartozó + opcionális vehicleId)
-      const vehicles = await fetch(CONFIG.api.vehiclesByTrip(tripId)).then(r => r.json());
-      const allowedVehicles = (vehicles || [])
-        .filter(v => agencyAllowed(v.agency))
-        .filter(v => v.tripId === tripId);
-      const filtered = vehicleId
-        ? allowedVehicles.filter(v => (v.id === vehicleId) || (v.label === vehicleId))
-        : allowedVehicles;
-      filtered.sort((a,b) => (b.lastUpdate||0)-(a.lastUpdate||0));
-      const vehicle = filtered[0] || null;
-
-      // Fejléc
-      const titleLeft = (trip.routeShortName ? trip.routeShortName + " " : "");
-      tripTitle.textContent = `${titleLeft}${trip.headsign ? "→ " + trip.headsign : ""}`.trim() || "Trip";
-      tripSub.textContent = vehicle ? `Jármű: ${vehicle.label || vehicle.id}` : "Nincs bejelentkezett jármű ehhez a triphez";
-      tripAgencyPill.textContent = trip?.agency?.name || "—";
-
-      // Lista kirajzolása
-      tripList.innerHTML = "";
-      (trip.stopTimes || []).forEach(st => {
-        renderStopRow(tripList, st.stopName, st.schedTs, st.liveTs);
-      });
-
-      // TÉRKÉP (ha van koordináta a stopTimes sorokban)
-      try {
-        ensureMap();
-        const pts = (trip.stopTimes || [])
-          .filter(st => typeof st.lat === "number" && typeof st.lon === "number")
-          .map(st => [st.lat, st.lon]);
-        if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
-        if (pts.length >= 2) {
-          routeLine = L.polyline(pts, { weight: 4 }).addTo(map);
-          map.fitBounds(routeLine.getBounds(), { padding: [20, 20] });
-        }
-        if (vehicleMarker) { map.removeLayer(vehicleMarker); vehicleMarker = null; }
-        if (vehicle && typeof vehicle.lat === "number" && typeof vehicle.lon === "number") {
-          vehicleMarker = L.marker([vehicle.lat, vehicle.lon]).addTo(map);
-        }
-      } catch (e) {
-        console.warn("Map render skipped:", e);
-      }
-    }
-
-    tripLoadBtn.addEventListener("click", () => {
-      const t = tripIdInput.value.trim();
-      if (!t) return;
-      const v = vehicleIdInput.value.trim() || undefined;
-      const url = new URL(location.href);
-      url.searchParams.set("tripId", t);
-      v ? url.searchParams.set("vehicleId", v) : url.searchParams.delete("vehicleId");
-      history.replaceState({}, "", url);
-      loadTrip(t, v);
-      // stop kontextushoz is jól jön a trip – alább a stopnál felhasználjuk
-      window.__CTX_TRIPID__ = t;
-    });
-
-    /* ======== MEGÁLLÓ NÉZET ======== */
-    const stopSection = $("#stopSection");
-    const stopList = $("#stopList");
-    const stopTitle = $("#stopTitle");
-    const stopRole = $("#stopRole");
-    const stopIdInput = $("#stopIdInput");
-    const stopLoadBtn = $("#stopLoadBtn");
-    const stopAgencyPill = $("#stopAgencyPill");
-
-    async function loadStop(stopId, ctxTripId) {
-      stopList.innerHTML = `<div class="row"><div class="middle muted">Betöltés…</div></div>`;
-
-      // Board lekérés + Bluestar/Unilink szűrés
-      const sb = await fetch(CONFIG.api.stopBoard(stopId)).then(r => r.json());
-      sb.rows = (sb.rows || []).filter(r => agencyAllowed(r.agency));
-
-      stopTitle.textContent = sb?.stop?.name || "Megálló";
-
-      // Ha kapunk context trip-et, eldöntjük: induló / végállomás / normál
-      let role = "NO";
-      try {
-        if (ctxTripId) {
-          const t = await fetch(CONFIG.api.trip(ctxTripId)).then(r => r.json());
-          const sts = t.stopTimes || [];
-          const first = sts[0]?.stopId, last = sts[sts.length-1]?.stopId;
-          if (stopId === last) role = "END";
-          else if (stopId === first) role = "START";
-        }
-      } catch(e){/* ignore */ }
-
-      stopRole.textContent = role === "END"
-        ? "Végállomás – csak indulások jelennek meg"
-        : role === "START"
-          ? "Induló megálló"
-          : "";
-
-      // Sorok – VÉGÁLLOMÁSNÁL CSAK INDULÁSOK
-      const rows = (sb.rows || []).filter(r => {
-        if (role === "END") {
-          const hasDeparture = !!(r.depLiveTs ?? r.depTs);
-          const canBoard = (r.canBoard !== false);
-          return hasDeparture && canBoard;
-        }
-        return true;
-      });
-
-      stopList.innerHTML = "";
-      if (!rows.length) {
-        stopList.innerHTML = `<div class="row"><div class="middle muted">Nincs megjeleníthető indulás.</div></div>`;
+      const stops = res.data.stops || [];
+      if(!stops.length){
+        $("#stopResults").innerHTML = `<div class="hint">Nincs találat.</div>`;
         return;
       }
 
-      rows.forEach(r => {
-        const name = `${r.routeShortName || ""} → ${r.headsign || ""}`.trim();
-        const sched = r.depTs ?? r.arrTs;
-        const live  = r.depLiveTs ?? r.arrLiveTs;
-        renderStopRow(stopList, name, sched, live);
+      $("#stopResults").innerHTML = stops.map(s => `
+        <div class="item" data-stop="${s.stop_id}">
+          <div>
+            <div class="itemTitle">${escapeHtml(s.stop_name || s.stop_id)}</div>
+            <div class="itemSub">${escapeHtml(s.stop_id)}</div>
+          </div>
+          <div class="time">→</div>
+        </div>
+      `).join("");
+
+      document.querySelectorAll("#stopResults .item").forEach(el => {
+        el.addEventListener("click", () => openStop(el.dataset.stop));
       });
     }
 
-    stopLoadBtn.addEventListener("click", () => {
-      const s = stopIdInput.value.trim();
-      if (!s) return;
-      const url = new URL(location.href);
-      url.searchParams.set("stopId", s);
-      history.replaceState({}, "", url);
-      loadStop(s, window.__CTX_TRIPID__);
+    async function openStop(stopId){
+      // Megnyitjuk a MENETREND / TRIP listát úgy, hogy lekérjük a megálló indulásait
+      tabs.forEach(x => x.classList.remove("active"));
+      document.querySelector(`.tab[data-tab="trip"]`).classList.add("active");
+      showView("trip");
+
+      $("#tripTitle").textContent = `Stop → ${stopId}`;
+      $("#tripError").style.display = "none";
+      $("#tripStops").innerHTML = "";
+      $("#tripStopCount").textContent = "…";
+      $("#tripMeta").textContent = "";
+
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth()+1).padStart(2,"0");
+      const dd = String(today.getDate()).padStart(2,"0");
+      const serviceDate = `${yyyy}-${mm}-${dd}`;
+
+      // FONTOS: max_results INT -> NE legyen "20/" !!
+      const dep = await apiGet(`/api/stop/${encodeURIComponent(stopId)}/departures?service_date=${serviceDate}&max_results=25`);
+      if(!dep.ok){
+        $("#tripError").style.display = "";
+        $("#tripError").textContent = formatErr(dep);
+        return;
+      }
+
+      const deps = dep.data.departures || [];
+      $("#tripMeta").textContent = `${dep.data.stop?.stop_name || stopId} • ${dep.data.service_date} • from ${dep.data.time_from}`;
+      $("#tripStopCount").textContent = deps.length;
+
+      // trip nézet itt most indulás-lista lesz: rákatt -> trip detail
+      $("#tripStops").innerHTML = deps.map(d => `
+        <div class="stopRow" data-trip="${escapeAttr(d.trip_id)}">
+          <div>
+            <div class="stopName">${escapeHtml((d.route_short_name || "") + " → " + (d.headsign || ""))}</div>
+            <div class="stopCode">${escapeHtml(d.trip_id)}</div>
+          </div>
+          <div class="time">${escapeHtml(d.departure_time || "")}</div>
+        </div>
+      `).join("");
+
+      document.querySelectorAll("#tripStops .stopRow").forEach(el => {
+        el.addEventListener("click", () => openTrip(el.dataset.trip, serviceDate));
+      });
+
+      // Térkép: középre Southampton környéke default
+      initTripMapIfNeeded();
+      clearTripMap();
+      tripMap.setView([50.91, -1.40], 11);
+    }
+
+    $("#btnBackToStop").addEventListener("click", () => {
+      tabs.forEach(x => x.classList.remove("active"));
+      document.querySelector(`.tab[data-tab="stop"]`).classList.add("active");
+      showView("stop");
     });
 
-    /* ======== INDULÁSKORI PARAMÉTEREK ======== */
-    (function initFromQuery() {
-      const q = new URLSearchParams(location.search);
-      const tripId = q.get("tripId");
-      const vehicleId = q.get("vehicleId") || undefined;
-      const stopId = q.get("stopId");
+    // Trip detail view + polyline
+    let tripMap = null;
+    let tripLine = null;
+    let tripMarkers = [];
+    function initTripMapIfNeeded(){
+      if(tripMap) return;
+      tripMap = L.map("mapTrip");
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(tripMap);
+    }
+    function clearTripMap(){
+      if(tripLine){ tripMap.removeLayer(tripLine); tripLine = null; }
+      tripMarkers.forEach(m => tripMap.removeLayer(m));
+      tripMarkers = [];
+    }
 
-      // mely szekciók látszanak
-      tripSection.hidden = !tripId;
-      stopSection.hidden = !stopId;
+    async function openTrip(tripId, serviceDate){
+      $("#tripTitle").textContent = `Trip: ${tripId}`;
+      $("#tripError").style.display = "none";
+      $("#tripMeta").textContent = `service_date: ${serviceDate}`;
+      $("#tripStops").innerHTML = "";
+      $("#tripStopCount").textContent = "…";
 
-      if (tripId) {
-        tripIdInput.value = tripId;
-        if (vehicleId) vehicleIdInput.value = vehicleId;
-        loadTrip(tripId, vehicleId);
-        window.__CTX_TRIPID__ = tripId;
+      initTripMapIfNeeded();
+      clearTripMap();
+
+      const res = await apiGet(`/api/trip?trip_id=${encodeURIComponent(tripId)}&service_date=${encodeURIComponent(serviceDate)}`);
+      if(!res.ok){
+        $("#tripError").style.display = "";
+        $("#tripError").textContent = formatErr(res);
+        return;
       }
-      if (stopId) {
-        stopIdInput.value = stopId;
-        loadStop(stopId, window.__CTX_TRIPID__);
+
+      const t = res.data;
+      const route = t.route || {};
+      $("#tripMeta").textContent = `${route.route_short_name || ""} ${route.route_long_name || ""} • ${t.headsign || ""} • ${t.service_date}`;
+      const stops = t.stops || [];
+      $("#tripStopCount").textContent = stops.length;
+
+      // Stops list scrollable
+      $("#tripStops").innerHTML = stops.map(s => `
+        <div class="stopRow">
+          <div>
+            <div class="stopName">${escapeHtml(s.stop_name || s.stop_id)}</div>
+            <div class="stopCode">${escapeHtml(s.stop_id)}</div>
+          </div>
+          <div class="muted">${escapeHtml((s.departure_time || "").slice(0,5))}</div>
+        </div>
+      `).join("");
+
+      // Draw shape polyline
+      const shape = t.shape || [];
+      if(shape.length){
+        const latlngs = shape.map(p => [p.lat, p.lon]);
+        tripLine = L.polyline(latlngs).addTo(tripMap);
+        tripMap.fitBounds(tripLine.getBounds(), { padding:[16,16] });
+      }else{
+        // fallback: fit to stops if coords exist
+        const coords = stops.filter(s => s.stop_lat && s.stop_lon).map(s => [s.stop_lat, s.stop_lon]);
+        if(coords.length){
+          tripLine = L.polyline(coords).addTo(tripMap);
+          tripMap.fitBounds(tripLine.getBounds(), { padding:[16,16] });
+        }else{
+          tripMap.setView([50.91, -1.40], 11);
+        }
       }
 
-      // ha egyik sincs, legalább az egyik panel legyen látható
-      if (!tripId && !stopId) tripSection.hidden = false;
+      // Optional: megálló pöttyök
+      stops.forEach(s => {
+        if(s.stop_lat && s.stop_lon){
+          const m = L.circleMarker([s.stop_lat, s.stop_lon], { radius:4 });
+          m.addTo(tripMap);
+          tripMarkers.push(m);
+        }
+      });
+    }
+
+    // LIVE map
+    let liveMap = null;
+    let liveMarkers = [];
+    function initLiveMapIfNeeded(){
+      if(liveMap) return;
+      liveMap = L.map("mapLive");
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(liveMap);
+      liveMap.setView([50.91, -1.40], 11);
+    }
+    function clearLiveMarkers(){
+      liveMarkers.forEach(m => liveMap.removeLayer(m));
+      liveMarkers = [];
+    }
+
+    $("#btnRefreshLive").addEventListener("click", refreshLive);
+
+    async function refreshLive(){
+      initLiveMapIfNeeded();
+      clearLiveMarkers();
+      $("#liveError").style.display = "none";
+      $("#liveMeta").textContent = "";
+
+      const op = $("#operatorRefs").value.trim() || "BLUS,UNIL";
+      const res = await apiGet(`/api/live/vehicles?operatorRef=${encodeURIComponent(op)}`);
+      if(!res.ok){
+        $("#liveError").style.display = "";
+        $("#liveError").textContent = formatErr(res);
+        return;
+      }
+
+      const meta = res.data.meta || {};
+      $("#liveMeta").textContent = `LIVE: ${res.data.count} jármű • cached=${!!meta.cached} • status=${meta.status}`;
+
+      const vehicles = res.data.vehicles || [];
+      vehicles.forEach(v => {
+        if(!v.latitude || !v.longitude) return;
+        const label = `${v.publishedLineName || v.lineRef || "?"} → ${v.destinationName || v.destinationRef || ""}\nveh: ${v.vehicleRef || ""}`;
+        const m = L.marker([v.latitude, v.longitude]).addTo(liveMap).bindPopup(escapeHtml(label));
+        liveMarkers.push(m);
+      });
+    }
+
+    function formatErr(res){
+      if(typeof res.data === "string") return `HTTP ${res.status}\n${res.data}`;
+      try{
+        return `HTTP ${res.status}\n${JSON.stringify(res.data, null, 2)}`;
+      }catch(e){
+        return `HTTP ${res.status}\n${String(res.data)}`;
+      }
+    }
+    function escapeHtml(s){
+      return String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function escapeAttr(s){
+      return escapeHtml(s).replace(/"/g, "&quot;");
+    }
+
+    // initial health
+    (async () => {
+      const h = await apiGet("/health");
+      $("#pillStatus").textContent = h.ok ? "API: OK" : "API: HIBA";
+      // előkészít maps (lazy)
+      initLiveMapIfNeeded();
     })();
   </script>
 </body>
