@@ -7,27 +7,24 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-
   <title>Bluestar Unilink Menetrend</title>
 
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <style>
     :root {
       --bg: #303030;
       --top: #858585;
-      --black: #070707;
+      --black: #050505;
       --line: #494949;
-      --text: #f1f1f1;
+      --text: #f2f2f2;
       --muted: #c8c8c8;
+      --muted2: #9e9e9e;
       --blue: #20aeea;
-      --blue2: #168ac6;
+      --blue-dark: #168ac6;
+      --header-blue: #3b7fd8;
       --live: #34ee3e;
       --red: #ff4c4c;
-      --yellow: #ffd34d;
     }
 
     * {
@@ -217,7 +214,7 @@
     }
 
     .blue-header {
-      background: #3b7fd8;
+      background: var(--header-blue);
       color: #fff;
       padding: 8px 12px;
       font-size: 20px;
@@ -284,10 +281,8 @@
       width: 86px;
       height: 50px;
       border-radius: 4px;
-      background: linear-gradient(#22b9ef,#159bd4);
-      box-shadow:
-        inset 0 0 0 2px rgba(255,255,255,.12),
-        inset 0 -5px 0 rgba(0,0,0,.12);
+      background: linear-gradient(#22b9ef, #159bd4);
+      box-shadow: inset 0 0 0 2px rgba(255,255,255,.12), inset 0 -5px 0 rgba(0,0,0,.12);
       color: #fff;
       display: flex;
       flex-direction: column;
@@ -416,17 +411,18 @@
     }
 
     .depart-row.due-row,
-    .stop-row-trip.vehicle-row {
+    .stop-row-trip.vehicle-row,
+    .stop-row-trip.due-row {
       animation: dueRowBlink 1s infinite;
     }
 
     @keyframes dueRowBlink {
-      0%,49% {
-        background: rgba(52,238,62,.18);
+      0%, 49% {
+        background: rgba(52,238,62,.20);
         opacity: 1;
       }
 
-      50%,100% {
+      50%, 100% {
         background: rgba(52,238,62,.04);
         opacity: .58;
       }
@@ -613,7 +609,7 @@
     }
 
     .small-blue-title {
-      background: #3b7fd8;
+      background: var(--header-blue);
       color: white;
       font-size: 21px;
       line-height: 1.2;
@@ -621,7 +617,7 @@
       padding: 8px 12px;
     }
 
-    @media(max-width:430px) {
+    @media (max-width: 430px) {
       .topbar {
         height: 56px;
         padding: 0 10px;
@@ -746,6 +742,8 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
+    const API = "";
+
     const root = document.getElementById("appRoot");
     const pageTitle = document.getElementById("pageTitle");
     const backBtn = document.getElementById("backBtn");
@@ -754,213 +752,189 @@
     const liveText = document.getElementById("liveText");
     const gtfsText = document.getElementById("gtfsText");
 
-    const API = "";
-
-    let appStatus = null;
+    let lang = localStorage.getItem("bu_lang") || "hu";
     let currentView = "home";
-    let currentStop = null;
     let currentRoute = "";
+    let currentStop = null;
     let currentMap = null;
     let mapLayerGroup = null;
     let routeShapeLayers = [];
 
-    let lang = localStorage.getItem("lang") || "hu";
-
-    const TXT = {
+    const I18N = {
       hu: {
-        searchTitle: "Bluestar Unilink",
-        stopTitle: "Megálló",
-        stopsTitle: "Megállók",
-        routeTitle: "Viszonylat",
-        tripTitle: "Járat",
-        vehiclesTitle: "Járművek",
-        mapTitle: "Térkép",
+        appTitle: "Bluestar Unilink Menetrend",
         searchLabel: "Megálló vagy viszonylat keresése",
         searchPlaceholder: "Megálló vagy járat keresése...",
+        typeSearch: "Írj be megállót vagy járatot...",
         resultsFor: "Találatok a(z)",
         stops: "Megállók",
         routes: "Járatok",
         routeSub: "Viszonylat",
+        noResults: "Nincs találat.",
+        stopTitle: "Megálló",
+        routeTitle: "Viszonylat",
+        mapTitle: "Térkép",
+        tripTitle: "Járat",
+        vehiclesTitle: "Járművek",
         noDepartures: "Nincs indulás a következő időablakban.",
-        loadErrorDepartures: "Hiba az indulások betöltésénél.",
         whiteGreen: "Fehér: menetrend (GTFS) · Zöld: élő (LIVE)",
         timetable: "Menetrendi adat",
         live: "Élő adat",
         due: "Due",
         min: "perc",
+        loadErrorDepartures: "Hiba az indulások betöltésénél.",
         vehiclesListHeader: "A viszonylaton közlekedő járművek listája:",
-        routeMapHeader: "A viszonylat útvonala térképen:",
-        routeDirectionsHeader: "A viszonylat megállóinak listája irányonként:",
-        vehiclesList: "Járművek listája forgalmi számokkal",
+        vehiclesList: "Járművek listája forgalmi számmal",
         onlyActualLive: "Csak aktuális live járművek",
+        routeMapHeader: "A viszonylat útvonala térképen:",
         viewMap: "Térkép megtekintése",
         routeAndVehicles: "Útvonal + bejelentkezett járművek",
+        routeDirectionsHeader: "A viszonylat megállóinak listája irányonként:",
+        noVehicles: "Nincs aktuális live jármű ezen a viszonylaton.",
         moving: "Mozgásban",
         atStop: "Megállóban",
+        liveVehicleMatched: "Élő jármű párosítva",
+        scheduleOnly: "Menetrendi adat",
         filter: "Szűrő",
         clearFilter: "Szűrő törlése",
         refresh: "Frissítés",
-        vehiclesOnly: "Csak járművek",
-        writeSearch: "Írj be megállót vagy járatot...",
-        liveMatched: "Élő jármű párosítva",
-        scheduleOnly: "Menetrendi adat",
-        noVehicles: "Nincs aktuális bejelentkezett jármű ezen a viszonylaton.",
-        noResults: "Nincs találat.",
-        liveVehicleMatched: "Élő jármű párosítva"
+        all: "mind"
       },
 
       en: {
-        searchTitle: "Bluestar Unilink",
-        stopTitle: "Stop",
-        stopsTitle: "Stops",
-        routeTitle: "Route",
-        tripTitle: "Trip",
-        vehiclesTitle: "Vehicles",
-        mapTitle: "Map",
+        appTitle: "Bluestar Unilink Timetable",
         searchLabel: "Search stop or route",
         searchPlaceholder: "Search stop or route...",
+        typeSearch: "Type a stop or route...",
         resultsFor: "Results for",
         stops: "Stops",
         routes: "Routes",
         routeSub: "Route",
+        noResults: "No results.",
+        stopTitle: "Stop",
+        routeTitle: "Route",
+        mapTitle: "Map",
+        tripTitle: "Trip",
+        vehiclesTitle: "Vehicles",
         noDepartures: "No departures in the next time window.",
-        loadErrorDepartures: "Error loading departures.",
-        whiteGreen: "White: timetable (GTFS) · Green: live",
+        whiteGreen: "White: scheduled (GTFS) · Green: live",
         timetable: "Scheduled",
         live: "Live",
         due: "Due",
         min: "min",
+        loadErrorDepartures: "Error loading departures.",
         vehiclesListHeader: "Vehicles currently running on this route:",
+        vehiclesList: "Vehicles with fleet numbers",
+        onlyActualLive: "Only current live vehicles",
         routeMapHeader: "Route on map:",
-        routeDirectionsHeader: "Route stop lists by direction:",
-        vehiclesList: "Vehicle list with fleet numbers",
-        onlyActualLive: "Current live vehicles only",
         viewMap: "View map",
         routeAndVehicles: "Route + logged-in vehicles",
+        routeDirectionsHeader: "Stops by direction:",
+        noVehicles: "No current live vehicles on this route.",
         moving: "Moving",
         atStop: "At stop",
+        liveVehicleMatched: "Live vehicle matched",
+        scheduleOnly: "Scheduled",
         filter: "Filter",
         clearFilter: "Clear filter",
         refresh: "Refresh",
-        vehiclesOnly: "Vehicles only",
-        writeSearch: "Type a stop or route...",
-        liveMatched: "Live vehicle matched",
-        scheduleOnly: "Scheduled",
-        noVehicles: "No current logged-in vehicles on this route.",
-        noResults: "No results.",
-        liveVehicleMatched: "Live vehicle matched"
+        all: "all"
       }
     };
 
     function t(key) {
-      return (TXT[lang] && TXT[lang][key]) || TXT.hu[key] || key;
+      return (I18N[lang] && I18N[lang][key]) || I18N.hu[key] || key;
     }
 
     function esc(value) {
       return String(value ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;");
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
     }
 
-    function cleanName(value) {
-      return String(value || "")
+    function shortName(value, max = 30) {
+      const s = String(value || "")
         .replaceAll("_", " ")
         .replace(/\s+/g, " ")
         .trim();
+
+      if (s.length <= max) {
+        return s;
+      }
+
+      return s.slice(0, Math.max(0, max - 1)).trimEnd() + "…";
     }
 
-    function shortName(value, max = 34) {
-      const s = cleanName(value);
-      return s.length <= max ? s : s.slice(0, max - 1).trim() + "…";
+    function routeBadge(text, opts = {}) {
+      const small = opts.small ? " small" : "";
+      const routeOnly = opts.routeOnly ? " route-only" : "";
+      const label = String(text || "BUS").trim() || "BUS";
+
+      return `
+        <div class="badge${small}${routeOnly}">
+          <div class="brand">BLUESTAR</div>
+          <div class="num">${esc(label)}</div>
+        </div>
+      `;
     }
 
     function stopBadgeCode(stop) {
-      const name = stop?.stop_name || stop?.stopName || stop?.name || "";
-      const m = String(name).match(/\[([A-Z0-9]{1,6})\]/i);
+      const stopName = stop.stop_name || stop.stopName || stop.name || "";
+      const nameMatch = String(stopName).match(/\[([A-Z0-9]{1,6})\]/i);
 
-      if (m) {
-        return m[1].toUpperCase();
+      if (nameMatch) {
+        return nameMatch[1].toUpperCase();
       }
 
-      const p = stop?.platform_code || stop?.platformCode || stop?.badge || "";
+      const platform = stop.platform_code || stop.platformCode || stop.platform || "";
 
-      if (p && String(p).length <= 6 && String(p).toUpperCase() !== "BUS") {
-        return String(p).toUpperCase();
+      if (platform && String(platform).length <= 6 && /[A-Za-z]/.test(String(platform))) {
+        return String(platform).toUpperCase();
       }
 
       return "BUS";
     }
 
-    function routeBadge(code, opt = {}) {
-      const routeOnly = opt.routeOnly ? " route-only" : "";
-      const small = opt.small ? " small" : "";
-      const brand = opt.brand === false ? "" : '<div class="brand">BLUESTAR</div>';
+    function setTitle(title, mode = "menu") {
+      pageTitle.textContent = title;
+      backBtn.textContent = mode === "back" ? "‹" : "☰";
+    }
 
-      return `
-        <div class="badge${routeOnly}${small}">
-          ${brand}
-          <div class="num">${esc(code || "BUS")}</div>
-        </div>
-      `;
+    function updateLanguageButtons() {
+      document.documentElement.lang = lang;
+
+      document.querySelectorAll(".flag-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.lang === lang);
+      });
     }
 
     async function fetchJson(url) {
       const res = await fetch(url, {
-        cache: "no-store",
-        headers: {
-          Accept: "application/json"
-        }
+        cache: "no-store"
       });
 
       if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`${res.status} ${txt}`);
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `HTTP ${res.status}`);
       }
 
-      return await res.json();
+      return res.json();
     }
-
-    function setTitle(title, back = "menu") {
-      pageTitle.textContent = title;
-      backBtn.textContent = back === "back" ? "‹" : "☰";
-    }
-
-    function setLang(next) {
-      lang = next;
-      localStorage.setItem("lang", lang);
-      document.documentElement.lang = lang;
-
-      document.querySelectorAll(".flag-btn").forEach((btn) => {
-        btn.classList.toggle("active", btn.dataset.lang === lang);
-      });
-
-      refreshView(false);
-    }
-
-    document.querySelectorAll(".flag-btn").forEach((btn) => {
-      btn.addEventListener("click", () => setLang(btn.dataset.lang));
-    });
-
-    document.querySelector(`[data-lang="${lang}"]`)?.classList.add("active");
-
-    backBtn.addEventListener("click", () => {
-      renderHome();
-    });
 
     async function loadStatus() {
       try {
-        appStatus = await fetchJson(`${API}/api/status`);
-
-        const liveOk = !!appStatus?.live?.ok;
-        const gtfsOk = !!appStatus?.gtfs?.ok;
+        const data = await fetchJson(`${API}/api/status`);
+        const liveOk = !!data.live?.ok;
+        const gtfsOk = !!data.gtfs?.ok;
 
         liveDot.classList.toggle("bad", !liveOk);
         gtfsDot.classList.toggle("bad", !gtfsOk);
 
         liveText.textContent = liveOk
-          ? `LIVE: ON (${appStatus.live.activeCount ?? 0})`
+          ? `LIVE: ON (${data.live?.activeCount ?? 0})`
           : "LIVE: ERR";
 
         gtfsText.textContent = gtfsOk
@@ -974,92 +948,67 @@
       }
     }
 
-    function refreshView(reload = true) {
-      if (!reload) {
-        document.querySelectorAll(".flag-btn").forEach((btn) => {
-          btn.classList.toggle("active", btn.dataset.lang === lang);
-        });
-      }
-
-      if (currentView === "home") {
-        renderHome();
-      } else if (currentView === "stop" && currentStop) {
-        showStop(currentStop.stop_id || currentStop.stopId);
-      } else if (currentView === "route" && currentRoute) {
-        showRoute(currentRoute);
-      } else if (currentView === "vehicles" && currentRoute) {
-        showVehicles(currentRoute);
-      } else if (currentView === "map") {
-        showMap(currentRoute || "");
-      }
-    }
-
     function renderHome() {
       currentView = "home";
-      currentStop = null;
       currentRoute = "";
+      currentStop = null;
 
-      setTitle(t("searchTitle"), "menu");
+      setTitle(t("appTitle"), "menu");
 
       root.innerHTML = `
         <div class="search-box-wrap">
           <div class="search-box">
             <div class="search-label">${esc(t("searchLabel"))}</div>
             <div class="search-icon">⌕</div>
-            <input
-              id="searchInput"
-              class="search-input"
-              type="text"
-              placeholder="${esc(t("searchPlaceholder"))}"
-              autocomplete="off"
-            />
+            <input id="searchInput" class="search-input" autocomplete="off" placeholder="${esc(t("searchPlaceholder"))}" />
             <button id="clearSearch" class="clear-btn" style="display:none">×</button>
           </div>
         </div>
 
-        <div id="searchResults">
-          <div class="empty">${esc(t("writeSearch"))}</div>
-        </div>
+        <div id="searchResults" class="empty">${esc(t("typeSearch"))}</div>
       `;
 
       const input = document.getElementById("searchInput");
       const clear = document.getElementById("clearSearch");
-      const results = document.getElementById("searchResults");
-
       let timer = null;
 
       input.addEventListener("input", () => {
-        const q = input.value.trim();
-        clear.style.display = q ? "block" : "none";
+        clear.style.display = input.value ? "block" : "none";
 
         clearTimeout(timer);
-        timer = setTimeout(() => performSearch(q, results), 220);
+        timer = setTimeout(() => doSearch(input.value.trim()), 250);
       });
 
       clear.addEventListener("click", () => {
         input.value = "";
         clear.style.display = "none";
-        results.innerHTML = `<div class="empty">${esc(t("writeSearch"))}</div>`;
+        document.getElementById("searchResults").innerHTML = esc(t("typeSearch"));
         input.focus();
       });
 
-      input.focus({ preventScroll: true });
+      input.focus();
     }
 
-    async function performSearch(q, target) {
-      if (!q) {
-        target.innerHTML = `<div class="empty">${esc(t("writeSearch"))}</div>`;
+    async function doSearch(q) {
+      const target = document.getElementById("searchResults");
+
+      if (!target) {
         return;
       }
+
+      if (!q) {
+        target.innerHTML = esc(t("typeSearch"));
+        return;
+      }
+
+      target.innerHTML = `<div class="empty">Loading...</div>`;
 
       try {
         const data = await fetchJson(`${API}/api/search?q=${encodeURIComponent(q)}`);
         const stops = data.stops || [];
         const routes = data.routes || [];
 
-        let html = `
-          <div class="blue-header">${esc(t("resultsFor"))} "${esc(q)}"</div>
-        `;
+        let html = `<div class="blue-header">${esc(t("resultsFor"))} "${esc(q)}"</div>`;
 
         if (!stops.length && !routes.length) {
           target.innerHTML = html + `<div class="empty">${esc(t("noResults"))}</div>`;
@@ -1070,13 +1019,14 @@
           html += `<div class="section-title">${esc(t("stops"))}</div>`;
 
           for (const s of stops) {
-            const id = s.stop_id || s.stopId;
+            const id = s.stop_id || s.stopId || "";
+            const name = s.stop_name || s.stopName || s.name || id;
 
             html += `
               <div class="row" data-stop="${esc(id)}">
                 ${routeBadge(stopBadgeCode(s))}
                 <div class="row-main">
-                  <div class="row-title">${esc(shortName(s.stop_name || s.stopName || s.name, 36))}</div>
+                  <div class="row-title">${esc(shortName(name, 36))}</div>
                   <div class="row-sub">${esc(id)}</div>
                 </div>
                 <div class="arrow">→</div>
@@ -1089,11 +1039,7 @@
           html += `<div class="section-title">${esc(t("routes"))}</div>`;
 
           for (const r of routes) {
-            const line =
-              r.route_short_name ||
-              r.routeShortName ||
-              r.short_name ||
-              r.shortName;
+            const line = r.route_short_name || r.routeShortName || r.short_name || r.shortName || "";
 
             html += `
               <div class="row" data-route="${esc(line)}">
@@ -1110,11 +1056,11 @@
 
         target.innerHTML = html;
 
-        target.querySelectorAll("[data-stop]").forEach((el) => {
+        target.querySelectorAll("[data-stop]").forEach(el => {
           el.addEventListener("click", () => showStop(el.dataset.stop));
         });
 
-        target.querySelectorAll("[data-route]").forEach((el) => {
+        target.querySelectorAll("[data-route]").forEach(el => {
           el.addEventListener("click", () => showRoute(el.dataset.route));
         });
       } catch (e) {
@@ -1125,24 +1071,17 @@
     async function showStop(stopId) {
       currentView = "stop";
       setTitle(t("stopTitle"), "back");
-
       root.innerHTML = `<div class="empty">Loading...</div>`;
 
       try {
-        const data = await fetchJson(
-          `${API}/api/stop/${encodeURIComponent(stopId)}/departures?window=120`
-        );
-
+        const data = await fetchJson(`${API}/api/stop/${encodeURIComponent(stopId)}/departures?window=120`);
         currentStop = data.stop;
 
         const stop = data.stop || {};
+        const stopName = stop.stop_name || stop.stopName || stopId;
         const deps = data.departures || [];
 
-        let html = `
-          <div class="stop-title-bar">
-            ${esc(stop.stop_name || stop.stopName || stopId)} (${esc(stopId)})
-          </div>
-        `;
+        let html = `<div class="stop-title-bar">${esc(stopName)} (${esc(stopId)})</div>`;
 
         if (!deps.length) {
           html += `
@@ -1157,20 +1096,17 @@
           const live = !!d.live;
           const due = !!d.isDue || Number(d.minutes) <= 1;
           const cls = `depart-row${live ? " live" : ""}${due ? " due-row" : ""}`;
-
           const trip = d.trip_id || d.tripId || "";
           const source = live ? t("live") : t("timetable");
           const time = d.time || d.liveTime || d.scheduledTime || "--:--";
-          const mins = due
-            ? t("due")
-            : (d.minutes != null ? `${d.minutes} ${t("min")}` : "");
-
+          const mins = due ? t("due") : (d.minutes != null ? `${d.minutes} ${t("min")}` : "");
           const dest = d.destination || d.destinationFull || d.headsign || "";
           const line = d.line || d.routeShortName || d.route_short_name || "";
-          const sub = `${source} · ${d.vehicleRef ? d.vehicleRef + " · " : ""}${stop.stop_name || ""}`;
+          const vehicle = d.vehicleRef || d.vehicle_ref || d.fleetNumber || "";
+          const sub = `${source} · ${vehicle ? vehicle + " · " : ""}${stopName}`;
 
           html += `
-            <div class="${cls}" data-trip="${esc(trip)}">
+            <div class="${cls}" data-trip="${esc(trip)}" data-vehicle="${esc(vehicle)}">
               <div>${routeBadge(line, { routeOnly: true })}</div>
 
               <div>
@@ -1188,14 +1124,15 @@
 
         root.innerHTML = html;
 
-        root.querySelectorAll("[data-trip]").forEach((el) => {
+        root.querySelectorAll("[data-trip]").forEach(el => {
           if (el.dataset.trip) {
-            el.addEventListener("click", () => showTrip(el.dataset.trip));
+            el.addEventListener("click", () => showTrip(el.dataset.trip, el.dataset.vehicle || ""));
           }
         });
       } catch (e) {
         root.innerHTML = `
           <div class="stop-title-bar">${esc(stopId)}</div>
+
           <div class="empty">
             ${esc(t("loadErrorDepartures"))}
             <div class="hint">${esc(e.message)}</div>
@@ -1249,12 +1186,14 @@
         for (const d of data.directions || []) {
           const from = d.from?.stop_name || d.from?.stopName || "";
           const to = d.to?.stop_name || d.to?.stopName || "";
+          const headsign = d.headsign || d.headsignFull || "";
+          const trip = d.trip_id || d.tripId || "";
 
           html += `
-            <div class="row" data-trip="${esc(d.trip_id || d.tripId || "")}">
+            <div class="row" data-trip="${esc(trip)}">
               ${routeBadge(line, { routeOnly: true })}
               <div class="row-main">
-                <div class="row-title">▶ ${esc(d.headsign || d.headsignFull || "")}</div>
+                <div class="row-title">▶ ${esc(headsign)}</div>
                 <div class="row-sub">${esc(shortName(from, 18))} → ${esc(shortName(to, 18))}</div>
               </div>
               <div class="arrow">→</div>
@@ -1264,15 +1203,10 @@
 
         root.innerHTML = html;
 
-        document.getElementById("openVehicles")?.addEventListener("click", () => {
-          showVehicles(line);
-        });
+        document.getElementById("openVehicles")?.addEventListener("click", () => showVehicles(line));
+        document.getElementById("openMap")?.addEventListener("click", () => showMap(line));
 
-        document.getElementById("openMap")?.addEventListener("click", () => {
-          showMap(line);
-        });
-
-        root.querySelectorAll("[data-trip]").forEach((el) => {
+        root.querySelectorAll("[data-trip]").forEach(el => {
           if (el.dataset.trip) {
             el.addEventListener("click", () => showTrip(el.dataset.trip));
           }
@@ -1292,7 +1226,6 @@
       try {
         const data = await fetchJson(`${API}/api/vehicles?line=${encodeURIComponent(line || "")}`);
         const vehicles = data.vehicles || [];
-
         let html = "";
 
         if (!vehicles.length) {
@@ -1302,15 +1235,15 @@
         for (const v of vehicles) {
           const fleet = v.vehicleRef || v.fleetNumber || v.vehicleUniqueId || "";
           const where = v.currentStopName || v.originName || "";
+          const dest = v.destinationShort || v.destinationName || "";
+          const lineName = v.publishedLineName || v.line || line || "";
 
           html += `
             <div class="row">
-              ${routeBadge(v.publishedLineName || v.line, { routeOnly: true })}
+              ${routeBadge(lineName, { routeOnly: true })}
               <div class="row-main">
-                <div class="row-title">${esc(shortName(v.destinationShort || v.destinationName || "", 32))}</div>
-                <div class="row-sub">
-                  ${esc(fleet)} · ${esc(v.vehicleAtStop ? t("atStop") : t("moving"))} · ${esc(shortName(where, 28))}
-                </div>
+                <div class="row-title">${esc(shortName(dest, 32))}</div>
+                <div class="row-sub">${esc(fleet)} · ${esc(v.vehicleAtStop ? t("atStop") : t("moving"))} · ${esc(shortName(where, 28))}</div>
               </div>
               <div class="arrow">→</div>
             </div>
@@ -1323,33 +1256,28 @@
       }
     }
 
-    async function showTrip(tripId) {
+    async function showTrip(tripId, vehicleRef = "") {
       currentView = "trip";
 
       setTitle(t("tripTitle"), "back");
       root.innerHTML = `<div class="empty">Loading...</div>`;
 
       try {
-        const data = await fetchJson(`${API}/api/trip?trip_id=${encodeURIComponent(tripId)}`);
+        const url = `${API}/api/trip?trip_id=${encodeURIComponent(tripId)}${vehicleRef ? `&vehicle_ref=${encodeURIComponent(vehicleRef)}` : ""}`;
+        const data = await fetchJson(url);
 
         const line = data.line || data.trip?.line || "";
-        const fleet =
-          data.vehicle?.vehicleRef ||
-          data.vehicle?.fleetNumber ||
-          data.vehicle?.vehicleUniqueId ||
-          "";
-
+        const fleet = data.vehicle?.vehicleRef || data.vehicle?.fleetNumber || data.vehicle?.vehicleUniqueId || "";
         const liveMatched = !!data.liveMatched;
+        const destination = data.destination || data.destinationFull || "";
 
         let html = `
           <div class="trip-head">
             <div>${routeBadge(line, { routeOnly: true })}</div>
 
             <div>
-              <div class="trip-dest">${esc(data.destination || data.destinationFull || "")}</div>
-              <div class="trip-sub">
-                ${esc(liveMatched ? `${t("liveVehicleMatched")} · ${fleet}` : t("scheduleOnly"))}
-              </div>
+              <div class="trip-dest">${esc(destination)}</div>
+              <div class="trip-sub">${esc(liveMatched ? `${t("liveVehicleMatched")} · ${fleet}` : t("scheduleOnly"))}</div>
             </div>
 
             <div class="delay-box">${liveMatched ? "LIVE" : "--"}</div>
@@ -1359,20 +1287,22 @@
         for (const s of data.stops || []) {
           const live = !!(s.live || s.vehicleHere);
           const passed = !!s.isPast && !live;
+          const due = !passed && s.minutes != null && Number(s.minutes) <= 1;
+          const cls = `stop-row-trip${live ? " live vehicle-row" : ""}${due ? " due-row" : ""}${passed ? " past" : ""}`;
 
-          const cls = `stop-row-trip${live ? " live vehicle-row" : ""}${passed ? " past" : ""}`;
+          let right = "";
 
-          let min = "";
-
-          if (s.minutes != null && !passed) {
-            min = s.minutes <= 1 ? t("due") : `${s.minutes}`;
+          if (s.vehicleHere) {
+            right = "LIVE";
+          } else if (s.minutes != null && !passed) {
+            right = Number(s.minutes) <= 1 ? t("due") : `${s.minutes} ${t("min")}`;
           }
 
           html += `
             <div class="${cls}">
               <div class="trip-time">${esc(s.time || s.scheduledTime || "")}</div>
               <div class="trip-name">${esc(shortName(s.stopName || s.stop_name || "", 34))}</div>
-              <div class="trip-count">${esc(s.vehicleHere ? "LIVE" : min)}</div>
+              <div class="trip-count">${esc(right)}</div>
             </div>
           `;
         }
@@ -1391,7 +1321,7 @@
 
       root.innerHTML = `
         <div class="actions">
-          <button class="action-btn">${esc(t("filter"))}: ${esc(line || "mind")}</button>
+          <button class="action-btn">${esc(t("filter"))}: ${esc(line || t("all"))}</button>
           <button class="action-btn" id="clearFilter">${esc(t("clearFilter"))}</button>
           <button class="action-btn" id="refreshMap">${esc(t("refresh"))}</button>
         </div>
@@ -1399,13 +1329,8 @@
         <div id="map" class="map-holder"></div>
       `;
 
-      document.getElementById("clearFilter")?.addEventListener("click", () => {
-        showMap("");
-      });
-
-      document.getElementById("refreshMap")?.addEventListener("click", () => {
-        loadMapData(line, true);
-      });
+      document.getElementById("clearFilter")?.addEventListener("click", () => showMap(""));
+      document.getElementById("refreshMap")?.addEventListener("click", () => loadMapData(line, true));
 
       setTimeout(() => initMap(line), 50);
     }
@@ -1441,13 +1366,15 @@
 
         mapLayerGroup.clearLayers();
 
-        routeShapeLayers.forEach((layer) => layer.remove());
+        routeShapeLayers.forEach(layer => layer.remove());
         routeShapeLayers = [];
 
         const bounds = [];
 
         for (const shape of data.shapes || []) {
-          const latlngs = shape.map((p) => [p.lat, p.lon]);
+          const latlngs = shape
+            .filter(p => p.lat != null && p.lon != null)
+            .map(p => [p.lat, p.lon]);
 
           if (latlngs.length) {
             const poly = L.polyline(latlngs, {
@@ -1456,7 +1383,7 @@
             }).addTo(currentMap);
 
             routeShapeLayers.push(poly);
-            latlngs.forEach((x) => bounds.push(x));
+            latlngs.forEach(x => bounds.push(x));
           }
         }
 
@@ -1466,11 +1393,14 @@
           }
 
           const fleet = v.vehicleRef || v.fleetNumber || v.vehicleUniqueId || "";
+          const lineName = v.publishedLineName || v.line || "";
+          const dest = v.destinationShort || v.destinationName || "";
+          const currentStop = v.currentStopName || "";
 
           const markerHtml = `
             <div class="vehicle-marker">
-              <div class="m-line">${esc(v.publishedLineName || v.line || "")}</div>
-              <div class="m-dest">${esc(v.destinationShort || v.destinationName || "")}</div>
+              <div class="m-line">${esc(lineName)}</div>
+              <div class="m-dest">${esc(dest)}</div>
               <div class="m-fleet">${esc(fleet)}</div>
             </div>
           `;
@@ -1487,9 +1417,9 @@
           }).addTo(mapLayerGroup);
 
           marker.bindPopup(`
-            <b>${esc(v.publishedLineName || v.line || "")} ${esc(v.destinationShort || v.destinationName || "")}</b><br>
+            <b>${esc(lineName)} ${esc(dest)}</b><br>
             ${esc(fleet)}<br>
-            ${esc(v.currentStopName || "")}
+            ${esc(currentStop)}
           `);
 
           bounds.push([v.latitude, v.longitude]);
@@ -1506,6 +1436,42 @@
       }
     }
 
+    backBtn.addEventListener("click", () => {
+      if (currentView === "home") {
+        return;
+      }
+
+      if (currentView === "vehicles" || currentView === "map") {
+        showRoute(currentRoute);
+        return;
+      }
+
+      renderHome();
+    });
+
+    document.querySelectorAll(".flag-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        lang = btn.dataset.lang;
+        localStorage.setItem("bu_lang", lang);
+        updateLanguageButtons();
+
+        if (currentView === "home") {
+          renderHome();
+        } else if (currentView === "stop" && currentStop) {
+          showStop(currentStop.stop_id || currentStop.stopId);
+        } else if (currentView === "route") {
+          showRoute(currentRoute);
+        } else if (currentView === "vehicles") {
+          showVehicles(currentRoute);
+        } else if (currentView === "map") {
+          showMap(currentRoute);
+        } else {
+          setTitle(t("appTitle"), "menu");
+        }
+      });
+    });
+
+    updateLanguageButtons();
     loadStatus();
     renderHome();
 
