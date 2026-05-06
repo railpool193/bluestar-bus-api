@@ -2,548 +2,1314 @@
 <html lang="hu">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Megálló & Indulások</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>Bluestar Unilink Menetrend</title>
 
-  <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
   <style>
-    :root { --bg:#0b0f19; --card:#111827; --muted:#9ca3af; --text:#e5e7eb; --accent:#60a5fa; --line:#1f2937; }
-    *{ box-sizing:border-box; }
+    :root{
+      --bg:#2f2f2f;
+      --top:#7b7b7b;
+      --panel:#303030;
+      --panel2:#242424;
+      --row:#303030;
+      --rowLine:#4a4a4a;
+      --text:#eeeeee;
+      --muted:#b9b9b9;
+      --blue:#169fe3;
+      --blue2:#2b7cff;
+      --green:#39e33f;
+      --red:#ff4f4f;
+      --yellow:#ffd22e;
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0}
     body{
-      margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      background: linear-gradient(180deg, #060816, #0b0f19);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      background:var(--bg);
       color:var(--text);
+      overflow:hidden;
     }
-    header{
-      padding:14px 14px 10px;
-      position: sticky; top: 0;
-      backdrop-filter: blur(10px);
-      background: rgba(11,15,25,.78);
-      border-bottom:1px solid rgba(31,41,55,.6);
-      z-index: 10;
+
+    .app{
+      height:100vh;
+      display:flex;
+      flex-direction:column;
+      background:var(--bg);
     }
-    .title{ font-size:18px; font-weight:800; letter-spacing:.2px; }
-    .subtitle{ font-size:12px; color:var(--muted); margin-top:3px; }
-    .wrap{ max-width:900px; margin:0 auto; padding:14px; }
-    .grid{ display:grid; gap:12px; }
-    @media(min-width:900px){ .grid{ grid-template-columns: 380px 1fr; align-items:start; } }
-    .card{
-      background: rgba(17,24,39,.85);
-      border: 1px solid rgba(31,41,55,.7);
-      border-radius: 16px;
-      padding: 12px;
-      box-shadow: 0 10px 35px rgba(0,0,0,.25);
+
+    .topbar{
+      height:64px;
+      background:var(--top);
+      display:flex;
+      align-items:center;
+      gap:18px;
+      padding:0 16px;
+      flex:0 0 auto;
+      box-shadow:0 2px 4px rgba(0,0,0,.45);
+      z-index:20;
     }
-    .row{ display:flex; gap:10px; align-items:center; }
-    .grow{ flex:1; }
-    input, button, select{
-      border-radius: 12px;
-      border: 1px solid rgba(31,41,55,.9);
-      background: rgba(3,7,18,.75);
-      color: var(--text);
-      padding: 12px 12px;
-      font-size: 14px;
-      outline: none;
-    }
-    input::placeholder{ color: rgba(156,163,175,.75); }
-    button{
+
+    .iconBtn{
+      width:44px;
+      height:44px;
+      border:0;
+      background:transparent;
+      color:white;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:32px;
+      line-height:1;
       cursor:pointer;
-      background: rgba(96,165,250,.14);
-      border-color: rgba(96,165,250,.35);
+      border-radius:6px;
     }
-    button:active{ transform: translateY(1px); }
-    button.secondary{ background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.14); }
-    button.danger{ background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.35); }
-    .pill{
-      display:inline-flex; align-items:center; gap:8px;
-      padding:6px 10px; border-radius: 999px;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.12);
-      font-size:12px; color: var(--muted);
+
+    .iconBtn:active{background:rgba(255,255,255,.12)}
+
+    .appTitle{
+      font-size:26px;
+      font-weight:650;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      flex:1;
     }
-    .list{ margin-top:10px; display:flex; flex-direction:column; gap:8px; }
-    .item{
-      padding:10px; border-radius:14px;
-      border: 1px solid rgba(31,41,55,.8);
-      background: rgba(3,7,18,.55);
+
+    .statusLine{
+      background:#111;
+      color:#cfcfcf;
+      font-size:13px;
+      padding:5px 8px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+      border-bottom:1px solid #222;
+      flex:0 0 auto;
+    }
+
+    .statusDot{
+      width:9px;height:9px;border-radius:50%;display:inline-block;
+      background:#777;margin-right:4px;
+    }
+    .statusDot.ok{background:var(--green)}
+    .statusDot.err{background:var(--red)}
+
+    .main{
+      flex:1 1 auto;
+      overflow:auto;
+      -webkit-overflow-scrolling:touch;
+    }
+
+    .searchBoxWrap{
+      padding:20px 18px 14px;
+      background:#2f2f2f;
+    }
+
+    .searchBox{
+      border:2px solid var(--blue2);
+      border-radius:4px;
+      height:58px;
+      display:flex;
+      align-items:center;
+      gap:12px;
+      padding:0 12px;
+      color:#ddd;
+      position:relative;
+    }
+
+    .searchLabel{
+      position:absolute;
+      top:-13px;
+      left:12px;
+      background:#2f2f2f;
+      color:var(--blue2);
+      font-size:15px;
+      padding:0 6px;
+    }
+
+    .searchBox input{
+      flex:1;
+      background:transparent;
+      border:0;
+      outline:0;
+      color:white;
+      font-size:24px;
+      min-width:0;
+    }
+
+    .searchIcon{
+      font-size:30px;
+      opacity:.75;
+    }
+
+    .clearBtn{
+      width:34px;height:34px;border-radius:50%;
+      border:0;
+      background:#bdbdbd;
+      color:#222;
+      font-size:24px;
+      line-height:34px;
       cursor:pointer;
     }
-    .item:hover{ border-color: rgba(96,165,250,.35); }
-    .item .name{ font-weight:700; font-size:14px; }
-    .item .meta{ font-size:12px; color: var(--muted); margin-top:3px; display:flex; gap:10px; flex-wrap:wrap;}
-    .muted{ color: var(--muted); }
-    .hr{ height:1px; background: rgba(31,41,55,.8); margin:12px 0; }
-    table{ width:100%; border-collapse: collapse; font-size: 14px; }
-    th, td{ text-align:left; padding:10px 8px; border-bottom:1px solid rgba(31,41,55,.75); vertical-align:top; }
-    th{ color: var(--muted); font-weight:700; font-size:12px; text-transform: uppercase; letter-spacing: .08em; }
-    .routeBadge{
-      display:inline-flex; min-width: 38px; justify-content:center;
-      padding:3px 8px; border-radius:10px;
-      background: rgba(96,165,250,.12);
-      border:1px solid rgba(96,165,250,.35);
+
+    .blueHeader{
+      background:#346fca;
+      color:#f0f0f0;
+      font-weight:700;
+      padding:9px 8px;
+      font-size:19px;
+    }
+
+    .sectionTitle{
+      color:#d0d0d0;
+      font-size:22px;
+      font-weight:750;
+      padding:16px 18px 6px;
+    }
+
+    .helpText{
+      padding:18px;
+      color:#c7c7c7;
+      font-size:21px;
+      font-weight:650;
+      line-height:1.25;
+    }
+
+    .resultItem{
+      padding:14px 18px;
+      border-bottom:1px solid rgba(255,255,255,.08);
+      cursor:pointer;
+      background:#303030;
+    }
+
+    .resultItem:active{background:#3c3c3c}
+
+    .resultTop{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      min-width:0;
+    }
+
+    .routeTiny{
+      min-width:58px;
+      height:32px;
+      background:var(--blue);
+      color:white;
+      font-weight:800;
+      font-size:20px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      box-shadow:inset 0 -2px 0 rgba(0,0,0,.16);
+    }
+
+    .routeTiny.black{background:#000}
+    .routeTiny.red{background:#e51b23}
+    .routeTiny.darkblue{background:#0067ad}
+
+    .resultName{
+      font-size:21px;
+      font-weight:750;
+      color:#d7d7d7;
+      overflow:hidden;
+      white-space:nowrap;
+      text-overflow:ellipsis;
+    }
+
+    .resultSub{
+      color:#aaa;
+      font-size:15px;
+      margin-top:2px;
+    }
+
+    .stopHeader{
+      background:#2f2f2f;
+      border-bottom:1px solid var(--rowLine);
+      padding:8px 6px 0;
+    }
+
+    .stopNameSmall{
+      font-size:20px;
+      color:#d2d2d2;
+      font-weight:700;
+      padding:0 2px 7px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    .depRow{
+      min-height:74px;
+      display:grid;
+      grid-template-columns:120px 1fr 92px;
+      align-items:center;
+      border-bottom:1px solid var(--rowLine);
+      background:#303030;
+      cursor:pointer;
+    }
+
+    .depRow:active{background:#3c3c3c}
+
+    .depLine{
+      padding-left:5px;
+    }
+
+    .routeBox{
+      width:115px;
+      height:62px;
+      background:var(--blue);
+      color:white;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:32px;
+      font-weight:850;
+      box-shadow:inset 0 -3px 0 rgba(0,0,0,.18);
+    }
+
+    .routeBox.black{background:#000}
+
+    .depMid{
+      min-width:0;
+      text-align:center;
+      padding:0 8px;
+    }
+
+    .depDest{
+      color:#d4d4d4;
+      font-size:20px;
+      font-weight:800;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    .depNote{
+      color:#b8b8b8;
+      margin-top:8px;
+      font-size:15px;
+      line-height:1.15;
+    }
+
+    .depRight{
+      text-align:right;
+      padding-right:12px;
+      font-size:39px;
+      font-weight:300;
+      color:#cfcfcf;
+    }
+
+    .depRight.live{
+      color:var(--green);
+    }
+
+    .depRight.sched{
+      color:#f0f0f0;
+      font-size:28px;
+      font-weight:750;
+    }
+
+    .tripHeader{
+      background:#2f2f2f;
+      border-bottom:4px solid var(--blue);
+      display:grid;
+      grid-template-columns:128px 1fr 116px;
+      align-items:center;
+      min-height:128px;
+    }
+
+    .tripHeadRoute{
+      padding-left:5px;
+    }
+
+    .tripHeadMid{
+      text-align:center;
+      padding:8px;
+      min-width:0;
+    }
+
+    .tripHeadDest{
+      font-size:19px;
+      font-weight:800;
+      color:#d4d4d4;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    .tripVehicle{
+      color:#c9c9c9;
+      font-size:14px;
+      margin-top:13px;
+      line-height:1.25;
+    }
+
+    .tripNext{
+      color:#dedede;
       font-weight:800;
     }
-    .right{ text-align:right; }
-    .small{ font-size:12px; }
-    #map{ height: 320px; border-radius: 16px; border: 1px solid rgba(31,41,55,.75); overflow:hidden; }
-    .toast{
-      position: fixed; left: 50%; transform: translateX(-50%);
-      bottom: 18px; background: rgba(17,24,39,.92);
-      border: 1px solid rgba(31,41,55,.8);
-      padding: 10px 12px; border-radius: 14px;
-      font-size: 13px; color: var(--text);
+
+    .delayBox{
+      justify-self:end;
+      align-self:start;
+      margin:6px 6px 0 0;
+      min-width:112px;
+      height:62px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:#3aaa27;
+      color:white;
+      font-size:30px;
+      font-weight:850;
+    }
+
+    .delayBox.late{background:#3aaa27}
+    .delayBox.early{background:#d83535}
+    .delayBox.sched{background:#ecebd4;color:#111}
+
+    .tripStopRow{
+      display:grid;
+      grid-template-columns:110px 1fr 82px;
+      align-items:center;
+      min-height:75px;
+      border-bottom:1px solid var(--rowLine);
+      background:#303030;
+    }
+
+    .tripTime{
+      padding-left:20px;
+      font-size:29px;
+      font-weight:750;
+      color:#bfbfbf;
+    }
+
+    .tripTime.live{color:var(--green)}
+    .tripStopName{
+      text-align:center;
+      font-size:20px;
+      font-weight:800;
+      color:#cfcfcf;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      padding:0 6px;
+    }
+
+    .tripRight{
+      text-align:right;
+      padding-right:12px;
+      font-size:36px;
+      font-weight:300;
+      color:var(--green);
+    }
+
+    .blink{
+      animation:blink 1s linear infinite;
+    }
+
+    @keyframes blink{
+      0%,49%{opacity:1}
+      50%,100%{opacity:.2}
+    }
+
+    .drawerOverlay{
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.55);
+      z-index:100;
       display:none;
-      z-index: 20;
-      max-width: 92vw;
     }
-    .kpi{ display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;}
 
-    /* ---- Requested coloring rules ----
-       timetable = white (default)
-       live = green
-       due = blinking green
-       late = yellow + minutes
-       early = red
-    */
-    .time-live { color: #34d399; font-weight: 900; }     /* green */
-    .time-timetable { color: #e5e7eb; font-weight: 900; }/* white */
-    .delta { display:inline-flex; margin-left:8px; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:900; border:1px solid; }
-    .delta-late { color:#fbbf24; border-color: rgba(251,191,36,.55); background: rgba(251,191,36,.10); }  /* yellow */
-    .delta-early{ color:#f87171; border-color: rgba(248,113,113,.55); background: rgba(248,113,113,.10); } /* red */
+    .drawerOverlay.open{display:block}
 
-    @keyframes blinkDue { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
-    .due-blink { color:#34d399; font-weight: 1000; animation: blinkDue .8s linear infinite; } /* blinking green */
-
-    .note { padding:10px; border-radius:12px; margin-top:10px;
-      background: rgba(250,204,21,.08); border:1px solid rgba(250,204,21,.25); color:#fde68a; font-size:12px;
+    .drawer{
+      width:min(78vw,460px);
+      height:100%;
+      background:#303030;
+      box-shadow:8px 0 28px rgba(0,0,0,.45);
+      padding:26px;
+      transform:translateX(-100%);
+      transition:.2s ease;
     }
-    a{ color: var(--accent); text-decoration:none; }
+
+    .drawerOverlay.open .drawer{transform:translateX(0)}
+
+    .drawerLogo{
+      width:64px;height:64px;border-radius:6px;
+      background:white;
+      color:var(--blue2);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:26px;
+      font-weight:900;
+      margin-bottom:24px;
+    }
+
+    .drawerTitle{
+      font-size:23px;
+      font-weight:800;
+      margin-bottom:80px;
+    }
+
+    .drawerItem{
+      display:flex;
+      align-items:center;
+      gap:24px;
+      color:#f2f2f2;
+      font-size:21px;
+      font-weight:750;
+      padding:17px 8px;
+      cursor:pointer;
+    }
+
+    .drawerIcon{
+      width:42px;
+      text-align:center;
+      font-size:27px;
+    }
+
+    #map{
+      height:calc(100vh - 155px);
+      width:100%;
+      background:#1e1e1e;
+    }
+
+    .mapFull #map{
+      height:calc(100vh - 64px);
+    }
+
+    .mapToolbar{
+      position:absolute;
+      top:78px;
+      left:14px;
+      right:14px;
+      background:rgba(128,128,128,.95);
+      color:white;
+      z-index:800;
+      border-radius:4px;
+      min-height:98px;
+      display:grid;
+      grid-template-columns:128px 1fr;
+      align-items:center;
+      padding:10px 12px;
+      pointer-events:none;
+    }
+
+    .mapToolbar .routeBox{
+      width:110px;height:62px;font-size:31px;
+    }
+
+    .mapToolText{
+      text-align:center;
+      min-width:0;
+    }
+
+    .mapToolMain{
+      font-size:19px;
+      font-weight:800;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    .mapToolSub{
+      font-size:14px;
+      color:#e1e1e1;
+      margin-top:10px;
+      line-height:1.25;
+    }
+
+    .busMarker{
+      position:relative;
+      width:58px;
+      height:30px;
+      border-radius:4px;
+      background:var(--blue);
+      color:white;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-weight:900;
+      font-size:16px;
+      box-shadow:0 2px 7px rgba(0,0,0,.35);
+      border:1px solid rgba(255,255,255,.28);
+    }
+
+    .busMarker:after{
+      content:"";
+      position:absolute;
+      left:50%;
+      bottom:-8px;
+      transform:translateX(-50%);
+      width:0;height:0;
+      border-left:7px solid transparent;
+      border-right:7px solid transparent;
+      border-top:8px solid var(--blue);
+    }
+
+    .mapLineCard{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      background:#2f2f2f;
+      border-bottom:1px solid var(--rowLine);
+      padding:10px;
+    }
+
+    .mapBtn{
+      background:#222;
+      color:#eee;
+      border:1px solid #555;
+      border-radius:4px;
+      padding:9px 12px;
+      font-size:15px;
+    }
+
+    .vehicleItem{
+      padding:14px 8px;
+      min-height:86px;
+      display:grid;
+      grid-template-columns:125px 1fr;
+      align-items:center;
+      border-bottom:1px solid var(--rowLine);
+      background:#303030;
+      cursor:pointer;
+    }
+
+    .vehicleText{
+      text-align:center;
+      min-width:0;
+    }
+
+    .vehicleMain{
+      font-size:19px;
+      font-weight:850;
+      color:#d4d4d4;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    .vehicleSub{
+      color:#bdbdbd;
+      font-size:14px;
+      margin-top:7px;
+      line-height:1.2;
+    }
+
+    .hidden{display:none!important}
   </style>
 </head>
+
 <body>
-  <header>
-    <div class="wrap" style="padding:0 14px;">
-      <div class="title">Megálló kereső & indulások</div>
-      <div class="subtitle">Keresd meg a megállót → nézd a következő ~30–90 perc indulásait → opcionális élő jármű térkép</div>
-    </div>
-  </header>
+<div class="app">
 
-  <div class="wrap">
-    <div class="grid">
-      <!-- LEFT -->
-      <div class="card">
-        <div class="row">
-          <input id="search" class="grow" placeholder="Megálló neve / kód / stop_id…" autocomplete="off" />
-          <button id="clear" class="secondary" title="Törlés">✕</button>
-        </div>
-
-        <div class="kpi">
-          <button id="nearbyBtn" class="secondary">📍 Közeli megállók</button>
-          <button id="healthBtn" class="secondary">🩺 API</button>
-        </div>
-
-        <div class="hr"></div>
-
-        <div class="row" style="justify-content:space-between;">
-          <div class="pill">⭐ Kedvencek</div>
-          <button id="clearFav" class="danger small">Törlés</button>
-        </div>
-        <div id="favList" class="list"></div>
-
-        <div class="hr"></div>
-        <div class="pill">🔎 Találatok</div>
-        <div id="results" class="list"></div>
-      </div>
-
-      <!-- RIGHT -->
-      <div class="card">
-        <div id="stopHeader" class="muted">Válassz egy megállót a bal oldalon.</div>
-
-        <div id="actions" style="display:none; margin-top:10px;">
-          <div class="row" style="flex-wrap:wrap;">
-            <button id="favBtn">⭐ Kedvenc</button>
-            <button id="refreshBtn" class="secondary">↻ Frissítés</button>
-            <select id="windowSel" class="secondary">
-              <option value="30">Következő 30 perc</option>
-              <option value="60">Következő 60 perc</option>
-              <option value="90" selected>Következő 90 perc</option>
-              <option value="120">Következő 120 perc</option>
-            </select>
-            <button id="toggleMap" class="secondary">🗺️ Térkép</button>
-          </div>
-
-          <div class="kpi">
-            <span class="pill" id="nowPill">—</span>
-            <span class="pill" id="countPill">—</span>
-          </div>
-
-          <div id="calendarNote" class="note" style="display:none;">
-            Figyelem: a GTFS calendar dátumtartomány valószínűleg lejárt, ezért a menetrendet “calendar_ignored” módban adom.
-          </div>
-
-          <div id="depWrap" style="margin-top:10px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Idő</th>
-                  <th>Vonal</th>
-                  <th>Irány</th>
-                  <th class="right">Perc</th>
-                </tr>
-              </thead>
-              <tbody id="depBody"></tbody>
-            </table>
-            <div id="empty" class="muted" style="display:none; padding:12px 4px;">
-              Nincs indulás ebben az ablakban (vagy a szolgáltatás nem aktív).
-            </div>
-          </div>
-
-          <div id="mapWrap" style="display:none; margin-top:12px;">
-            <div class="row" style="justify-content:space-between; margin-bottom:10px;">
-              <div class="pill">🚌 Élő járművek (ha elérhető)</div>
-              <input id="lineFilter" placeholder="Szűrés vonalra (pl. 1, U1…)" style="max-width:220px;" />
-            </div>
-            <div id="map"></div>
-            <div class="muted small" style="margin-top:8px;">
-              Tipp: a térképes élő adat a SIRI VehicleMonitoring feedből jön.
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+  <div class="topbar">
+    <button class="iconBtn" id="menuBtn">☰</button>
+    <div class="appTitle" id="topTitle">Bluestar Unilink Menetrend</div>
+    <button class="iconBtn" id="homeBtn">⌖</button>
   </div>
 
-  <div id="toast" class="toast"></div>
+  <div class="statusLine">
+    <span id="liveStatus"><span class="statusDot"></span>LIVE: ...</span>
+    <span id="gtfsStatus"><span class="statusDot"></span>GTFS: ...</span>
+  </div>
+
+  <main class="main" id="main">
+
+    <section id="searchView">
+      <div class="searchBoxWrap">
+        <div class="searchBox">
+          <div class="searchLabel">Megálló vagy viszonylat keresése</div>
+          <div class="searchIcon">⌕</div>
+          <input id="searchInput" placeholder="Megálló vagy járat keresése" autocomplete="off">
+          <button class="clearBtn" id="clearSearch">×</button>
+        </div>
+      </div>
+      <div id="searchHeader" class="blueHeader hidden"></div>
+      <div id="searchResults">
+        <div class="helpText">Írj be megállót vagy járatot...</div>
+      </div>
+    </section>
+
+    <section id="favView" class="hidden">
+      <div class="searchBoxWrap">
+        <div class="searchBox">
+          <div class="searchIcon">⌕</div>
+          <input placeholder="Megálló vagy viszonylat keresése" disabled>
+        </div>
+      </div>
+      <div class="blueHeader">Kedvenc megállók és viszonylatok</div>
+      <div id="favList"></div>
+    </section>
+
+    <section id="stopView" class="hidden">
+      <div class="stopHeader">
+        <div class="stopNameSmall" id="stopName">Megálló</div>
+      </div>
+      <div id="depList"></div>
+      <div class="helpText" id="stopHint">Fehér: menetrend (GTFS) • Zöld: élő (LIVE)</div>
+    </section>
+
+    <section id="tripView" class="hidden">
+      <div class="tripHeader">
+        <div class="tripHeadRoute">
+          <div class="routeBox" id="tripRouteBox">?</div>
+        </div>
+        <div class="tripHeadMid">
+          <div class="tripHeadDest" id="tripDest">Járat</div>
+          <div class="tripVehicle" id="tripVehicle">Menetrendi adat</div>
+          <div class="tripNext" id="tripNext"></div>
+        </div>
+        <div class="delayBox sched" id="tripDelayBox">--</div>
+      </div>
+      <div id="tripStops"></div>
+    </section>
+
+    <section id="routeView" class="hidden">
+      <div class="sectionTitle" id="routeTitle">Viszonylat</div>
+
+      <div class="blueHeader">A viszonylaton közlekedő járművek listája:</div>
+      <div class="vehicleItem" id="routeVehiclesBtn">
+        <div class="routeBox" id="routeVehicleBadge">?</div>
+        <div class="vehicleText">
+          <div class="vehicleMain">Járművek listája forgalmi számokkal</div>
+        </div>
+      </div>
+
+      <div class="blueHeader">A viszonylat útvonala térképen:</div>
+      <div class="vehicleItem" id="routeMapBtn">
+        <div class="routeBox" id="routeMapBadge">?</div>
+        <div class="vehicleText">
+          <div class="vehicleMain">Térkép megtekintése</div>
+        </div>
+      </div>
+
+      <div class="blueHeader">A viszonylat megállóinak listája irányonként:</div>
+      <div id="routeDirections"></div>
+    </section>
+
+    <section id="vehiclesView" class="hidden">
+      <div id="vehiclesList"></div>
+    </section>
+
+    <section id="mapView" class="hidden">
+      <div class="mapLineCard">
+        <button class="mapBtn" id="mapFilterBtn">Szűrő: mind</button>
+        <button class="mapBtn" id="mapClearBtn">Szűrő törlése</button>
+        <button class="mapBtn" id="mapRefreshBtn">Frissítés</button>
+      </div>
+      <div id="map"></div>
+    </section>
+
+  </main>
+</div>
+
+<div class="drawerOverlay" id="drawerOverlay">
+  <div class="drawer">
+    <div class="drawerLogo">BU</div>
+    <div class="drawerTitle">Bluestar Unilink<br>Menetrend</div>
+
+    <div class="drawerItem" data-action="search"><div class="drawerIcon">🚌</div><div>Közlekedési információk</div></div>
+    <div class="drawerItem" data-action="map"><div class="drawerIcon">🗺️</div><div>Térkép</div></div>
+    <div class="drawerItem" data-action="fav"><div class="drawerIcon">★</div><div>Kedvencek</div></div>
+    <div class="drawerItem" data-action="refreshFav"><div class="drawerIcon">↻</div><div>Kedvencek frissítése</div></div>
+    <div class="drawerItem" data-action="clearFav"><div class="drawerIcon">🗑️</div><div>Kedvencek törlése</div></div>
+    <div class="drawerItem" data-action="theme"><div class="drawerIcon">◐</div><div>Téma váltása</div></div>
+    <div class="drawerItem" data-action="about"><div class="drawerIcon">ⓘ</div><div>Az alkalmazásról</div></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-  const $ = (id) => document.getElementById(id);
+  const $ = s => document.querySelector(s);
+  const $$ = s => Array.from(document.querySelectorAll(s));
 
-  const state = {
-    selectedStop: null,
-    departuresTimer: null,
-    vehiclesTimer: null,
-    map: null,
-    stopMarker: null,
-    vehicleMarkers: new Map(),
-    mapVisible: false
-  };
+  let currentStopId = null;
+  let currentStopName = null;
+  let currentTripId = null;
+  let currentVehicleRef = null;
+  let currentRouteLine = null;
+  let currentRouteName = null;
 
-  function toast(msg) {
-    const t = $("toast");
-    t.textContent = msg;
-    t.style.display = "block";
-    clearTimeout(t._to);
-    t._to = setTimeout(() => t.style.display = "none", 2400);
+  let map = null;
+  let mapLayer = null;
+  let mapFilterLine = null;
+  let mapTimer = null;
+  let stopTimer = null;
+
+  const favKey = "bluestar_unilink_favs_v2";
+
+  function favs(){
+    try{return JSON.parse(localStorage.getItem(favKey) || "[]")}catch(e){return []}
   }
 
-  async function fetchJSON(url) {
-    const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) throw new Error(await r.text());
-    return await r.json();
+  function saveFavs(v){
+    localStorage.setItem(favKey, JSON.stringify(v));
   }
 
-  // Favorites
-  function loadFav() { try { return JSON.parse(localStorage.getItem("favStops") || "[]"); } catch(e) { return []; } }
-  function saveFav(list) { localStorage.setItem("favStops", JSON.stringify(list)); }
-  function isFav(stop_id) { return loadFav().some(x => x.stop_id === stop_id); }
-  function addFav(stop) {
-    const list = loadFav();
-    if (!list.some(x => x.stop_id === stop.stop_id)) {
-      list.unshift({ stop_id: stop.stop_id, stop_name: stop.stop_name });
-      saveFav(list.slice(0, 20));
-      renderFav();
-      toast("Hozzáadva a kedvencekhez");
+  function hasFav(type,id){
+    return favs().some(x => x.type === type && x.id === id);
+  }
+
+  function toggleFav(type,id,name,line){
+    const list = favs();
+    const i = list.findIndex(x => x.type === type && x.id === id);
+    if(i >= 0) list.splice(i,1);
+    else list.unshift({type,id,name,line});
+    saveFavs(list);
+  }
+
+  async function api(url){
+    const r = await fetch(url, {cache:"no-store"});
+    if(!r.ok) throw new Error(await r.text());
+    return r.json();
+  }
+
+  function hhmm(iso){
+    if(!iso) return "";
+    const d = new Date(iso);
+    return d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+  }
+
+  function minsText(m){
+    if(m === null || m === undefined) return "";
+    if(m <= 0) return "0'";
+    return `${m}'`;
+  }
+
+  function esc(s){
+    return String(s ?? "").replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+    }[c]));
+  }
+
+  function lineBoxClass(line){
+    const l = String(line || "").toUpperCase();
+    if(l.startsWith("M")) return "red";
+    if(l === "916" || l === "922" || l === "956" || l === "960" || l === "990") return "black";
+    return "";
+  }
+
+  function setTop(title, backMode=false){
+    $("#topTitle").textContent = title;
+    $("#menuBtn").textContent = backMode ? "‹" : "☰";
+  }
+
+  function clearTimers(){
+    if(mapTimer){clearInterval(mapTimer); mapTimer = null}
+    if(stopTimer){clearInterval(stopTimer); stopTimer = null}
+  }
+
+  function show(view){
+    clearTimers();
+    ["searchView","favView","stopView","tripView","routeView","vehiclesView","mapView"].forEach(id => {
+      $("#" + id).classList.add("hidden");
+    });
+    $("#" + view).classList.remove("hidden");
+
+    if(view === "searchView") setTop("Bluestar Unilink Menetrend", false);
+    if(view === "favView") setTop("Kedvencek", true);
+    if(view === "mapView") setTop("Térkép", true);
+  }
+
+  async function refreshStatus(){
+    try{
+      const s = await api("/api/status");
+      $("#liveStatus").innerHTML =
+        `<span class="statusDot ${s.live?.ok ? "ok":"err"}"></span>LIVE: ${s.live?.ok ? "ON":"OFF"} (${s.live?.activeCount ?? 0})`;
+      $("#gtfsStatus").innerHTML =
+        `<span class="statusDot ${s.gtfs?.ok ? "ok":"err"}"></span>GTFS: ${s.gtfs?.ok ? "OK":"ERR"}`;
+    }catch(e){
+      $("#liveStatus").innerHTML = `<span class="statusDot err"></span>LIVE: ERR`;
+      $("#gtfsStatus").innerHTML = `<span class="statusDot err"></span>GTFS: ERR`;
     }
   }
-  function removeFav(stop_id) {
-    const list = loadFav().filter(x => x.stop_id !== stop_id);
-    saveFav(list);
-    renderFav();
-    toast("Eltávolítva a kedvencekből");
+
+  function openDrawer(){
+    $("#drawerOverlay").classList.add("open");
   }
-  function renderFav() {
-    const list = loadFav();
-    const el = $("favList");
-    el.innerHTML = "";
-    if (!list.length) {
-      el.innerHTML = `<div class="muted small">Nincs kedvenc megálló.</div>`;
+
+  function closeDrawer(){
+    $("#drawerOverlay").classList.remove("open");
+  }
+
+  $("#drawerOverlay").addEventListener("click", e => {
+    if(e.target.id === "drawerOverlay") closeDrawer();
+  });
+
+  $$(".drawerItem").forEach(item => {
+    item.addEventListener("click", () => {
+      const a = item.dataset.action;
+      closeDrawer();
+
+      if(a === "search") openSearch();
+      if(a === "map") openMap(null);
+      if(a === "fav") openFav();
+      if(a === "refreshFav") openFav();
+      if(a === "clearFav"){ saveFavs([]); openFav(); }
+      if(a === "about") alert("Bluestar Unilink Menetrend\\nGTFS + DfT SIRI-VM live adatok");
+      if(a === "theme") alert("A sötét Megállóhelyi Menetrend-stílus aktív.");
+    });
+  });
+
+  $("#menuBtn").addEventListener("click", () => {
+    const isBack = $("#menuBtn").textContent.trim() === "‹";
+    if(isBack){
+      openSearch();
+    }else{
+      openDrawer();
+    }
+  });
+
+  $("#homeBtn").addEventListener("click", openSearch);
+
+  function openSearch(){
+    show("searchView");
+    $("#searchInput").focus();
+  }
+
+  $("#clearSearch").addEventListener("click", () => {
+    $("#searchInput").value = "";
+    $("#searchHeader").classList.add("hidden");
+    $("#searchResults").innerHTML = `<div class="helpText">Írj be megállót vagy járatot...</div>`;
+    $("#searchInput").focus();
+  });
+
+  let searchT = null;
+  $("#searchInput").addEventListener("input", () => {
+    clearTimeout(searchT);
+    searchT = setTimeout(searchNow, 230);
+  });
+
+  async function searchNow(){
+    const q = $("#searchInput").value.trim();
+
+    if(!q){
+      $("#searchHeader").classList.add("hidden");
+      $("#searchResults").innerHTML = `<div class="helpText">Írj be megállót vagy járatot...</div>`;
       return;
     }
-    list.forEach(s => {
-      const div = document.createElement("div");
-      div.className = "item";
-      div.innerHTML = `
-        <div class="name">${escapeHtml(s.stop_name)}</div>
-        <div class="meta"><span>${escapeHtml(s.stop_id)}</span><span class="muted">Koppints a megnyitáshoz</span></div>
-      `;
-      div.onclick = () => selectStop({ stop_id: s.stop_id, stop_name: s.stop_name });
-      el.appendChild(div);
+
+    $("#searchHeader").classList.remove("hidden");
+    $("#searchHeader").textContent = `Találatok a(z) "${q}" kifejezésre`;
+    $("#searchResults").innerHTML = `<div class="helpText">Keresés...</div>`;
+
+    try{
+      const res = await api(`/api/search?q=${encodeURIComponent(q)}`);
+      let html = "";
+
+      if(res.stops?.length){
+        html += `<div class="sectionTitle">Megállók</div>`;
+        for(const s of res.stops){
+          html += `
+            <div class="resultItem" onclick="openStop('${esc(s.stop_id)}','${esc(s.stop_name)}')">
+              <div class="resultTop">
+                <div class="routeTiny darkblue">🚌</div>
+                <div style="min-width:0">
+                  <div class="resultName">${esc(s.stop_name)}</div>
+                  <div class="resultSub">${esc(s.stop_id)}</div>
+                </div>
+              </div>
+            </div>`;
+        }
+      }
+
+      if(res.routes?.length){
+        html += `<div class="sectionTitle">Járatok</div>`;
+        for(const r of res.routes){
+          const line = r.short_name || r.long_name || "?";
+          const name = r.long_name || line;
+          html += `
+            <div class="resultItem" onclick="openRoute('${esc(line)}','${esc(name)}')">
+              <div class="resultTop">
+                <div class="routeTiny ${lineBoxClass(line)}">${esc(line)}</div>
+                <div style="min-width:0">
+                  <div class="resultName">${esc(line)} ${esc(name)}</div>
+                  <div class="resultSub">Viszonylat azonosító: ${esc(r.route_id || "")}</div>
+                </div>
+              </div>
+            </div>`;
+        }
+      }
+
+      $("#searchResults").innerHTML = html || `<div class="helpText">Nincs találat.</div>`;
+    }catch(e){
+      $("#searchResults").innerHTML = `<div class="helpText">Hiba a keresésnél.</div>`;
+    }
+  }
+
+  window.openStop = async function(stopId, stopName){
+    currentStopId = stopId;
+    currentStopName = stopName || stopId;
+
+    show("stopView");
+    setTop("Megálló", true);
+    $("#stopName").textContent = `${currentStopName} (${stopId})`;
+    $("#depList").innerHTML = `<div class="helpText">Betöltés...</div>`;
+
+    await loadDepartures();
+    stopTimer = setInterval(loadDepartures, 15000);
+  }
+
+  async function loadDepartures(){
+    if(!currentStopId) return;
+
+    try{
+      const board = await api(`/api/stop/${encodeURIComponent(currentStopId)}/departures?minutes=180&limit=40`);
+      const deps = board.departures || [];
+      $("#stopName").textContent = `${board.stop?.stop_name || currentStopName || currentStopId} (${currentStopId})`;
+
+      if(!deps.length){
+        $("#depList").innerHTML = `<div class="helpText">Nincs indulás a következő időablakban.</div>`;
+        return;
+      }
+
+      let html = "";
+      for(const d of deps){
+        const line = d.line || "?";
+        const t = hhmm(d.expectedTime || d.scheduledTime);
+        const rightClass = d.isLive ? "live" : "sched";
+        const rightText = d.isLive ? minsText(d.inMin) : t;
+        const midNote = d.vehicleAtStop ? "Jármű a megállóban" : (d.isLive ? "Élő adat" : "Menetrendi adat");
+        const blink = d.vehicleAtStop ? "blink" : "";
+
+        html += `
+          <div class="depRow" onclick="openTripFromDeparture('${esc(d.trip_id || "")}','${esc(d.vehicleRef || "")}')">
+            <div class="depLine">
+              <div class="routeBox ${lineBoxClass(line)}">${esc(line)}</div>
+            </div>
+            <div class="depMid">
+              <div class="depDest ${blink}">${esc(d.destination || "—")}</div>
+              <div class="depNote">${esc(midNote)}<br>${esc(currentStopName || currentStopId)}</div>
+            </div>
+            <div class="depRight ${rightClass}">${rightText}</div>
+          </div>`;
+      }
+
+      $("#depList").innerHTML = html;
+    }catch(e){
+      $("#depList").innerHTML = `<div class="helpText">Hiba az indulások betöltésénél.</div>`;
+    }
+  }
+
+  window.openTripFromDeparture = function(tripId, vehicleRef){
+    if(!tripId) return;
+    openTrip(tripId, vehicleRef || null);
+  }
+
+  async function openTrip(tripId, vehicleRef){
+    currentTripId = tripId;
+    currentVehicleRef = vehicleRef || null;
+
+    show("tripView");
+    setTop("Járat", true);
+
+    $("#tripStops").innerHTML = `<div class="helpText">Betöltés...</div>`;
+    $("#tripDelayBox").textContent = "--";
+    $("#tripDelayBox").className = "delayBox sched";
+
+    try{
+      const trip = await api(`/api/trip/${encodeURIComponent(tripId)}`);
+
+      $("#tripRouteBox").textContent = trip.line || "?";
+      $("#tripRouteBox").className = `routeBox ${lineBoxClass(trip.line)}`;
+      $("#tripDest").textContent = trip.destination || "Járat";
+      $("#tripVehicle").textContent = "Menetrendi adat";
+      $("#tripNext").textContent = "";
+
+      let live = null;
+      if(vehicleRef){
+        try{
+          live = await api(`/api/vehicle/${encodeURIComponent(vehicleRef)}`);
+        }catch(e){}
+      }
+
+      const calls = live?.calls || {};
+      const currentStopRef = live?.currentStopRef || null;
+      const atStop = !!live?.vehicleAtStop;
+
+      if(live){
+        $("#tripVehicle").textContent =
+          `${live.vehicleRef || ""} • Következő / aktuális megálló: ${live.currentStopRef || "—"}`;
+      }
+
+      let delayMin = null;
+      let nextStopName = "";
+
+      let rows = "";
+      for(const st of trip.stops || []){
+        const schedIso = st.scheduledTime;
+        const liveIso = calls[st.stop_id] || null;
+        let shownTime = hhmm(schedIso);
+        let timeClass = "";
+        let right = "";
+        let blink = "";
+
+        if(liveIso){
+          shownTime = hhmm(liveIso);
+          timeClass = "live";
+          const dm = Math.round((new Date(liveIso) - new Date(schedIso)) / 60000);
+          right = dm === 0 ? "0'" : `${dm > 0 ? "+" : ""}${dm}'`;
+          if(delayMin === null) delayMin = dm;
+        }
+
+        if(atStop && currentStopRef === st.stop_id){
+          blink = "blink";
+          nextStopName = st.stop_name;
+        }
+
+        rows += `
+          <div class="tripStopRow">
+            <div class="tripTime ${timeClass}">${shownTime}</div>
+            <div class="tripStopName ${blink}">${esc(st.stop_name)}</div>
+            <div class="tripRight">${right}</div>
+          </div>`;
+      }
+
+      $("#tripStops").innerHTML = rows || `<div class="helpText">Nincs stop lista.</div>`;
+
+      if(delayMin !== null){
+        $("#tripDelayBox").textContent = `${delayMin > 0 ? "+" : ""}${delayMin},0`;
+        $("#tripDelayBox").className = delayMin < 0 ? "delayBox early" : "delayBox late";
+      }
+
+      if(nextStopName){
+        $("#tripNext").textContent = `Megállóban / következő: ${nextStopName}`;
+      }
+
+    }catch(e){
+      $("#tripStops").innerHTML = `<div class="helpText">Hiba a járat betöltésénél.</div>`;
+    }
+  }
+
+  window.openRoute = function(line, name){
+    currentRouteLine = line;
+    currentRouteName = name || line;
+
+    show("routeView");
+    setTop("Viszonylat", true);
+
+    $("#routeTitle").textContent = `${line} ${currentRouteName || ""}`;
+    $("#routeVehicleBadge").textContent = line;
+    $("#routeVehicleBadge").className = `routeBox ${lineBoxClass(line)}`;
+    $("#routeMapBadge").textContent = line;
+    $("#routeMapBadge").className = `routeBox ${lineBoxClass(line)}`;
+
+    $("#routeDirections").innerHTML = `
+      <div class="vehicleItem" onclick="openVehiclesForRoute('${esc(line)}')">
+        <div class="routeBox ${lineBoxClass(line)}">${esc(line)}</div>
+        <div class="vehicleText">
+          <div class="vehicleMain">► Aktív járművek ezen a vonalon</div>
+        </div>
+      </div>
+      <div class="vehicleItem" onclick="openMap('${esc(line)}')">
+        <div class="routeBox ${lineBoxClass(line)}">${esc(line)}</div>
+        <div class="vehicleText">
+          <div class="vehicleMain">► Térképen aktuális járművek</div>
+        </div>
+      </div>
+    `;
+
+    $("#routeVehiclesBtn").onclick = () => openVehiclesForRoute(line);
+    $("#routeMapBtn").onclick = () => openMap(line);
+  }
+
+  window.openVehiclesForRoute = async function(line){
+    show("vehiclesView");
+    setTop("Járművek", true);
+    $("#vehiclesList").innerHTML = `<div class="helpText">Betöltés...</div>`;
+
+    try{
+      const res = await api(`/api/vehicles?line=${encodeURIComponent(line)}`);
+      const vehicles = res.vehicles || [];
+
+      if(!vehicles.length){
+        $("#vehiclesList").innerHTML = `<div class="helpText">Nincs jelenleg bejelentkezett jármű ezen a vonalon.</div>`;
+        return;
+      }
+
+      let html = "";
+      for(const v of vehicles){
+        const dest = v.destinationName || "—";
+        const loc = v.vehicleAtStop ? "Megállóban" : (v.currentStopRef ? `Következő / aktuális: ${v.currentStopRef}` : "");
+        html += `
+          <div class="vehicleItem" onclick="openVehicleOnMap('${esc(v.vehicleRef || "")}','${esc(line)}')">
+            <div class="routeBox ${lineBoxClass(line)}">${esc(line)}</div>
+            <div class="vehicleText">
+              <div class="vehicleMain">${esc(dest)}</div>
+              <div class="vehicleSub">${esc(v.vehicleRef || "—")}<br>${esc(loc)}</div>
+            </div>
+          </div>`;
+      }
+      $("#vehiclesList").innerHTML = html;
+    }catch(e){
+      $("#vehiclesList").innerHTML = `<div class="helpText">Hiba a járművek betöltésénél.</div>`;
+    }
+  }
+
+  window.openMap = function(line=null){
+    mapFilterLine = line || null;
+    show("mapView");
+    setTop("Térkép", true);
+    $("#mapFilterBtn").textContent = mapFilterLine ? `Szűrő: ${mapFilterLine}` : "Szűrő: mind";
+    initMap();
+    refreshMap();
+    mapTimer = setInterval(refreshMap, 10000);
+  }
+
+  window.openVehicleOnMap = function(vehicleRef, line){
+    openMap(line);
+  }
+
+  function initMap(){
+    if(map){
+      setTimeout(() => map.invalidateSize(), 100);
+      return;
+    }
+
+    map = L.map("map", { zoomControl:true });
+    map.setView([50.91,-1.404], 12);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom:19,
+      attribution:"Leaflet | © OpenStreetMap"
+    }).addTo(map);
+
+    mapLayer = L.layerGroup().addTo(map);
+  }
+
+  function busIcon(line, bearing){
+    const safeLine = esc(line || "?");
+    const rot = Number.isFinite(Number(bearing)) ? `transform:rotate(${bearing}deg)` : "";
+    const html = `<div class="busMarker" style="${rot}">${safeLine}</div>`;
+    return L.divIcon({
+      className:"",
+      html,
+      iconSize:[58,38],
+      iconAnchor:[29,38],
+      popupAnchor:[0,-36]
     });
   }
 
-  function escapeHtml(s) {
-    return (s || "").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]));
+  async function refreshMap(){
+    if(!map || !mapLayer) return;
+
+    try{
+      const url = mapFilterLine
+        ? `/api/vehicles?line=${encodeURIComponent(mapFilterLine)}`
+        : `/api/vehicles`;
+
+      const res = await api(url);
+      const vehicles = res.vehicles || [];
+
+      mapLayer.clearLayers();
+
+      const bounds = [];
+
+      for(const v of vehicles){
+        if(v.latitude == null || v.longitude == null) continue;
+
+        const line = v.publishedLineName || v.lineRef || "?";
+        const dest = v.destinationName || "—";
+        const veh = v.vehicleRef || "—";
+        const at = v.vehicleAtStop ? " • MEGÁLLÓBAN" : "";
+        const age = v.ageSeconds != null ? `${v.ageSeconds}s` : "—";
+
+        const m = L.marker([v.latitude, v.longitude], {
+          icon: busIcon(line, v.bearing)
+        });
+
+        m.bindPopup(`
+          <div style="min-width:210px;font-family:system-ui">
+            <div style="font-size:18px;font-weight:800">${esc(line)}</div>
+            <div>${esc(dest)}</div>
+            <div style="font-size:12px;color:#666;margin-top:6px">veh: ${esc(veh)} • age: ${esc(age)}${esc(at)}</div>
+          </div>
+        `);
+
+        m.addTo(mapLayer);
+        bounds.push([v.latitude, v.longitude]);
+      }
+
+      if(mapFilterLine && bounds.length){
+        map.fitBounds(bounds, {padding:[40,40], maxZoom:15});
+      }
+
+      refreshStatus();
+    }catch(e){}
   }
 
-  // Search
-  let searchTO = null;
-  $("search").addEventListener("input", () => {
-    clearTimeout(searchTO);
-    const q = $("search").value.trim();
-    searchTO = setTimeout(() => runSearch(q), 200);
+  $("#mapRefreshBtn").addEventListener("click", refreshMap);
+  $("#mapClearBtn").addEventListener("click", () => {
+    mapFilterLine = null;
+    $("#mapFilterBtn").textContent = "Szűrő: mind";
+    refreshMap();
   });
-  $("clear").onclick = () => { $("search").value = ""; $("results").innerHTML = ""; };
+  $("#mapFilterBtn").addEventListener("click", () => {
+    const x = prompt("Add meg a járatszámot, pl. 1, 2, 17, U1A. Üres = mind:");
+    if(x === null) return;
+    mapFilterLine = x.trim() || null;
+    $("#mapFilterBtn").textContent = mapFilterLine ? `Szűrő: ${mapFilterLine}` : "Szűrő: mind";
+    refreshMap();
+  });
 
-  async function runSearch(q) {
-    const resEl = $("results");
-    resEl.innerHTML = "";
-    if (!q) return;
+  function openFav(){
+    show("favView");
+    setTop("Kedvencek", true);
 
-    try {
-      const stops = await fetchJSON(`/api/stops?q=${encodeURIComponent(q)}&limit=12`);
-      if (!stops.length) { resEl.innerHTML = `<div class="muted small">Nincs találat.</div>`; return; }
-      stops.forEach(s => {
-        const div = document.createElement("div");
-        div.className = "item";
-        const code = s.stop_code ? `• kód: ${escapeHtml(s.stop_code)}` : "";
-        div.innerHTML = `
-          <div class="name">${escapeHtml(s.stop_name)}</div>
-          <div class="meta"><span>${escapeHtml(s.stop_id)}</span><span>${code}</span></div>
-        `;
-        div.onclick = () => selectStop(s);
-        resEl.appendChild(div);
-      });
-    } catch(e) {
-      resEl.innerHTML = `<div class="muted small">Hiba a keresésnél.</div>`;
+    const list = favs();
+    if(!list.length){
+      $("#favList").innerHTML = `
+        <div class="helpText">
+          Nincsenek kedvencek<br><br>
+          Megálló vagy viszonylat mentéséhez használd a kedvenc gombot.
+        </div>`;
+      return;
     }
-  }
 
-  // Nearby
-  $("nearbyBtn").onclick = async () => {
-    if (!navigator.geolocation) return toast("A böngésző nem támogatja a GPS-t.");
-    toast("Helymeghatározás…");
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
-        const stops = await fetchJSON(`/api/nearby?lat=${lat}&lon=${lon}&radius_m=700&limit=12`);
-        const resEl = $("results");
-        resEl.innerHTML = "";
-        if (!stops.length) { resEl.innerHTML = `<div class="muted small">Nincs közeli megálló 700m-en belül.</div>`; return; }
-        stops.forEach(s => {
-          const div = document.createElement("div");
-          div.className = "item";
-          div.innerHTML = `
-            <div class="name">${escapeHtml(s.stop_name)}</div>
-            <div class="meta"><span>${escapeHtml(s.stop_id)}</span><span>≈ ${s.distance_m} m</span></div>
-          `;
-          div.onclick = () => selectStop(s);
-          resEl.appendChild(div);
-        });
-      } catch(e) {
-        toast("Hiba a közeli megállók lekérésénél.");
+    let html = "";
+    for(const f of list){
+      if(f.type === "stop"){
+        html += `
+          <div class="resultItem" onclick="openStop('${esc(f.id)}','${esc(f.name)}')">
+            <div class="resultTop">
+              <div class="routeTiny darkblue">🚌</div>
+              <div style="min-width:0">
+                <div class="resultName">${esc(f.name || f.id)}</div>
+                <div class="resultSub">${esc(f.id)}</div>
+              </div>
+            </div>
+          </div>`;
       }
-    }, () => toast("Nem kaptam GPS engedélyt."));
-  };
-
-  // Health
-  $("healthBtn").onclick = async () => {
-    try {
-      const h = await fetchJSON("/api/health");
-      toast(`OK • stops: ${h.stops} • trips: ${h.trips}`);
-    } catch(e) {
-      toast("API nem elérhető / GTFS nincs betöltve.");
-    }
-  };
-
-  // Stop selection & departures
-  $("windowSel").onchange = () => state.selectedStop && refreshDepartures();
-  $("refreshBtn").onclick = () => refreshDepartures();
-
-  $("favBtn").onclick = () => {
-    if (!state.selectedStop) return;
-    const stop = state.selectedStop;
-    if (isFav(stop.stop_id)) removeFav(stop.stop_id);
-    else addFav(stop);
-    updateFavBtn();
-  };
-
-  $("clearFav").onclick = () => { saveFav([]); renderFav(); toast("Kedvencek törölve"); };
-
-  function updateFavBtn() {
-    if (!state.selectedStop) return;
-    $("favBtn").textContent = isFav(state.selectedStop.stop_id) ? "★ Kedvenc (törlés)" : "⭐ Kedvenc";
-  }
-
-  async function selectStop(stop) {
-    state.selectedStop = stop;
-    $("actions").style.display = "block";
-    $("stopHeader").innerHTML = `<div style="font-weight:900; font-size:16px;">${escapeHtml(stop.stop_name || "Megálló")}</div>
-      <div class="muted small">stop_id: <b>${escapeHtml(stop.stop_id)}</b></div>`;
-    updateFavBtn();
-    await refreshDepartures(true);
-    if (state.mapVisible) initOrUpdateMap();
-  }
-
-  function formatNow(iso) {
-    try { return new Date(iso).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}); }
-    catch(e){ return "—"; }
-  }
-
-  function renderTimeCell(d) {
-    // Color rules:
-    // timetable = white
-    // live = green
-    // due = blinking green
-    if (d.status === "due") {
-      return `<span class="due-blink">Due</span>`;
-    }
-    const cls = (d.source === "live") ? "time-live" : "time-timetable";
-    const t = escapeHtml(d.time || d.expected_time || d.aimed_time || "—");
-    let delta = "";
-    if (d.delta_min != null) {
-      if (d.delta_min >= 1) delta = `<span class="delta delta-late">+${d.delta_min}</span>`;
-      else if (d.delta_min <= -1) delta = `<span class="delta delta-early">${d.delta_min}</span>`;
-    }
-    return `<span class="${cls}">${t}</span>${delta}`;
-  }
-
-  async function refreshDepartures(resetTimer=false) {
-    if (!state.selectedStop) return;
-
-    const stop_id = state.selectedStop.stop_id;
-    const windowMin = parseInt($("windowSel").value, 10) || 90;
-
-    try {
-      const data = await fetchJSON(`/api/departures?stop_id=${encodeURIComponent(stop_id)}&window_min=${windowMin}&max_results=60&include_live=1`);
-      $("nowPill").textContent = "🕒 " + formatNow(data.now);
-      $("countPill").textContent = `🚌 ${data.departures.length} indulás`;
-      $("calendarNote").style.display = data.calendar_ignored ? "block" : "none";
-
-      const body = $("depBody");
-      body.innerHTML = "";
-
-      if (!data.departures.length) {
-        $("empty").style.display = "block";
-      } else {
-        $("empty").style.display = "none";
-        data.departures.forEach(d => {
-          const tr = document.createElement("tr");
-          const route = d.route || "—";
-          const headsign = d.headsign || "";
-          const mins = (d.status === "due") ? "" : (d.mins_to != null ? d.mins_to : "—");
-
-          tr.innerHTML = `
-            <td>${renderTimeCell(d)}</td>
-            <td><span class="routeBadge">${escapeHtml(route)}</span></td>
-            <td>${escapeHtml(headsign)}</td>
-            <td class="right"><b>${escapeHtml(String(mins))}</b>${mins !== "" ? `<span class="muted small"> min</span>` : ""}</td>
-          `;
-          body.appendChild(tr);
-        });
+      if(f.type === "route"){
+        html += `
+          <div class="resultItem" onclick="openRoute('${esc(f.line || f.id)}','${esc(f.name || "")}')">
+            <div class="resultTop">
+              <div class="routeTiny">${esc(f.line || f.id)}</div>
+              <div style="min-width:0">
+                <div class="resultName">${esc(f.name || f.id)}</div>
+                <div class="resultSub">Viszonylat</div>
+              </div>
+            </div>
+          </div>`;
       }
-
-      if (resetTimer) {
-        if (state.departuresTimer) clearInterval(state.departuresTimer);
-        state.departuresTimer = setInterval(() => refreshDepartures(false), 20000);
-      }
-
-      if (state.mapVisible) initOrUpdateMap();
-
-    } catch(e) {
-      toast("Nem sikerült lekérni az indulásokat.");
     }
+    $("#favList").innerHTML = html;
   }
 
-  // Map & vehicles
-  $("toggleMap").onclick = async () => {
-    state.mapVisible = !state.mapVisible;
-    $("mapWrap").style.display = state.mapVisible ? "block" : "none";
-    $("toggleMap").textContent = state.mapVisible ? "🗺️ Térkép (elrejt)" : "🗺️ Térkép";
-    if (state.mapVisible) {
-      initOrUpdateMap(true);
-      startVehiclesPolling();
-    } else {
-      stopVehiclesPolling();
-    }
-  };
-
-  $("lineFilter").addEventListener("input", () => { if (state.mapVisible) refreshVehicles(); });
-
-  function initOrUpdateMap(forceInit=false) {
-    if (!state.selectedStop) return;
-    const lat = state.selectedStop.lat;
-    const lon = state.selectedStop.lon;
-
-    if (!state.map || forceInit) {
-      const center = (lat != null && lon != null) ? [lat, lon] : [50.9097, -1.4043];
-      state.map = L.map("map", { zoomControl: true }).setView(center, 14);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: "&copy; OpenStreetMap"
-      }).addTo(state.map);
-    }
-
-    if (lat != null && lon != null) {
-      if (state.stopMarker) state.stopMarker.remove();
-      state.stopMarker = L.marker([lat, lon]).addTo(state.map).bindPopup("Megálló").openPopup();
-      state.map.setView([lat, lon], Math.max(state.map.getZoom(), 14));
-    }
-  }
-
-  function startVehiclesPolling() {
-    refreshVehicles();
-    if (state.vehiclesTimer) clearInterval(state.vehiclesTimer);
-    state.vehiclesTimer = setInterval(refreshVehicles, 20000);
-  }
-
-  function stopVehiclesPolling() {
-    if (state.vehiclesTimer) clearInterval(state.vehiclesTimer);
-    state.vehiclesTimer = null;
-    for (const m of state.vehicleMarkers.values()) m.remove();
-    state.vehicleMarkers.clear();
-  }
-
-  async function refreshVehicles() {
-    if (!state.mapVisible || !state.map) return;
-
-    const line = $("lineFilter").value.trim();
-    let url = "/api/vehicles?max_results=250";
-    if (line) url += "&line=" + encodeURIComponent(line);
-
-    try {
-      const data = await fetchJSON(url);
-      const seen = new Set();
-
-      (data.vehicles || []).forEach(v => {
-        if (v.lat == null || v.lon == null) return;
-        const key = v.vehicle_id || (v.line + ":" + v.lat + "," + v.lon);
-        seen.add(key);
-
-        let marker = state.vehicleMarkers.get(key);
-        const label = `${v.line || "Bus"}${v.destination ? " → " + v.destination : ""}`;
-
-        if (!marker) {
-          marker = L.circleMarker([v.lat, v.lon], { radius: 7, weight: 2, fillOpacity: 0.25 });
-          marker.addTo(state.map).bindPopup(label);
-          state.vehicleMarkers.set(key, marker);
-        } else {
-          marker.setLatLng([v.lat, v.lon]);
-          marker.setPopupContent(label);
-        }
-      });
-
-      for (const [key, marker] of state.vehicleMarkers.entries()) {
-        if (!seen.has(key)) { marker.remove(); state.vehicleMarkers.delete(key); }
-      }
-    } catch(e) {}
-  }
-
-  // Init
-  renderFav();
+  window.addEventListener("load", async () => {
+    await refreshStatus();
+    openSearch();
+    setInterval(refreshStatus, 15000);
+  });
 </script>
 </body>
 </html>
