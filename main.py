@@ -14,9 +14,10 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import FileResponse
 
 
-# -------------------------
-# Config
-# -------------------------
+# ============================================================
+# CONFIG
+# ============================================================
+
 TZ = ZoneInfo(os.getenv("APP_TZ", "Europe/London"))
 
 DFT_API_KEY = os.getenv("DFT_API_KEY", "").strip()
@@ -29,10 +30,9 @@ DFT_FEED_URL = os.getenv(
 GTFS_ZIP_PATH = os.getenv("GTFS_ZIP_PATH", "gtfs.zip")
 GTFS_DIR = os.getenv("GTFS_DIR", "gtfs")
 
+LIVE_CACHE_TTL_SEC = float(os.getenv("LIVE_CACHE_TTL_SEC", "10"))
 DEFAULT_MAX_AGE_SECONDS = int(os.getenv("LIVE_MAX_AGE_SECONDS", "240"))
 
-# Bluestar / Unilink alap operator szűrés.
-# Ha mindent akarsz látni: Railway változóként DEFAULT_OPERATOR_REFS= üresen.
 DEFAULT_OPERATOR_REFS = [
     x.strip().upper()
     for x in os.getenv("DEFAULT_OPERATOR_REFS", "BLUS").split(",")
@@ -40,18 +40,20 @@ DEFAULT_OPERATOR_REFS = [
 ]
 
 
-# -------------------------
-# App
-# -------------------------
-app = FastAPI(title="Bluestar / Unilink – GTFS + LIVE")
+# ============================================================
+# APP
+# ============================================================
+
+app = FastAPI(title="Bluestar / Unilink GTFS + SIRI-VM")
 
 
-# -------------------------
-# Caches
-# -------------------------
+# ============================================================
+# CACHES
+# ============================================================
+
 LIVE_CACHE: Dict[str, Any] = {
     "ts": 0.0,
-    "ttl": float(os.getenv("LIVE_CACHE_TTL_SEC", "10")),
+    "ttl": LIVE_CACHE_TTL_SEC,
     "vehicles_all": [],
     "raw_count": 0,
     "ok": False,
@@ -64,19 +66,26 @@ GTFS: Dict[str, Any] = {
     "ok": False,
     "error": None,
     "source": None,
+
+    "agency": {},
     "stops": {},
     "routes": {},
     "trips": {},
+
     "stop_times_by_stop": {},
     "stop_times_by_trip": {},
+
     "calendar": {},
     "calendar_dates": {},
+
+    "shapes": {},
 }
 
 
-# -------------------------
-# Helpers
-# -------------------------
+# ============================================================
+# SMALL HELPERS
+# ============================================================
+
 def now_local() -> datetime:
     return datetime.now(TZ)
 
@@ -90,16 +99,26 @@ def parse_hms_to_seconds(s: str) -> int:
     return int(h) * 3600 + int(m) * 60 + int(sec)
 
 
+def seconds_to_hhmm(seconds: int) -> str:
+    seconds = seconds % (24 * 3600)
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    return f"{h:02d}:{m:02d}"
+
+
 def safe_text(el: Optional[ET.Element]) -> Optional[str]:
     if el is None:
         return None
-    t = el.text
-    return t.strip() if t else None
+    if el.text is None:
+        return None
+    t = el.text.strip()
+    return t if t else None
 
 
 def parse_iso_dt(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
+
     try:
         s2 = s.replace("Z", "+00:00")
         dt = datetime.fromisoformat(s2)
@@ -111,7 +130,9 @@ def parse_iso_dt(s: Optional[str]) -> Optional[datetime]:
 
 
 def looks_like_date(s: Optional[str]) -> bool:
-    if not s or len(s) != 10:
+    if not s:
+        return False
+    if len(s) != 10:
         return False
     return s[4] == "-" and s[7] == "-"
 
@@ -124,23 +145,6 @@ def norm_operator(s: Optional[str]) -> str:
     return (s or "").strip().upper()
 
 
-def decode_feed_bytes(content: bytes) -> bytes:
-    if not content:
-        return b""
-
-    if content[:2] == b"PK":
-        with zipfile.ZipFile(io.BytesIO(content), "r") as zf:
-            names = zf.namelist()
-            if not names:
-                return b""
-            return zf.read(names[0])
-
-    if content[:2] == b"\x1f\x8b":
-        return gzip.decompress(content)
-
-    return content
-
-
 def departure_datetime(service_date: date, dep_seconds: int) -> datetime:
     base = datetime(service_date.year, service_date.month, service_date.day, tzinfo=TZ)
     return base + timedelta(seconds=dep_seconds)
@@ -150,6 +154,25 @@ def to_dt_iso(iso: str) -> datetime:
     return datetime.fromisoformat(iso).astimezone(TZ)
 
 
+def decode_feed_bytes(content: bytes) -> bytes:
+    if not content:
+        return b""
+
+    # ZIP
+    if content[:2] == b"PK":
+        with zipfile.ZipFile(io.BytesIO(content), "r") as zf:
+            names = zf.namelist()
+            if not names:
+                return b""
+            return zf.read(names[0])
+
+    # GZIP
+    if content[:2] == b"\x1f\x8b":
+        return gzip.decompress(content)
+
+    return content
+
+
 def public_vehicle(v: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "recordedAtTime": v.get("recordedAtTime"),
@@ -157,34 +180,42 @@ def public_vehicle(v: Dict[str, Any]) -> Dict[str, Any]:
         "validUntilTime": v.get("validUntilTime"),
         "dataFrameRef": v.get("dataFrameRef"),
         "datedVehicleJourneyRef": v.get("datedVehicleJourneyRef"),
+
         "lineRef": v.get("lineRef"),
         "publishedLineName": v.get("publishedLineName"),
         "lineNorm": v.get("publishedLineName") or v.get("lineRef"),
+
         "operatorRef": v.get("operatorRef"),
         "directionRef": v.get("directionRef"),
+
         "originRef": v.get("originRef"),
         "originName": v.get("originName"),
         "destinationRef": v.get("destinationRef"),
         "destinationName": v.get("destinationName"),
+
         "longitude": v.get("longitude"),
         "latitude": v.get("latitude"),
         "bearing": v.get("bearing"),
+
         "blockRef": v.get("blockRef"),
         "vehicleRef": v.get("vehicleRef"),
         "vehicleUniqueId": v.get("vehicleUniqueId"),
         "ticketMachineServiceCode": v.get("ticketMachineServiceCode"),
         "journeyCode": v.get("journeyCode"),
+
         "currentStopRef": v.get("currentStopRef"),
         "currentStopName": v.get("currentStopName"),
         "vehicleAtStop": bool(v.get("vehicleAtStop")),
+
         "ageSeconds": v.get("ageSeconds"),
         "tripId": v.get("tripId"),
     }
 
 
-# -------------------------
-# GTFS loader
-# -------------------------
+# ============================================================
+# GTFS LOADER
+# ============================================================
+
 def _read_gtfs_csv_from_zip(zf: zipfile.ZipFile, name: str) -> List[Dict[str, str]]:
     with zf.open(name) as f:
         text = io.TextIOWrapper(f, encoding="utf-8-sig", newline="")
@@ -224,6 +255,7 @@ def load_gtfs() -> None:
                 return name in names
 
             close_after = zf_obj
+
         else:
             def read_csv(name: str) -> List[Dict[str, str]]:
                 return _read_gtfs_csv_from_dir(source_value, name)
@@ -234,10 +266,21 @@ def load_gtfs() -> None:
             close_after = None
 
         try:
+            agency_rows = read_csv("agency.txt") if has_file("agency.txt") else []
             stops_rows = read_csv("stops.txt")
             routes_rows = read_csv("routes.txt")
             trips_rows = read_csv("trips.txt")
             stop_times_rows = read_csv("stop_times.txt")
+
+            agency: Dict[str, Dict[str, Any]] = {}
+            for r in agency_rows:
+                aid = r.get("agency_id") or "default"
+                agency[aid] = {
+                    "agency_id": aid,
+                    "agency_name": r.get("agency_name") or "",
+                    "agency_url": r.get("agency_url") or "",
+                    "agency_timezone": r.get("agency_timezone") or "",
+                }
 
             calendar: Dict[str, Any] = {}
             calendar_dates: Dict[str, Dict[date, int]] = {}
@@ -308,6 +351,7 @@ def load_gtfs() -> None:
                 stop_id = r["stop_id"]
                 dep = r.get("departure_time") or r.get("arrival_time")
                 arr = r.get("arrival_time") or r.get("departure_time")
+
                 if not dep:
                     continue
 
@@ -327,20 +371,50 @@ def load_gtfs() -> None:
 
             for sid in stop_times_by_stop:
                 stop_times_by_stop[sid].sort(key=lambda x: x[0])
+
             for tid in stop_times_by_trip:
                 stop_times_by_trip[tid].sort(key=lambda x: x["stop_sequence"])
+
+            shapes: Dict[str, List[Dict[str, Any]]] = {}
+            if has_file("shapes.txt"):
+                for r in read_csv("shapes.txt"):
+                    shape_id = r.get("shape_id")
+                    if not shape_id:
+                        continue
+
+                    try:
+                        lat = float(r["shape_pt_lat"])
+                        lon = float(r["shape_pt_lon"])
+                        seq = int(float(r.get("shape_pt_sequence") or 0))
+                    except Exception:
+                        continue
+
+                    shapes.setdefault(shape_id, []).append({
+                        "lat": lat,
+                        "lon": lon,
+                        "seq": seq,
+                    })
+
+                for sid in shapes:
+                    shapes[sid].sort(key=lambda x: x["seq"])
 
             GTFS.update({
                 "ok": True,
                 "error": None,
                 "source": f"{source_kind}:{source_value}",
+
+                "agency": agency,
                 "stops": stops,
                 "routes": routes,
                 "trips": trips,
+
                 "stop_times_by_stop": stop_times_by_stop,
                 "stop_times_by_trip": stop_times_by_trip,
+
                 "calendar": calendar,
                 "calendar_dates": calendar_dates,
+
+                "shapes": shapes,
             })
 
         finally:
@@ -354,12 +428,15 @@ def load_gtfs() -> None:
 
 def service_active(service_id: str, service_date: date) -> bool:
     ex = GTFS["calendar_dates"].get(service_id, {}).get(service_date)
+
     if ex == 1:
         return True
+
     if ex == 2:
         return False
 
     cal = GTFS["calendar"].get(service_id)
+
     if not cal:
         return True
 
@@ -367,6 +444,7 @@ def service_active(service_id: str, service_date: date) -> bool:
         return False
 
     wd = service_date.weekday()
+
     if wd == 0:
         return cal["monday"]
     if wd == 1:
@@ -379,6 +457,7 @@ def service_active(service_id: str, service_date: date) -> bool:
         return cal["friday"]
     if wd == 5:
         return cal["saturday"]
+
     return cal["sunday"]
 
 
@@ -403,6 +482,7 @@ def routes_for_line(line: str) -> List[Dict[str, Any]]:
 
 def trip_id_candidates_from_live(v: Dict[str, Any]) -> List[str]:
     refs = []
+
     dfr = v.get("dataFrameRef") or now_local().date().isoformat()
     dvjr = v.get("datedVehicleJourneyRef") or ""
     line = v.get("publishedLineName") or v.get("lineRef") or ""
@@ -411,15 +491,17 @@ def trip_id_candidates_from_live(v: Dict[str, Any]) -> List[str]:
         refs.append(dvjr)
         refs.append(f"BLUS:{dfr}:{dvjr}")
         refs.append(f"{dfr}:{dvjr}")
+
         if line:
             refs.append(f"BLUS:{dfr}:{line}:{dvjr}")
 
     return refs
 
 
-# -------------------------
-# LIVE fetch + parse
-# -------------------------
+# ============================================================
+# LIVE SIRI-VM
+# ============================================================
+
 def fetch_live_xml() -> bytes:
     if not DFT_API_KEY and "api_key=" not in DFT_FEED_URL:
         raise RuntimeError("Missing DFT_API_KEY environment variable")
@@ -431,6 +513,7 @@ def fetch_live_xml() -> bytes:
 
     LIVE_CACHE["last_http_status"] = resp.status_code
     resp.raise_for_status()
+
     return decode_feed_bytes(resp.content)
 
 
@@ -459,42 +542,51 @@ def parse_siri_vm(xml_bytes: bytes) -> List[Dict[str, Any]]:
                 safe_text(va.find("./{*}ItemIdentifier"))
                 or safe_text(va.find(".//{*}ItemIdentifier"))
             )
-            valid_until = safe_text(va.find("./{*}ValidUntilTime")) or delivery_valid_until
+
+            valid_until = (
+                safe_text(va.find("./{*}ValidUntilTime"))
+                or delivery_valid_until
+            )
 
             mvj = va.find(".//{*}MonitoredVehicleJourney")
             if mvj is None:
                 continue
 
-            def pick(tag: str) -> Optional[str]:
+            def pick_from_mvj(tag: str) -> Optional[str]:
                 return safe_text(mvj.find(f".//{{*}}{tag}"))
+
+            def pick_from_va(tag: str) -> Optional[str]:
+                return safe_text(va.find(f".//{{*}}{tag}"))
 
             data_frame_ref = safe_text(
                 mvj.find(".//{*}FramedVehicleJourneyRef/{*}DataFrameRef")
             )
+
             dated_vehicle_journey_ref = safe_text(
                 mvj.find(".//{*}FramedVehicleJourneyRef/{*}DatedVehicleJourneyRef")
             )
 
-            line_ref = pick("LineRef")
-            published_line_name = pick("PublishedLineName") or line_ref
-            operator_ref = pick("OperatorRef")
-            direction_ref = pick("DirectionRef")
+            line_ref = pick_from_mvj("LineRef")
+            published_line_name = pick_from_mvj("PublishedLineName") or line_ref
+            operator_ref = pick_from_mvj("OperatorRef")
+            direction_ref = pick_from_mvj("DirectionRef")
 
-            origin_ref = pick("OriginRef")
-            origin_name = pick("OriginName") or origin_ref
-            destination_ref = pick("DestinationRef")
-            destination_name = pick("DestinationName") or destination_ref
+            origin_ref = pick_from_mvj("OriginRef")
+            origin_name = pick_from_mvj("OriginName") or origin_ref
 
-            block_ref = pick("BlockRef")
-            vehicle_ref = pick("VehicleRef")
+            destination_ref = pick_from_mvj("DestinationRef")
+            destination_name = pick_from_mvj("DestinationName") or destination_ref
 
-            vehicle_unique_id = pick("VehicleUniqueId")
-            ticket_machine_service_code = pick("TicketMachineServiceCode")
-            journey_code = pick("JourneyCode")
+            block_ref = pick_from_mvj("BlockRef")
+            vehicle_ref = pick_from_mvj("VehicleRef")
+
+            vehicle_unique_id = pick_from_va("VehicleUniqueId") or pick_from_mvj("VehicleUniqueId")
+            ticket_machine_service_code = pick_from_va("TicketMachineServiceCode") or pick_from_mvj("TicketMachineServiceCode")
+            journey_code = pick_from_va("JourneyCode") or pick_from_mvj("JourneyCode")
 
             lon = safe_text(mvj.find(".//{*}VehicleLocation/{*}Longitude"))
             lat = safe_text(mvj.find(".//{*}VehicleLocation/{*}Latitude"))
-            bearing = pick("Bearing")
+            bearing = pick_from_mvj("Bearing")
 
             calls: List[Dict[str, Any]] = []
             current_stop_ref = None
@@ -504,10 +596,12 @@ def parse_siri_vm(xml_bytes: bytes) -> List[Dict[str, Any]]:
             def parse_call(call_el: ET.Element, is_monitored: bool) -> Optional[Dict[str, Any]]:
                 stop_ref = safe_text(call_el.find(".//{*}StopPointRef"))
                 stop_name = safe_text(call_el.find(".//{*}StopPointName"))
+
                 aimed_arr = safe_text(call_el.find(".//{*}AimedArrivalTime"))
                 aimed_dep = safe_text(call_el.find(".//{*}AimedDepartureTime"))
                 exp_arr = safe_text(call_el.find(".//{*}ExpectedArrivalTime"))
                 exp_dep = safe_text(call_el.find(".//{*}ExpectedDepartureTime"))
+
                 v_at_stop = safe_text(call_el.find(".//{*}VehicleAtStop"))
                 v_at_stop_bool = (v_at_stop or "").lower() == "true"
 
@@ -546,24 +640,30 @@ def parse_siri_vm(xml_bytes: bytes) -> List[Dict[str, Any]]:
                 "recordedAtTime": recorded,
                 "recordedAtTimeLocal": recorded_dt.isoformat() if recorded_dt else None,
                 "validUntilTime": valid_until,
+
                 "dataFrameRef": data_frame_ref,
                 "datedVehicleJourneyRef": dated_vehicle_journey_ref,
+
                 "lineRef": line_ref,
                 "publishedLineName": published_line_name,
                 "operatorRef": operator_ref,
                 "directionRef": direction_ref,
+
                 "originRef": origin_ref,
                 "originName": origin_name,
                 "destinationRef": destination_ref,
                 "destinationName": destination_name,
+
                 "longitude": float(lon) if lon else None,
                 "latitude": float(lat) if lat else None,
                 "bearing": float(bearing) if bearing else None,
+
                 "blockRef": block_ref,
                 "vehicleRef": vehicle_ref,
                 "vehicleUniqueId": vehicle_unique_id,
                 "ticketMachineServiceCode": ticket_machine_service_code,
                 "journeyCode": journey_code,
+
                 "calls": calls,
                 "currentStopRef": current_stop_ref,
                 "currentStopName": current_stop_name,
@@ -571,6 +671,7 @@ def parse_siri_vm(xml_bytes: bytes) -> List[Dict[str, Any]]:
             }
 
             candidates = trip_id_candidates_from_live(v)
+
             for ctid in candidates:
                 if ctid in GTFS["trips"]:
                     v["tripId"] = ctid
@@ -641,6 +742,7 @@ def filter_live_vehicles(
 
     for v in vehicles_all:
         df = v.get("dataFrameRef")
+
         if looks_like_date(df) and df != today_str:
             continue
 
@@ -652,8 +754,13 @@ def filter_live_vehicles(
         else:
             age_s = (nl - rdt).total_seconds()
 
-        if fresh_only and (age_s is None or age_s > max_age_seconds or age_s < -60):
-            continue
+        if fresh_only:
+            if age_s is None:
+                continue
+            if age_s > max_age_seconds:
+                continue
+            if age_s < -60:
+                continue
 
         vut = parse_iso_dt(v.get("validUntilTime"))
         if vut is not None and nl > (vut + timedelta(seconds=5)):
@@ -692,23 +799,29 @@ def filter_live_vehicles(
         else:
             old_dt = parse_iso_dt(old.get("recordedAtTime")) or datetime.min.replace(tzinfo=TZ)
             new_dt = parse_iso_dt(v.get("recordedAtTime")) or datetime.min.replace(tzinfo=TZ)
+
             if new_dt > old_dt:
                 latest[ref] = v
 
-    return list(latest.values()) + no_ref
+    result = list(latest.values()) + no_ref
+    result.sort(key=lambda x: (x.get("publishedLineName") or x.get("lineRef") or "", x.get("vehicleRef") or ""))
+
+    return result
 
 
-# -------------------------
-# Startup
-# -------------------------
+# ============================================================
+# STARTUP
+# ============================================================
+
 @app.on_event("startup")
 def _startup():
     load_gtfs()
 
 
-# -------------------------
-# Static
-# -------------------------
+# ============================================================
+# STATIC
+# ============================================================
+
 @app.get("/", response_class=FileResponse)
 def index():
     return FileResponse("index.html")
@@ -722,9 +835,33 @@ def health():
     }
 
 
-# -------------------------
-# API: status / debug
-# -------------------------
+@app.get("/api/health")
+def api_health():
+    return health()
+
+
+# ============================================================
+# DEBUG / STATUS
+# ============================================================
+
+def calendar_range_debug() -> Dict[str, Optional[str]]:
+    starts = []
+    ends = []
+
+    for c in GTFS["calendar"].values():
+        starts.append(c["start_date"])
+        ends.append(c["end_date"])
+
+    for dmap in GTFS["calendar_dates"].values():
+        starts.extend(dmap.keys())
+        ends.extend(dmap.keys())
+
+    return {
+        "calendar_start_min": min(starts).strftime("%Y%m%d") if starts else None,
+        "calendar_end_max": max(ends).strftime("%Y%m%d") if ends else None,
+    }
+
+
 @app.get("/api/status")
 def api_status():
     vehicles_all, raw_count = get_live_all_cached()
@@ -757,7 +894,9 @@ def api_status():
                 "routes": len(GTFS["routes"]),
                 "trips": len(GTFS["trips"]),
                 "stop_departures_index_stops": len(GTFS["stop_times_by_stop"]),
+                "shapes": len(GTFS["shapes"]),
             },
+            "calendarRange": calendar_range_debug(),
         },
         "serverTime": now_local().isoformat(),
         "timezone": str(TZ),
@@ -769,24 +908,6 @@ def status_alias():
     return api_status()
 
 
-def calendar_range_debug() -> Dict[str, Optional[str]]:
-    starts = []
-    ends = []
-
-    for c in GTFS["calendar"].values():
-        starts.append(c["start_date"])
-        ends.append(c["end_date"])
-
-    for dmap in GTFS["calendar_dates"].values():
-        starts.extend(dmap.keys())
-        ends.extend(dmap.keys())
-
-    return {
-        "calendar_start_min": min(starts).strftime("%Y%m%d") if starts else None,
-        "calendar_end_max": max(ends).strftime("%Y%m%d") if ends else None,
-    }
-
-
 @app.get("/api/gtfs-debug")
 def api_gtfs_debug():
     return {
@@ -794,11 +915,13 @@ def api_gtfs_debug():
         "error": GTFS["error"],
         "source": GTFS["source"],
         "counts": {
+            "agency": len(GTFS["agency"]),
             "stops": len(GTFS["stops"]),
             "routes": len(GTFS["routes"]),
             "trips": len(GTFS["trips"]),
             "stop_times_trips": len(GTFS["stop_times_by_trip"]),
             "stop_departures_index_stops": len(GTFS["stop_times_by_stop"]),
+            "shapes": len(GTFS["shapes"]),
         },
         "calendarRange": calendar_range_debug(),
         "agencyFilter": "",
@@ -826,16 +949,18 @@ def api_live_debug():
         "lastError": LIVE_CACHE["error"] or "",
         "lastHttpStatus": LIVE_CACHE.get("last_http_status"),
         "lastFetchTime": LIVE_CACHE.get("last_fetch_time"),
-        "sample": [public_vehicle(v) for v in active[:5]],
+        "sample": [public_vehicle(v) for v in active[:8]],
     }
 
 
-# -------------------------
-# API: search
-# -------------------------
+# ============================================================
+# SEARCH
+# ============================================================
+
 @app.get("/api/search")
 def api_search(q: str = Query("", min_length=0, max_length=64)):
     qn = (q or "").strip().lower()
+
     stops = []
     routes = []
 
@@ -843,16 +968,18 @@ def api_search(q: str = Query("", min_length=0, max_length=64)):
         for s in GTFS["stops"].values():
             name = (s.get("stop_name") or "").lower()
             sid = (s.get("stop_id") or "").lower()
+            code = (s.get("stop_code") or "").lower()
 
-            if qn in name or qn in sid:
+            if qn in name or qn in sid or qn in code:
                 stops.append({
                     "stop_id": s["stop_id"],
                     "stop_name": s["stop_name"],
+                    "stop_code": s.get("stop_code") or "",
                     "stop_lat": s.get("stop_lat"),
                     "stop_lon": s.get("stop_lon"),
                 })
 
-                if len(stops) >= 30:
+                if len(stops) >= 40:
                     break
 
         for r in GTFS["routes"].values():
@@ -865,9 +992,11 @@ def api_search(q: str = Query("", min_length=0, max_length=64)):
                     "route_id": r["route_id"],
                     "short_name": r.get("short_name") or "",
                     "long_name": r.get("long_name") or "",
+                    "route_color": r.get("route_color") or "",
+                    "route_text_color": r.get("route_text_color") or "",
                 })
 
-                if len(routes) >= 30:
+                if len(routes) >= 40:
                     break
 
     return {
@@ -876,18 +1005,15 @@ def api_search(q: str = Query("", min_length=0, max_length=64)):
     }
 
 
-# -------------------------
-# API: route detail / directions
-# -------------------------
-@app.get("/api/route/{line}")
-def api_route(line: str):
-    if not GTFS["ok"]:
-        raise HTTPException(status_code=503, detail=GTFS["error"] or "GTFS not loaded")
+# ============================================================
+# ROUTE / VISZONYLAT
+# ============================================================
 
+def build_route_directions(line: str) -> List[Dict[str, Any]]:
     matching_routes = routes_for_line(line)
 
     if not matching_routes:
-        raise HTTPException(status_code=404, detail="Route not found")
+        return []
 
     route_ids = {r["route_id"] for r in matching_routes}
     service_date = now_local().date()
@@ -958,6 +1084,9 @@ def api_route(line: str):
         first_stop = stops[0] if stops else None
         last_stop = stops[-1] if stops else None
 
+        shape_id = trip.get("shape_id") or ""
+        shape = GTFS["shapes"].get(shape_id, [])
+
         directions.append({
             "trip_id": trip["trip_id"],
             "route_id": trip["route_id"],
@@ -967,9 +1096,26 @@ def api_route(line: str):
             "to": last_stop,
             "stop_count": len(stops),
             "stops": stops,
+            "shape_id": shape_id,
+            "shape": shape,
         })
 
     directions.sort(key=lambda x: (str(x.get("direction_id") or ""), x.get("headsign") or ""))
+
+    return directions
+
+
+@app.get("/api/route/{line}")
+def api_route(line: str):
+    if not GTFS["ok"]:
+        raise HTTPException(status_code=503, detail=GTFS["error"] or "GTFS not loaded")
+
+    matching_routes = routes_for_line(line)
+
+    if not matching_routes:
+        raise HTTPException(status_code=404, detail="Route not found")
+
+    directions = build_route_directions(line)
 
     vehicles_all, _ = get_live_all_cached()
 
@@ -995,9 +1141,54 @@ def route_alias(line: str):
     return api_route(line)
 
 
-# -------------------------
-# API: vehicles / map
-# -------------------------
+@app.get("/api/route/{line}/vehicles")
+def api_route_vehicles(line: str):
+    vehicles_all, _ = get_live_all_cached()
+
+    active_vehicles = filter_live_vehicles(
+        vehicles_all,
+        line=line,
+        operator=None,
+        max_age_seconds=DEFAULT_MAX_AGE_SECONDS,
+        fresh_only=True,
+    )
+
+    return {
+        "line": line,
+        "count": len(active_vehicles),
+        "vehicles": [public_vehicle(v) for v in active_vehicles],
+    }
+
+
+@app.get("/api/route/{line}/map")
+def api_route_map(line: str):
+    if not GTFS["ok"]:
+        raise HTTPException(status_code=503, detail=GTFS["error"] or "GTFS not loaded")
+
+    directions = build_route_directions(line)
+
+    vehicles_all, _ = get_live_all_cached()
+
+    active_vehicles = filter_live_vehicles(
+        vehicles_all,
+        line=line,
+        operator=None,
+        max_age_seconds=DEFAULT_MAX_AGE_SECONDS,
+        fresh_only=True,
+    )
+
+    return {
+        "line": line,
+        "directions": directions,
+        "vehicles": [public_vehicle(v) for v in active_vehicles],
+        "vehicleCount": len(active_vehicles),
+    }
+
+
+# ============================================================
+# VEHICLES / MAP
+# ============================================================
+
 @app.get("/api/vehicles")
 def api_vehicles(
     line: Optional[str] = None,
@@ -1038,9 +1229,10 @@ def vehicles_alias(
     )
 
 
-# -------------------------
-# API: stop info + departures
-# -------------------------
+# ============================================================
+# STOPS / DEPARTURES
+# ============================================================
+
 @app.get("/api/stop/{stop_id}")
 def api_stop(stop_id: str):
     if not GTFS["ok"]:
@@ -1058,7 +1250,7 @@ def api_stop(stop_id: str):
 def api_stop_departures(
     stop_id: str,
     minutes: int = Query(120, ge=10, le=360),
-    limit: int = Query(30, ge=1, le=100),
+    limit: int = Query(40, ge=1, le=120),
 ):
     if not GTFS["ok"]:
         raise HTTPException(status_code=503, detail=GTFS["error"] or "GTFS not loaded")
@@ -1073,6 +1265,7 @@ def api_stop_departures(
     scheduled = []
     st_list = GTFS["stop_times_by_stop"].get(stop_id, [])
 
+    # previous day is needed for GTFS trips after 24:00
     for sdate in [service_date - timedelta(days=1), service_date]:
         for dep_s, trip_id, seq in st_list:
             trip = GTFS["trips"].get(trip_id)
@@ -1204,8 +1397,12 @@ def api_stop_departures(
         if i in used_live:
             continue
 
+        trip_id = lv.get("tripId")
+        if trip_id not in GTFS["trips"]:
+            trip_id = None
+
         results.append({
-            "trip_id": lv.get("tripId") if lv.get("tripId") in GTFS["trips"] else None,
+            "trip_id": trip_id,
             "line": lv["line"],
             "destination": lv["destination"],
             "scheduledTime": None,
@@ -1240,13 +1437,14 @@ def api_stop_departures(
 
 
 @app.get("/stop/{stop_id}/departures")
-def stop_departures_alias(stop_id: str, minutes: int = 120, limit: int = 30):
+def stop_departures_alias(stop_id: str, minutes: int = 120, limit: int = 40):
     return api_stop_departures(stop_id=stop_id, minutes=minutes, limit=limit)
 
 
-# -------------------------
-# API: trip + vehicle
-# -------------------------
+# ============================================================
+# TRIP / JÁRAT
+# ============================================================
+
 @app.get("/api/trip/{trip_id}")
 def api_trip(trip_id: str):
     if not GTFS["ok"]:
@@ -1267,6 +1465,7 @@ def api_trip(trip_id: str):
     for st in stops_seq:
         stop_id = st["stop_id"]
         stop = GTFS["stops"].get(stop_id, {"stop_name": stop_id})
+
         dep_dt = departure_datetime(service_date, st["departure_s"])
         arr_dt = departure_datetime(service_date, st["arrival_s"])
 
@@ -1280,6 +1479,9 @@ def api_trip(trip_id: str):
             "stop_sequence": st.get("stop_sequence"),
         })
 
+    shape_id = trip.get("shape_id") or ""
+    shape = GTFS["shapes"].get(shape_id, [])
+
     return {
         "trip_id": trip_id,
         "route_id": trip["route_id"],
@@ -1287,7 +1489,8 @@ def api_trip(trip_id: str):
         "destination": trip.get("headsign") or "",
         "direction_id": trip.get("direction_id"),
         "block_id": trip.get("block_id"),
-        "shape_id": trip.get("shape_id"),
+        "shape_id": shape_id,
+        "shape": shape,
         "stops": out_stops,
     }
 
@@ -1305,7 +1508,10 @@ def api_vehicle(vehicle_ref: str):
     )
 
     for v in active:
-        if (v.get("vehicleRef") or "") == vehicle_ref or (v.get("vehicleUniqueId") or "") == vehicle_ref:
+        if (
+            (v.get("vehicleRef") or "") == vehicle_ref
+            or (v.get("vehicleUniqueId") or "") == vehicle_ref
+        ):
             calls_map = {}
             calls_full = []
 
@@ -1335,9 +1541,10 @@ def api_vehicle(vehicle_ref: str):
     raise HTTPException(status_code=404, detail="Vehicle not found or not fresh")
 
 
-# -------------------------
-# Optional: reload GTFS without restart
-# -------------------------
+# ============================================================
+# RELOAD
+# ============================================================
+
 @app.post("/api/reload-gtfs")
 def api_reload_gtfs():
     load_gtfs()
@@ -1350,5 +1557,6 @@ def api_reload_gtfs():
             "stops": len(GTFS["stops"]),
             "routes": len(GTFS["routes"]),
             "trips": len(GTFS["trips"]),
+            "shapes": len(GTFS["shapes"]),
         },
     }
