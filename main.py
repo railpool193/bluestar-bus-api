@@ -13,7 +13,7 @@ from datetime import datetime, date, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 
 APP_NAME = "Bluestar Unilink Menetrend"
+
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
@@ -36,6 +37,7 @@ LIVE_OPERATOR_FILTER = os.getenv("LIVE_OPERATOR_FILTER", "BLUS").strip().upper()
 
 DEPARTURE_WINDOW_MIN = int(os.getenv("DEPARTURE_WINDOW_MIN", "180"))
 DEPARTURE_LIMIT = int(os.getenv("DEPARTURE_LIMIT", "80"))
+
 
 app = FastAPI(title=APP_NAME)
 
@@ -62,8 +64,7 @@ def iso_now_london() -> str:
 def clean_text(value: Any) -> str:
     if value is None:
         return ""
-    s = str(value).strip()
-    s = s.replace("\ufeff", "")
+    s = str(value).strip().replace("\ufeff", "")
     s = s.replace("_", " ")
     s = re.sub(r"\s+", " ", s)
     return s.strip()
@@ -71,7 +72,6 @@ def clean_text(value: Any) -> str:
 
 def human_name(value: Any) -> str:
     s = clean_text(value)
-    s = s.replace(" stop ", " ")
     s = re.sub(r"\bStand\s+([A-Z])\b", r"[\1]", s, flags=re.I)
     s = re.sub(r"\bStop\s+([A-Z0-9]+)\b", r"[\1]", s, flags=re.I)
     s = re.sub(r"\s+", " ", s)
@@ -80,76 +80,27 @@ def human_name(value: Any) -> str:
 
 def norm(value: Any) -> str:
     s = clean_text(value).lower()
-    s = re.sub(r"[^a-z0-9]+", "", s)
-    return s
+    return re.sub(r"[^a-z0-9]+", "", s)
 
 
 def line_norm(value: Any) -> str:
-    s = clean_text(value).upper()
-    s = s.replace(" ", "")
-    return s
+    return clean_text(value).upper().replace(" ", "")
 
 
-def stop_code_from_name(stop_name: str, stop_id: str = "", stop_code: str = "") -> str:
-    if stop_code:
-        return clean_text(stop_code).upper()
-
-    m = re.search(r"\[([A-Z0-9]{1,6})\]", stop_name or "")
-    if m:
-        return m.group(1).upper()
-
-    sid = clean_text(stop_id).upper()
-
-    known = {
-        "12619A": "CU",
-        "12619B": "CK",
-        "12619C": "CH",
-        "12619E": "CK",
-        "13371": "CM",
-    }
-
-    for k, v in known.items():
-        if sid.endswith(k):
-            return v
-
-    return "BUS"
+def safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(str(value)))
+    except Exception:
+        return default
 
 
-def short_destination(value: str) -> str:
-    s = human_name(value)
-
-    replacements = [
-        ("Winchester Bus Station [G]", "Winchester"),
-        ("Winchester Bus Station Stand G", "Winchester"),
-        ("Hanover Buildings [CU]", "Southampton"),
-        ("Hanover Buildings CU", "Southampton"),
-        ("Southampton, Hanover Buildings [CU]", "Southampton"),
-        ("Southampton, Vincents Walk [CK]", "Thornhill"),
-        ("Southampton, Vincents Walk [CM]", "Adanac Park"),
-        ("Adanac Park", "Adanac Park"),
-        ("Lordshill", "Lordshill"),
-        ("Weston", "Weston"),
-        ("Millbrook", "Millbrook"),
-        ("City Centre", "City Centre"),
-        ("Sholing", "Sholing"),
-        ("Hamble", "Hamble"),
-        ("Romsey", "Romsey"),
-        ("Eastleigh Bus Station", "Eastleigh"),
-        ("North Harbour Tesco", "North Harbour"),
-    ]
-
-    for a, b in replacements:
-        if norm(a) in norm(s):
-            return b
-
-    s = s.replace("Southampton, ", "")
-    s = re.sub(r"\s*\[[A-Z0-9]+\]\s*$", "", s)
-    s = s.strip()
-
-    if len(s) > 26:
-        s = s[:23].rstrip() + "..."
-
-    return s or ""
+def safe_float(value: Any) -> Optional[float]:
+    try:
+        if value is None or str(value).strip() == "":
+            return None
+        return float(str(value))
+    except Exception:
+        return None
 
 
 def parse_iso_dt(value: Any) -> Optional[datetime]:
@@ -201,33 +152,104 @@ def minutes_until(dt: Optional[datetime]) -> Optional[int]:
     return int(round((dt.astimezone(LONDON) - now_london()).total_seconds() / 60))
 
 
-def safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(float(str(value)))
-    except Exception:
-        return default
+def stop_public_code_from_name(stop_name: str) -> str:
+    m = re.search(r"\[([A-Z0-9]{1,6})\]", clean_text(stop_name))
+    if m:
+        return m.group(1).upper()
+    return ""
 
 
-def safe_float(value: Any) -> Optional[float]:
+def safe_platform_code(row: Dict[str, Any], stop_name: str) -> str:
+    """
+    Fontos:
+    Nem használjuk a stop_id végét, mert abból sokszor rossz kód lesz.
+    Csak akkor írunk megálló kódot, ha:
+    - a névben van [CK] / [SG] / stb.
+    - vagy van rövid platform_code mező.
+    Egyébként BUS.
+    """
+    from_name = stop_public_code_from_name(stop_name)
+    if from_name:
+        return from_name
+
+    platform = clean_text(row.get("platform_code"))
+    if platform and len(platform) <= 6:
+        return platform.upper()
+
+    return "BUS"
+
+
+def short_destination(value: str) -> str:
+    s = human_name(value)
+
+    known = [
+        ("Winchester Bus Station", "Winchester"),
+        ("Hanover Buildings", "Southampton"),
+        ("Southampton, Hanover Buildings", "Southampton"),
+        ("Southampton, Vincents Walk", "Southampton"),
+        ("Adanac Park", "Adanac Park"),
+        ("Lordshill", "Lordshill"),
+        ("Weston", "Weston"),
+        ("Millbrook", "Millbrook"),
+        ("City Centre", "City"),
+        ("Sholing", "Sholing"),
+        ("Hamble", "Hamble"),
+        ("Romsey", "Romsey"),
+        ("Eastleigh Bus Station", "Eastleigh"),
+        ("North Harbour Tesco", "North Harbour"),
+        ("Thornhill", "Thornhill"),
+        ("Fair Oak", "Fair Oak"),
+    ]
+
+    ns = norm(s)
+
+    for a, b in known:
+        if norm(a) in ns:
+            return b
+
+    s = s.replace("Southampton, ", "")
+    s = re.sub(r"\s*\[[A-Z0-9]+\]\s*$", "", s).strip()
+
+    if len(s) > 22:
+        s = s[:20].rstrip() + "…"
+
+    return s or ""
+
+
+def minutes_between_hhmm(a: str, b: str) -> Optional[int]:
     try:
-        if value is None or str(value).strip() == "":
+        if not a or not b:
             return None
-        return float(str(value))
+
+        def parse(x: str) -> int:
+            nums = re.sub(r"[^0-9]", "", x)
+            if len(nums) == 3:
+                nums = "0" + nums
+            if len(nums) < 4:
+                return -999999
+            return int(nums[:2]) * 60 + int(nums[2:4])
+
+        ma = parse(a)
+        mb = parse(b)
+        if ma < 0 or mb < 0:
+            return None
+
+        diff = abs(ma - mb)
+        diff = min(diff, 1440 - diff)
+        return diff
     except Exception:
         return None
 
 
-def haversine_m(lat1, lon1, lat2, lon2) -> float:
-    try:
-        r = 6371000.0
-        p1 = math.radians(float(lat1))
-        p2 = math.radians(float(lat2))
-        dp = math.radians(float(lat2) - float(lat1))
-        dl = math.radians(float(lon2) - float(lon1))
-        a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-        return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    except Exception:
-        return 999999999.0
+def gtfs_time_to_code(t: str) -> str:
+    if not t:
+        return ""
+    parts = t.split(":")
+    if len(parts) < 2:
+        return ""
+    h = int(parts[0]) % 24
+    m = int(parts[1])
+    return f"{h:02d}{m:02d}"
 
 
 class GTFSStore:
@@ -245,7 +267,6 @@ class GTFSStore:
         self.stop_times_by_trip: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         self.stop_departures_index: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         self.shapes: Dict[str, List[Dict[str, float]]] = defaultdict(list)
-
         self.route_by_short: Dict[str, List[str]] = defaultdict(list)
 
     def reset(self):
@@ -255,7 +276,7 @@ class GTFSStore:
         target = None
 
         for n in zf.namelist():
-            if n.lower().endswith("/" + name.lower()) or n.lower() == name.lower():
+            if n.lower() == name.lower() or n.lower().endswith("/" + name.lower()):
                 target = n
                 break
 
@@ -269,7 +290,6 @@ class GTFSStore:
         p = folder / name
         if not p.exists():
             return []
-
         raw = p.read_text(encoding="utf-8-sig", errors="replace")
         return list(csv.DictReader(io.StringIO(raw)))
 
@@ -285,19 +305,18 @@ class GTFSStore:
             env_zip = os.getenv("GTFS_ZIP", "").strip()
             env_dir = os.getenv("GTFS_DIR", "").strip()
 
+            zip_path = None
+            dir_path = None
+
             if env_zip and Path(env_zip).exists():
                 zip_path = Path(env_zip)
             elif GTFS_ZIP.exists():
                 zip_path = GTFS_ZIP
-            else:
-                zip_path = None
 
             if env_dir and Path(env_dir).exists():
                 dir_path = Path(env_dir)
             elif GTFS_DIR.exists():
                 dir_path = GTFS_DIR
-            else:
-                dir_path = None
 
             if zip_path:
                 self.source = f"zip:{zip_path.name}"
@@ -336,18 +355,23 @@ class GTFSStore:
                 continue
 
             stop_name = clean_text(r.get("stop_name"))
-            stop_code = clean_text(r.get("stop_code"))
+            lat = safe_float(r.get("stop_lat"))
+            lon = safe_float(r.get("stop_lon"))
+            platform_code = safe_platform_code(r, stop_name)
 
             self.stops[sid] = {
                 "stop_id": sid,
+                "stopId": sid,
                 "stop_name": stop_name,
+                "stopName": stop_name,
                 "name": stop_name,
-                "stop_code": stop_code,
-                "platform_code": stop_code_from_name(stop_name, sid, stop_code),
-                "stop_lat": safe_float(r.get("stop_lat")),
-                "stop_lon": safe_float(r.get("stop_lon")),
-                "lat": safe_float(r.get("stop_lat")),
-                "lon": safe_float(r.get("stop_lon")),
+                "stop_code": clean_text(r.get("stop_code")),
+                "platform_code": platform_code,
+                "platformCode": platform_code,
+                "stop_lat": lat,
+                "stop_lon": lon,
+                "lat": lat,
+                "lon": lon,
             }
 
         for r in routes_rows:
@@ -355,19 +379,23 @@ class GTFSStore:
             if not rid:
                 continue
 
-            short = clean_text(r.get("route_short_name"))
-            if not short:
-                short = clean_text(r.get("route_long_name"))
+            short = clean_text(r.get("route_short_name")) or clean_text(r.get("route_long_name"))
+            long_name = clean_text(r.get("route_long_name"))
 
             route = {
                 "route_id": rid,
+                "routeId": rid,
                 "agency_id": clean_text(r.get("agency_id")),
                 "short_name": short,
+                "shortName": short,
                 "route_short_name": short,
-                "long_name": clean_text(r.get("route_long_name")),
-                "route_long_name": clean_text(r.get("route_long_name")),
+                "routeShortName": short,
+                "long_name": long_name,
+                "longName": long_name,
+                "route_long_name": long_name,
+                "routeLongName": long_name,
                 "route_type": clean_text(r.get("route_type")),
-                "route_color": clean_text(r.get("route_color")) or "16A9E0",
+                "route_color": clean_text(r.get("route_color")) or "20AEEA",
                 "route_text_color": clean_text(r.get("route_text_color")) or "FFFFFF",
             }
 
@@ -378,6 +406,7 @@ class GTFSStore:
             sid = clean_text(r.get("service_id"))
             if not sid:
                 continue
+
             self.calendar[sid] = {
                 "service_id": sid,
                 "monday": safe_int(r.get("monday")),
@@ -401,28 +430,37 @@ class GTFSStore:
         for r in trips_rows:
             tid = clean_text(r.get("trip_id"))
             rid = clean_text(r.get("route_id"))
+
             if not tid:
                 continue
 
             route = self.routes.get(rid, {})
-            short = clean_text(route.get("route_short_name")) or clean_text(route.get("short_name"))
+            line = clean_text(route.get("route_short_name")) or clean_text(route.get("short_name"))
 
             self.trips[tid] = {
                 "trip_id": tid,
+                "tripId": tid,
                 "route_id": rid,
+                "routeId": rid,
                 "service_id": clean_text(r.get("service_id")),
+                "serviceId": clean_text(r.get("service_id")),
                 "trip_headsign": clean_text(r.get("trip_headsign")),
                 "headsign": clean_text(r.get("trip_headsign")),
                 "direction_id": clean_text(r.get("direction_id")),
+                "directionId": clean_text(r.get("direction_id")),
                 "block_id": clean_text(r.get("block_id")),
+                "blockId": clean_text(r.get("block_id")),
                 "shape_id": clean_text(r.get("shape_id")),
-                "route_short_name": short,
-                "line": short,
+                "shapeId": clean_text(r.get("shape_id")),
+                "route_short_name": line,
+                "routeShortName": line,
+                "line": line,
             }
 
         for r in stop_times_rows:
             tid = clean_text(r.get("trip_id"))
             sid = clean_text(r.get("stop_id"))
+
             if not tid or not sid:
                 continue
 
@@ -432,10 +470,15 @@ class GTFSStore:
 
             item = {
                 "trip_id": tid,
+                "tripId": tid,
                 "stop_id": sid,
+                "stopId": sid,
                 "arrival_time": arr,
+                "arrivalTime": arr,
                 "departure_time": dep,
+                "departureTime": dep,
                 "stop_sequence": seq,
+                "stopSequence": seq,
                 "stop_headsign": clean_text(r.get("stop_headsign")),
                 "pickup_type": clean_text(r.get("pickup_type")),
                 "drop_off_type": clean_text(r.get("drop_off_type")),
@@ -451,8 +494,26 @@ class GTFSStore:
             if not trip or not rows:
                 continue
 
+            first = rows[0]
+            last = rows[-1]
+
+            trip["first_stop_id"] = first.get("stop_id")
+            trip["firstStopId"] = first.get("stop_id")
+            trip["last_stop_id"] = last.get("stop_id")
+            trip["lastStopId"] = last.get("stop_id")
+            trip["first_departure_time"] = first.get("departure_time") or first.get("arrival_time")
+            trip["firstDepartureTime"] = trip["first_departure_time"]
+            trip["first_departure_code"] = gtfs_time_to_code(trip["first_departure_time"])
+            trip["last_arrival_time"] = last.get("arrival_time") or last.get("departure_time")
+            trip["lastArrivalTime"] = trip["last_arrival_time"]
+
+        for tid, rows in self.stop_times_by_trip.items():
+            trip = self.trips.get(tid)
+            if not trip or not rows:
+                continue
+
             route = self.routes.get(trip["route_id"], {})
-            line = clean_text(route.get("route_short_name")) or clean_text(trip.get("route_short_name"))
+            line = clean_text(route.get("route_short_name")) or clean_text(trip.get("line"))
 
             final_stop_id = rows[-1]["stop_id"]
             final_stop = self.stops.get(final_stop_id, {})
@@ -468,18 +529,27 @@ class GTFSStore:
                 self.stop_departures_index[sid].append(
                     {
                         "trip_id": tid,
+                        "tripId": tid,
                         "route_id": trip["route_id"],
+                        "routeId": trip["route_id"],
                         "service_id": trip["service_id"],
+                        "serviceId": trip["service_id"],
                         "line": line,
                         "route_short_name": line,
+                        "routeShortName": line,
                         "direction_id": trip.get("direction_id"),
-                        "headsign": destination,
+                        "directionId": trip.get("direction_id"),
+                        "headsign": human_name(destination),
                         "destination": short_destination(destination),
                         "destinationFull": human_name(destination),
                         "stop_id": sid,
+                        "stopId": sid,
                         "stop_sequence": st["stop_sequence"],
+                        "stopSequence": st["stop_sequence"],
                         "arrival_time": st["arrival_time"],
+                        "arrivalTime": st["arrival_time"],
                         "departure_time": st["departure_time"],
+                        "departureTime": st["departure_time"],
                         "pickup_type": st.get("pickup_type"),
                         "drop_off_type": st.get("drop_off_type"),
                     }
@@ -532,6 +602,7 @@ class GTFSStore:
 
             if start and ymd < start:
                 continue
+
             if end and ymd > end:
                 continue
 
@@ -601,6 +672,7 @@ class LiveStore:
 
     def configured_url_and_params(self) -> Tuple[str, Dict[str, str]]:
         url = os.getenv("LIVE_FEED_URL", "").strip() or LIVE_FEED_URL_DEFAULT
+
         api_key = (
             os.getenv("BODS_API_KEY", "").strip()
             or os.getenv("BODS_KEY", "").strip()
@@ -633,12 +705,12 @@ class LiveStore:
         return clean_url, query
 
     def fetch(self, force: bool = False) -> List[Dict[str, Any]]:
-        now = now_london()
+        n = now_london()
 
         if (
             not force
             and self.cache_time
-            and (now - self.cache_time).total_seconds() < LIVE_CACHE_TTL_SEC
+            and (n - self.cache_time).total_seconds() < LIVE_CACHE_TTL_SEC
         ):
             return self.vehicles
 
@@ -648,7 +720,7 @@ class LiveStore:
             self.last_error = "Missing BODS_API_KEY"
             self.last_http_status = None
             self.last_fetch_time = iso_now_london()
-            self.cache_time = now
+            self.cache_time = n
             self.vehicles = []
             self.raw_count = 0
             self.active_count = 0
@@ -675,18 +747,21 @@ class LiveStore:
             self.raw_count = len(vehicles_all)
 
             active = []
+
             for v in vehicles_all:
-                if LIVE_OPERATOR_FILTER:
-                    op = clean_text(v.get("operatorRef")).upper()
-                    if op and op != LIVE_OPERATOR_FILTER:
-                        continue
+                op = clean_text(v.get("operatorRef")).upper()
+
+                if LIVE_OPERATOR_FILTER and op and op != LIVE_OPERATOR_FILTER:
+                    continue
 
                 age = v.get("ageSeconds")
+
                 if age is not None and age > LIVE_MAX_AGE_SECONDS:
                     continue
 
                 valid_until = parse_iso_dt(v.get("validUntilTime"))
-                if valid_until and valid_until < now - timedelta(seconds=30):
+
+                if valid_until and valid_until < n - timedelta(seconds=30):
                     continue
 
                 if v.get("latitude") is None or v.get("longitude") is None:
@@ -700,14 +775,14 @@ class LiveStore:
             self.active_count = len(active)
             self.last_error = ""
             self.last_fetch_time = iso_now_london()
-            self.cache_time = now
+            self.cache_time = n
 
             return self.vehicles
 
         except Exception as e:
             self.last_error = str(e)
             self.last_fetch_time = iso_now_london()
-            self.cache_time = now
+            self.cache_time = n
             self.vehicles = []
             self.active_count = 0
             return []
@@ -783,15 +858,25 @@ class LiveStore:
 
             recorded_dt = parse_iso_dt(recorded)
             age = None
+
             if recorded_dt:
                 age = int((now_london() - recorded_dt).total_seconds())
 
             line = text_any(mvj, "PublishedLineName") or text_any(mvj, "LineRef")
-            destination_name = text_any(mvj, "DestinationName")
-            origin_name = text_any(mvj, "OriginName")
+            destination_name = human_name(text_any(mvj, "DestinationName"))
+            origin_name = human_name(text_any(mvj, "OriginName"))
 
             vehicle_ref = text_any(mvj, "VehicleRef")
             vehicle_unique = text_any(mvj, "VehicleUniqueId")
+
+            current_stop_ref = ""
+            current_stop_name = ""
+            vehicle_at_stop = False
+
+            if call is not None:
+                current_stop_ref = text_child(call, "StopPointRef")
+                current_stop_name = human_name(text_child(call, "StopPointName"))
+                vehicle_at_stop = text_child(call, "VehicleAtStop").lower() == "true"
 
             item = {
                 "recordedAtTime": recorded,
@@ -801,25 +886,28 @@ class LiveStore:
                 "datedVehicleJourneyRef": text_any(mvj, "DatedVehicleJourneyRef"),
                 "lineRef": text_any(mvj, "LineRef"),
                 "publishedLineName": line,
+                "line": line,
                 "lineNorm": line_norm(line),
                 "operatorRef": text_any(mvj, "OperatorRef"),
                 "directionRef": text_any(mvj, "DirectionRef"),
                 "originRef": text_any(mvj, "OriginRef"),
-                "originName": human_name(origin_name),
+                "originName": origin_name,
                 "destinationRef": text_any(mvj, "DestinationRef"),
-                "destinationName": human_name(destination_name),
+                "destinationName": destination_name,
                 "destinationShort": short_destination(destination_name),
                 "longitude": lon,
                 "latitude": lat,
+                "lon": lon,
+                "lat": lat,
                 "bearing": safe_float(text_any(mvj, "Bearing")),
                 "blockRef": text_any(mvj, "BlockRef"),
                 "vehicleRef": vehicle_ref,
                 "vehicleUniqueId": vehicle_unique or vehicle_ref,
                 "ticketMachineServiceCode": text_any(mvj, "TicketMachineServiceCode"),
                 "journeyCode": text_any(mvj, "JourneyCode"),
-                "currentStopRef": text_child(call, "StopPointRef") if call is not None else "",
-                "currentStopName": human_name(text_child(call, "StopPointName")) if call is not None else "",
-                "vehicleAtStop": (text_child(call, "VehicleAtStop").lower() == "true") if call is not None else False,
+                "currentStopRef": current_stop_ref,
+                "currentStopName": current_stop_name,
+                "vehicleAtStop": vehicle_at_stop,
                 "ageSeconds": age,
             }
 
@@ -844,6 +932,110 @@ class LiveStore:
 
 
 live = LiveStore()
+
+
+def live_trip_score(vehicle: Dict[str, Any], trip: Dict[str, Any]) -> int:
+    score = 0
+
+    if line_norm(vehicle.get("publishedLineName")) != line_norm(trip.get("line")):
+        return -999
+
+    origin_ref = clean_text(vehicle.get("originRef"))
+    dest_ref = clean_text(vehicle.get("destinationRef"))
+
+    if origin_ref and origin_ref == clean_text(trip.get("first_stop_id")):
+        score += 35
+
+    if dest_ref and dest_ref == clean_text(trip.get("last_stop_id")):
+        score += 35
+
+    vdest = norm(vehicle.get("destinationName") or vehicle.get("destinationShort"))
+    tdest = norm(trip.get("trip_headsign") or trip.get("headsign"))
+
+    if vdest and tdest:
+        if vdest in tdest or tdest in vdest:
+            score += 20
+
+    first_code = clean_text(trip.get("first_departure_code"))
+
+    live_codes = [
+        clean_text(vehicle.get("journeyCode")),
+        clean_text(vehicle.get("datedVehicleJourneyRef")),
+    ]
+
+    for lc in live_codes:
+        diff = minutes_between_hhmm(lc, first_code)
+        if diff is None:
+            continue
+
+        if diff <= 3:
+            score += 80
+            break
+        elif diff <= 10:
+            score += 60
+            break
+        elif diff <= 20:
+            score += 35
+            break
+
+    return score
+
+
+def match_live_to_departures(departures: List[Dict[str, Any]], stop_id: str) -> List[Dict[str, Any]]:
+    vehicles = live.fetch()
+
+    if not departures or not vehicles:
+        return departures
+
+    used_vehicles = set()
+
+    for dep in departures:
+        trip = gtfs.trips.get(dep.get("trip_id"))
+        if not trip:
+            continue
+
+        best = None
+        best_score = -999
+
+        for v in vehicles:
+            vkey = clean_text(v.get("vehicleUniqueId")) or clean_text(v.get("vehicleRef"))
+            if vkey in used_vehicles:
+                continue
+
+            score = live_trip_score(v, trip)
+
+            if clean_text(v.get("currentStopRef")) == stop_id:
+                score += 25
+
+            if v.get("vehicleAtStop"):
+                score += 15
+
+            if score > best_score:
+                best = v
+                best_score = score
+
+        if best and best_score >= 80:
+            vkey = clean_text(best.get("vehicleUniqueId")) or clean_text(best.get("vehicleRef"))
+            used_vehicles.add(vkey)
+
+            dep["live"] = True
+            dep["isLive"] = True
+            dep["source"] = "LIVE"
+            dep["sourceLabel"] = "Élő adat"
+            dep["vehicleRef"] = best.get("vehicleRef") or best.get("vehicleUniqueId") or ""
+            dep["vehicleUniqueId"] = best.get("vehicleUniqueId") or ""
+            dep["recordedAtTime"] = best.get("recordedAtTime")
+            dep["ageSeconds"] = best.get("ageSeconds")
+            dep["vehicleAtStop"] = bool(best.get("vehicleAtStop"))
+            dep["liveDestination"] = best.get("destinationShort") or best.get("destinationName") or ""
+
+            if best.get("vehicleAtStop") or clean_text(best.get("currentStopRef")) == stop_id:
+                dep["due"] = True
+                dep["minutes"] = 0
+                dep["displayTime"] = "Due"
+                dep["minutesText"] = "Due"
+
+    return departures
 
 
 @app.on_event("startup")
@@ -918,7 +1110,7 @@ def live_debug():
         "lastError": live.last_error,
         "lastHttpStatus": live.last_http_status,
         "lastFetchTime": live.last_fetch_time,
-        "sample": vehicles[:5],
+        "sample": vehicles[:8],
     }
 
 
@@ -961,11 +1153,19 @@ def map_vehicles(line: str = "", force: int = 0):
 
 
 @app.post("/api/upload/gtfs")
-async def upload_gtfs(file: UploadFile = File(...)):
-    content = await file.read()
+async def upload_gtfs(request: Request):
+    body = await request.body()
 
-    GTFS_ZIP.write_bytes(content)
+    if not body:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "Empty upload body",
+            },
+            status_code=400,
+        )
 
+    GTFS_ZIP.write_bytes(body)
     gtfs.load()
 
     return {
@@ -981,7 +1181,6 @@ async def upload_gtfs(file: UploadFile = File(...)):
 def reload_all():
     gtfs.load()
     live.fetch(force=True)
-
     return api_status()
 
 
@@ -1033,7 +1232,7 @@ def search(q: str = "", query: str = "", limit: int = 80):
 
     for stop in gtfs.stops.values():
         hay = norm(
-            f"{stop.get('stop_name')} {stop.get('stop_id')} {stop.get('platform_code')} {stop.get('stop_code')}"
+            f"{stop.get('stop_name')} {stop.get('stop_id')} {stop.get('platform_code')}"
         )
 
         if term_norm in hay:
@@ -1062,7 +1261,7 @@ def search(q: str = "", query: str = "", limit: int = 80):
                     **route,
                     "type": "route",
                     "title": line,
-                    "subtitle": clean_text(route.get("route_long_name")),
+                    "subtitle": clean_text(route.get("route_long_name")) or "Viszonylat",
                     "badge": line,
                     "line": line,
                 }
@@ -1097,99 +1296,12 @@ def stop_detail(stop_id: str):
     return stop
 
 
-def live_match_for_departures(
-    departures: List[Dict[str, Any]],
-    stop_id: str,
-    stop_name: str,
-) -> List[Dict[str, Any]]:
-    vehicles = live.fetch()
-
-    if not departures:
-        return departures
-
-    used_vehicle = set()
-
-    for dep in departures:
-        dep["live"] = False
-        dep["isLive"] = False
-        dep["source"] = "GTFS"
-        dep["sourceLabel"] = "Menetrendi adat"
-        dep["expectedTime"] = dep.get("scheduledTime")
-        dep["expectedDateTime"] = dep.get("scheduledDateTime")
-        dep["delayMin"] = None
-        dep["vehicleRef"] = ""
-        dep["vehicleAtStop"] = False
-        dep["due"] = dep.get("minutes", 999) is not None and dep.get("minutes", 999) <= 1
-
-    for dep in departures:
-        line = line_norm(dep.get("line"))
-        destination = norm(dep.get("destination") or dep.get("headsign"))
-
-        best = None
-        best_score = -999
-
-        for v in vehicles:
-            key = clean_text(v.get("vehicleUniqueId")) or clean_text(v.get("vehicleRef"))
-            if key in used_vehicle:
-                continue
-
-            if v.get("lineNorm") != line:
-                continue
-
-            score = 0
-
-            current_stop_ref = clean_text(v.get("currentStopRef"))
-            current_stop_name = norm(v.get("currentStopName"))
-
-            if current_stop_ref and current_stop_ref == stop_id:
-                score += 100
-
-            if current_stop_name and current_stop_name in norm(stop_name):
-                score += 60
-
-            if v.get("vehicleAtStop"):
-                score += 30
-
-            vdest = norm(v.get("destinationName") or v.get("destinationShort"))
-
-            if destination and vdest:
-                if destination in vdest or vdest in destination:
-                    score += 25
-
-            dep_min = dep.get("minutes")
-            if dep_min is not None:
-                if -2 <= dep_min <= 30:
-                    score += max(0, 30 - abs(dep_min))
-
-            if score > best_score:
-                best = v
-                best_score = score
-
-        if best and best_score >= 35:
-            key = clean_text(best.get("vehicleUniqueId")) or clean_text(best.get("vehicleRef"))
-            used_vehicle.add(key)
-
-            dep["live"] = True
-            dep["isLive"] = True
-            dep["source"] = "LIVE"
-            dep["sourceLabel"] = "Élő adat"
-            dep["vehicleRef"] = best.get("vehicleRef") or best.get("vehicleUniqueId") or ""
-            dep["vehicleUniqueId"] = best.get("vehicleUniqueId") or ""
-            dep["vehicleAtStop"] = bool(best.get("vehicleAtStop"))
-            dep["recordedAtTime"] = best.get("recordedAtTime")
-            dep["ageSeconds"] = best.get("ageSeconds")
-
-            if best.get("vehicleAtStop") or clean_text(best.get("currentStopRef")) == stop_id:
-                dep["due"] = True
-                dep["minutes"] = 0
-                dep["expectedTime"] = "Due"
-                dep["displayTime"] = "Due"
-
-    return departures
-
-
 @app.get("/api/stop/{stop_id}/departures")
-def stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN, limit: int = DEPARTURE_LIMIT):
+def stop_departures(
+    stop_id: str,
+    minutes: int = DEPARTURE_WINDOW_MIN,
+    limit: int = DEPARTURE_LIMIT,
+):
     if not gtfs.loaded:
         gtfs.load()
 
@@ -1205,16 +1317,16 @@ def stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN, limit: in
             status_code=404,
         )
 
-    now = now_london()
-    end = now + timedelta(minutes=minutes)
+    n = now_london()
+    end = n + timedelta(minutes=minutes)
 
     departures = []
     seen = set()
 
     candidate_service_days = [
-        now.date() - timedelta(days=1),
-        now.date(),
-        now.date() + timedelta(days=1),
+        n.date() - timedelta(days=1),
+        n.date(),
+        n.date() + timedelta(days=1),
     ]
 
     active_by_day = {
@@ -1225,6 +1337,9 @@ def stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN, limit: in
     rows = gtfs.stop_departures_index.get(stop_id, [])
 
     for row in rows:
+        if clean_text(row.get("pickup_type")) == "1":
+            continue
+
         trip = gtfs.trips.get(row["trip_id"], {})
         service_id = trip.get("service_id")
 
@@ -1232,19 +1347,25 @@ def stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN, limit: in
             if service_id not in active_by_day.get(service_day, set()):
                 continue
 
-            dt = gtfs_time_to_datetime(service_day, row.get("departure_time") or row.get("arrival_time"))
+            dt = gtfs_time_to_datetime(
+                service_day,
+                row.get("departure_time") or row.get("arrival_time"),
+            )
+
             if not dt:
                 continue
 
-            if dt < now - timedelta(minutes=1):
+            if dt < n - timedelta(minutes=1):
                 continue
 
             if dt > end:
                 continue
 
             key = f"{row.get('trip_id')}|{row.get('stop_id')}|{dt.isoformat()}"
+
             if key in seen:
                 continue
+
             seen.add(key)
 
             m = minutes_until(dt)
@@ -1255,6 +1376,7 @@ def stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN, limit: in
                 "routeId": row.get("route_id"),
                 "route_id": row.get("route_id"),
                 "serviceId": row.get("service_id"),
+                "service_id": row.get("service_id"),
                 "line": row.get("line"),
                 "route": row.get("line"),
                 "routeShortName": row.get("line"),
@@ -1262,6 +1384,7 @@ def stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN, limit: in
                 "destinationFull": row.get("destinationFull"),
                 "headsign": row.get("headsign"),
                 "directionId": row.get("direction_id"),
+                "direction_id": row.get("direction_id"),
                 "stopId": stop_id,
                 "stop_id": stop_id,
                 "platform": stop_id,
@@ -1282,9 +1405,8 @@ def stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN, limit: in
             departures.append(item)
 
     departures.sort(key=lambda x: x.get("scheduledDateTime", ""))
-
     departures = departures[:limit]
-    departures = live_match_for_departures(departures, stop_id, stop.get("stop_name", ""))
+    departures = match_live_to_departures(departures, stop_id)
 
     return {
         "stop": stop,
@@ -1298,7 +1420,11 @@ def stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN, limit: in
 
 
 @app.get("/api/departures/{stop_id}")
-def departures_alias(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN, limit: int = DEPARTURE_LIMIT):
+def departures_alias(
+    stop_id: str,
+    minutes: int = DEPARTURE_WINDOW_MIN,
+    limit: int = DEPARTURE_LIMIT,
+):
     return stop_departures(stop_id=stop_id, minutes=minutes, limit=limit)
 
 
@@ -1322,6 +1448,7 @@ def trip_detail(trip_id: str):
     rows = gtfs.stop_times_by_trip.get(trip_id, [])
 
     today = now_london().date()
+
     service_days = [
         today - timedelta(days=1),
         today,
@@ -1329,6 +1456,7 @@ def trip_detail(trip_id: str):
     ]
 
     best_day = today
+
     for d in service_days:
         if trip.get("service_id") in gtfs.active_service_ids(d):
             best_day = d
@@ -1338,7 +1466,10 @@ def trip_detail(trip_id: str):
 
     for st in rows:
         stop = gtfs.stops.get(st.get("stop_id"), {})
-        dt = gtfs_time_to_datetime(best_day, st.get("departure_time") or st.get("arrival_time"))
+        dt = gtfs_time_to_datetime(
+            best_day,
+            st.get("departure_time") or st.get("arrival_time"),
+        )
 
         stops.append(
             {
@@ -1358,26 +1489,32 @@ def trip_detail(trip_id: str):
                 "source": "GTFS",
                 "live": False,
                 "isPast": dt < now_london() if dt else False,
+                "vehicleAtStop": False,
             }
         )
 
     line = clean_text(route.get("route_short_name")) or clean_text(trip.get("line"))
     destination = clean_text(trip.get("trip_headsign"))
+
     if not destination and stops:
         destination = stops[-1].get("stopName", "")
 
     vehicles = live.fetch()
     matched_vehicle = None
+    best_score = -999
 
     for v in vehicles:
-        if v.get("lineNorm") == line_norm(line):
-            vdest = norm(v.get("destinationName") or v.get("destinationShort"))
-            if not destination or norm(destination) in vdest or vdest in norm(destination):
-                matched_vehicle = v
-                break
+        score = live_trip_score(v, trip)
+        if score > best_score:
+            best_score = score
+            matched_vehicle = v
+
+    if best_score < 80:
+        matched_vehicle = None
 
     if matched_vehicle:
         current_ref = clean_text(matched_vehicle.get("currentStopRef"))
+
         for s in stops:
             if current_ref and s.get("stop_id") == current_ref:
                 s["live"] = True
@@ -1390,6 +1527,7 @@ def trip_detail(trip_id: str):
         "destination": short_destination(destination),
         "destinationFull": human_name(destination),
         "vehicle": matched_vehicle,
+        "liveMatched": bool(matched_vehicle),
         "stops": stops,
         "count": len(stops),
     }
@@ -1422,18 +1560,23 @@ def route_detail(line: str):
             continue
 
         rows = gtfs.stop_times_by_trip.get(trip["trip_id"], [])
+
         if not rows:
             continue
 
         first = gtfs.stops.get(rows[0]["stop_id"], {})
         last = gtfs.stops.get(rows[-1]["stop_id"], {})
 
-        key = f"{trip.get('direction_id')}|{first.get('stop_id')}|{last.get('stop_id')}|{trip.get('trip_headsign')}"
+        headsign = trip.get("trip_headsign") or last.get("stop_name")
+        key = f"{trip.get('direction_id')}|{first.get('stop_id')}|{last.get('stop_id')}|{headsign}"
+
         if key in seen:
             continue
+
         seen.add(key)
 
         stops = []
+
         for st in rows:
             stop = gtfs.stops.get(st["stop_id"], {})
             stops.append(
@@ -1457,15 +1600,19 @@ def route_detail(line: str):
                 "route_id": trip["route_id"],
                 "direction_id": trip.get("direction_id"),
                 "directionId": trip.get("direction_id"),
-                "headsign": trip.get("trip_headsign") or last.get("stop_name"),
-                "destination": short_destination(trip.get("trip_headsign") or last.get("stop_name")),
+                "headsign": human_name(headsign),
+                "destination": short_destination(headsign),
                 "from": first,
                 "to": last,
                 "stop_count": len(stops),
+                "stopCount": len(stops),
                 "stops": stops,
                 "shape_id": trip.get("shape_id"),
+                "shapeId": trip.get("shape_id"),
             }
         )
+
+    directions.sort(key=lambda d: d.get("destination") or "")
 
     return {
         "line": line,
@@ -1494,7 +1641,6 @@ def route_shape(line: str):
     route_ids = gtfs.route_by_short.get(ln, [])
 
     shapes = []
-
     seen = set()
 
     for trip in gtfs.trips.values():
@@ -1502,6 +1648,7 @@ def route_shape(line: str):
             continue
 
         shape_id = trip.get("shape_id")
+
         if not shape_id or shape_id in seen:
             continue
 
@@ -1546,7 +1693,7 @@ async def home():
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <title>Bluestar Unilink</title>
         </head>
-        <body style="background:#2f2f2f;color:white;font-family:Arial;padding:20px">
+        <body style="background:#303030;color:white;font-family:Arial;padding:20px">
           <h1>Bluestar Unilink</h1>
           <p>index.html nem található.</p>
           <p>Tedd ide: templates/index.html</p>
