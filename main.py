@@ -781,46 +781,29 @@ def live_trip_score(v: Dict[str, Any], trip: Dict[str, Any]) -> int:
 
 
 def find_best_live_for_departure(dep: Dict[str, Any], stop: Dict[str, Any], vehicles: List[Dict[str, Any]], sched_dt: datetime) -> Optional[Dict[str, Any]]:
-    """
-    Pair a timetable departure with a VehicleMonitoring item only when the live
-    MonitoredCall is the SAME stop. This avoids showing arrivals / terminus-only
-    buses as departures and avoids using a live time from another stop.
-    """
     best = None
     best_score = -9999
     for v in vehicles:
         if line_norm(v.get("line")) != line_norm(dep.get("line")):
             continue
-
-        if not stop_matches(v.get("currentStopRef", ""), v.get("currentStopName", ""), stop):
-            continue
-
         live_dt = parse_iso_dt(v.get("liveDateTime"))
         if not live_dt:
             continue
-
         min_diff = abs((live_dt - sched_dt).total_seconds()) / 60
         if min_diff > LIVE_STOP_MATCH_MINUTES:
             continue
-
-        score = 80 - int(min_diff)
+        score = 0
+        if stop_matches(v.get("currentStopRef", ""), v.get("currentStopName", ""), stop):
+            score += 50
         dest_v = norm(v.get("destinationName"))
         dest_d = norm(dep.get("destinationFull") or dep.get("destination") or dep.get("headsign"))
         if dest_v and dest_d and (dest_v in dest_d or dest_d in dest_v):
-            score += 30
-
-        # Same first-departure/journey code is a very strong signal when present.
-        trip = gtfs.trips.get(dep.get("trip_id") or dep.get("tripId") or "", {})
-        code = clean_text(trip.get("first_departure_code"))
-        journey = clean_text(v.get("journeyCode")) + clean_text(v.get("datedVehicleJourneyRef"))
-        if code and code in journey:
-            score += 30
-
+            score += 25
+        score -= int(min_diff)
         if score > best_score:
             best_score = score
             best = v
-
-    return best if best_score >= 55 else None
+    return best if best_score >= 20 else None
 
 
 def scheduled_departures_for_stop(stop_id: str, window_min: int = DEPARTURE_WINDOW_MIN, limit: int = DEPARTURE_LIMIT) -> List[Dict[str, Any]]:
@@ -899,10 +882,56 @@ def merge_live_departures(stop_id: str, scheduled: List[Dict[str, Any]], vehicle
             used_vehicle_keys.add(v.get("vehicleUniqueId") or v.get("vehicleRef"))
         merged.append(dep)
 
-    # Important: do NOT add unmatched live-only rows here.
-    # VehicleMonitoring may report a bus arriving/terminating at a stop, but the
-    # stop board must show departures only. A live row is therefore shown only
-    # when it can be paired with a valid GTFS departure above.
+    # Add true live-only departures for buses whose MonitoredCall is this stop.
+    for v in vehicles:
+        key = v.get("vehicleUniqueId") or v.get("vehicleRef")
+        if key in used_vehicle_keys:
+            continue
+        if not stop_matches(v.get("currentStopRef", ""), v.get("currentStopName", ""), stop):
+            continue
+        live_dt = parse_iso_dt(v.get("liveDateTime"))
+        if not live_dt or live_dt < now - timedelta(minutes=2) or live_dt > end:
+            continue
+        mins = minutes_until(live_dt)
+        dest = short_destination(v.get("destinationName"))
+        item = {
+            "trip_id": "",
+            "tripId": "",
+            "route_id": "",
+            "routeId": "",
+            "line": v.get("publishedLineName") or v.get("line"),
+            "routeShortName": v.get("publishedLineName") or v.get("line"),
+            "destination": dest,
+            "destinationFull": human_name(v.get("destinationName")),
+            "headsign": human_name(v.get("destinationName")),
+            "stop_id": stop_id,
+            "stopId": stop_id,
+            "stopName": stop.get("stop_name"),
+            "platformCode": stop.get("platform_code"),
+            "time": datetime_to_hhmm(live_dt),
+            "liveTime": datetime_to_hhmm(live_dt),
+            "liveDateTime": live_dt.isoformat(),
+            "scheduledTime": "",
+            "scheduledDateTime": "",
+            "minutes": mins,
+            "countdown": "Due" if mins is not None and mins <= 1 else f"{mins} min" if mins is not None else "",
+            "isDue": bool(mins is not None and mins <= 1),
+            "source": "LIVE",
+            "live": True,
+            "vehicle": v,
+            "vehicleRef": v.get("vehicleRef") or v.get("fleetNumber") or v.get("vehicleUniqueId"),
+            "delayMinutes": v.get("delayMinutes"),
+        }
+        # Avoid duplicates against a scheduled row with same line/destination/time.
+        duplicate = False
+        for dep in merged:
+            if line_norm(dep.get("line")) == line_norm(item.get("line")) and norm(dep.get("destination")) == norm(item.get("destination")):
+                dep_dt = parse_iso_dt(dep.get("liveDateTime") or dep.get("scheduledDateTime"))
+                if dep_dt and abs((dep_dt - live_dt).total_seconds()) <= 6 * 60:
+                    duplicate = True
+                    break
+        if not duplicate:
+            merged.append(item)
 
     merged.sort(key=lambda x: (parse_iso_dt(x.get("liveDateTime") or x.get("scheduledDateTime")) or now + timedelta(days=9), x.get("line") or ""))
     return merged[:DEPARTURE_LIMIT]
@@ -1195,25 +1224,13 @@ def route_map(line: str):
     return map_data(line)
 
 
-
-
-def find_live_vehicle_by_ref(vehicle_ref: str, line: str = "") -> Optional[Dict[str, Any]]:
-    ref = clean_text(vehicle_ref)
-    if not ref:
-        return None
-    for v in live.fetch():
-        ids = {clean_text(v.get("vehicleRef")), clean_text(v.get("vehicleUniqueId")), clean_text(v.get("fleetNumber"))}
-        if ref in ids and (not line or line_norm(v.get("line")) == line_norm(line)):
-            return v
-    return None
-
 @app.get("/api/trip/{trip_id}")
-def trip_detail_path(trip_id: str, vehicle_ref: str = ""):
-    return trip_detail(trip_id, vehicle_ref)
+def trip_detail_path(trip_id: str):
+    return trip_detail(trip_id)
 
 
 @app.get("/api/trip")
-def trip_detail(trip_id: str, vehicle_ref: str = ""):
+def trip_detail(trip_id: str):
     ensure_loaded()
     trip = gtfs.trips.get(trip_id)
     if not trip:
@@ -1249,18 +1266,15 @@ def trip_detail(trip_id: str, vehicle_ref: str = ""):
     line = clean_text(route.get("route_short_name")) or clean_text(trip.get("line"))
     destination = clean_text(trip.get("trip_headsign")) or (stops[-1].get("stopName", "") if stops else "")
     vehicles_live = live.fetch()
-    matched_vehicle = find_live_vehicle_by_ref(vehicle_ref, line) if vehicle_ref else None
-    best_score = 999 if matched_vehicle else -999
-
-    if not matched_vehicle:
-        for v in vehicles_live:
-            score = live_trip_score(v, trip)
-            if score > best_score:
-                best_score = score
-                matched_vehicle = v
-        if best_score < 60:
-            matched_vehicle = None
-
+    matched_vehicle = None
+    best_score = -999
+    for v in vehicles_live:
+        score = live_trip_score(v, trip)
+        if score > best_score:
+            best_score = score
+            matched_vehicle = v
+    if best_score < 40:
+        matched_vehicle = None
     vehicle_position = find_vehicle_position_in_trip(matched_vehicle, stops)
     if matched_vehicle and vehicle_position:
         pos_seq = safe_int(vehicle_position.get("sequence"), -1)
