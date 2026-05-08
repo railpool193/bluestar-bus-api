@@ -4,566 +4,73 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Bluestar Unilink Menetrend</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQVRbM9Vt/YES/1OSbUYs3w1IMqUbFu4=" crossorigin="" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
-    :root{
-      --bg:#2f2f2f;
-      --panel:#303030;
-      --panel2:#282828;
-      --top:#858585;
-      --line:#464646;
-      --text:#f1f1f1;
-      --muted:#c7c7c7;
-      --dim:#8f8f8f;
-      --blue:#159fd8;
-      --blue2:#0b8fc9;
-      --accent:#2f7bd8;
-      --green:#3eff45;
-      --greenBg:#205c28;
-      --yellow:#ffdf4e;
-      --red:#ff5555;
-      --cream:#f4f2dc;
-      --shadow:0 2px 8px rgba(0,0,0,.32);
-      --safeTop:env(safe-area-inset-top,0px);
-      --safeBottom:env(safe-area-inset-bottom,0px);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    }
-    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);overflow:hidden}
-    body{font-weight:650}
-    button,input{font:inherit}
-    #app{height:100%;display:flex;flex-direction:column;background:var(--bg)}
-
-    .topbar{
-      height:64px;min-height:64px;background:var(--top);color:#fff;display:flex;align-items:center;
-      gap:10px;padding:0 12px;padding-top:var(--safeTop);box-shadow:var(--shadow);z-index:20;
-    }
-    .topbar.home{height:72px;min-height:72px}
-    .iconBtn{width:44px;height:44px;border:0;background:transparent;color:#fff;font-size:32px;display:flex;align-items:center;justify-content:center;border-radius:10px;cursor:pointer;flex:0 0 auto}
-    .title{font-size:28px;line-height:1.05;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
-    .langBox{display:flex;gap:6px;align-items:center;flex:0 0 auto}
-    .flagBtn{border:0;background:rgba(0,0,0,.18);color:#fff;width:40px;height:34px;border-radius:8px;font-size:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:.78}
-    .flagBtn.active{outline:2px solid #fff;opacity:1;background:rgba(255,255,255,.16)}
-    .locateBtn{font-size:34px}
-
-    .statusbar{height:50px;min-height:50px;background:#060606;color:#fff;display:flex;align-items:center;gap:22px;padding:0 18px;font-size:24px;font-weight:900;z-index:19;border-bottom:1px solid #111}
-    .dot{width:18px;height:18px;border-radius:50%;background:var(--green);box-shadow:0 0 14px var(--green);display:inline-block;margin-right:7px;vertical-align:-2px}
-    .dot.err{background:var(--red);box-shadow:0 0 14px var(--red)}
-    .statusItem{white-space:nowrap}
-
-    .content{flex:1;overflow:auto;overscroll-behavior:contain;padding-bottom:calc(10px + var(--safeBottom));background:var(--bg)}
-    .content.mapContent{overflow:hidden;padding-bottom:0;display:flex;flex-direction:column}
-
-    .searchWrap{padding:18px 18px 14px;background:var(--bg)}
-    .searchField{position:relative;border:3px solid #4f93ff;border-radius:5px;display:flex;align-items:center;min-height:78px;background:#2f2f2f;color:var(--text)}
-    .searchField label{position:absolute;top:-18px;left:18px;background:var(--bg);padding:0 7px;color:#4f93ff;font-size:20px;font-weight:700}
-    .searchIcon{font-size:36px;color:#cfcfcf;margin:0 15px 0 20px;flex:0 0 auto}
-    .searchInput{flex:1;min-width:0;border:0;outline:0;background:transparent;color:#fff;font-size:34px;font-weight:500;padding:12px 8px}
-    .clearBtn{width:52px;height:52px;border:0;border-radius:50%;background:#ddd;color:#222;font-size:34px;line-height:1;margin:0 16px 0 8px;display:flex;align-items:center;justify-content:center}
-
-    .sectionTitle{background:#397bd4;color:#fff;font-size:23px;font-weight:900;padding:9px 14px;line-height:1.2;border-top:1px solid rgba(255,255,255,.08);border-bottom:1px solid rgba(0,0,0,.2)}
-    .sectionBody{padding:14px 18px;color:#d7d7d7;font-size:20px}
-    .empty{padding:28px 22px;color:#d6d6d6;font-size:28px;line-height:1.25;font-weight:800}
-    .smallNote{font-size:18px;color:#bdbdbd;font-weight:650;margin-top:6px}
-
-    .resultList,.list{display:flex;flex-direction:column}
-    .listHeader{font-size:34px;padding:22px 18px 12px;font-weight:900;color:#f0f0f0}
-    .row{display:grid;grid-template-columns:88px minmax(0,1fr) auto;align-items:center;gap:12px;min-height:82px;padding:9px 14px;border-bottom:1px solid var(--line);background:#303030;cursor:pointer;position:relative;overflow:hidden}
-    .row.noAction{cursor:default}
-    .row:active{background:#3b3b3b}
-    .row.compact{min-height:72px}
-    .row.tripStop{grid-template-columns:86px minmax(0,1fr) 64px;min-height:74px;padding:8px 18px}
-    .row.tripStop.past{color:#919191;background:#2d2d2d}
-    .row.tripStop.live,.row.tripStop.live_future{color:var(--green)}
-    .row.tripStop.current{background:var(--greenBg);color:var(--green)}
-    .row.liveRow{color:var(--green)}
-    .row.dueRow{animation:dueBlink 1s linear infinite;background:#28572e;color:var(--green)}
-    @keyframes dueBlink{0%,100%{filter:brightness(1)}50%{filter:brightness(1.45)}}
-
-    .ticket{width:76px;height:46px;border-radius:4px;background:linear-gradient(#23b8ed,#0b9fd8);box-shadow:inset 0 2px 0 rgba(255,255,255,.28), inset 0 -3px 0 rgba(0,0,0,.12), 0 0 0 2px rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;color:#fff;font-size:31px;font-weight:950;letter-spacing:.2px;overflow:hidden;text-align:center;line-height:.95;position:relative;flex:0 0 auto}
-    .ticket.stop{font-size:30px;flex-direction:column;gap:0}
-    .ticket.stop .brand{font-size:10px;line-height:1;margin-top:2px;letter-spacing:.4px}
-    .ticket.stop .code{font-size:29px;line-height:1.05}
-    .ticket.routeBig{width:92px;height:58px;font-size:40px}
-    .ticket .tinyBrand{position:absolute;top:5px;font-size:10px;opacity:.5}
-
-    .mainText{min-width:0;text-align:left;overflow:hidden}
-    .mainText.center{text-align:center}
-    .primary{font-size:28px;line-height:1.08;font-weight:950;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eee}
-    .secondary{font-size:21px;line-height:1.1;color:#c9c9c9;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:5px}
-    .tertiary{font-size:18px;line-height:1.1;color:#aaa;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px}
-    .arrow{font-size:36px;color:#fff;padding:0 2px;font-weight:500}
-    .timeBox{text-align:right;min-width:72px;align-self:center}
-    .timeMain{font-size:38px;line-height:1;font-weight:950;color:#fff;white-space:nowrap}
-    .timeSub{font-size:20px;line-height:1;margin-top:8px;font-weight:650;color:#ccc;white-space:nowrap}
-    .liveRow .primary,.liveRow .timeMain,.liveRow .timeSub{color:var(--green)}
-    .dueRow .primary,.dueRow .timeMain,.dueRow .timeSub{color:var(--green)}
-
-    .stopTitle{font-size:28px;line-height:1.1;font-weight:950;padding:17px 18px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#303030}
-    .hero{display:grid;grid-template-columns:108px minmax(0,1fr) 118px;gap:12px;align-items:center;background:#303030;border-bottom:4px solid var(--blue);padding:14px 14px;min-height:108px}
-    .hero .primary{text-align:center;font-size:29px}
-    .hero .secondary{text-align:center;font-size:20px;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-    .delayBox{background:var(--cream);color:#111;min-width:92px;height:58px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:950;border-radius:0}
-    .delayBox.live{font-size:26px}.delayBox.late{background:#41a832;color:#fff}.delayBox.early{background:#cf3434;color:#fff}
-    .rightGreen{color:var(--green)}
-    .delayGreen{color:var(--green)}
-
-    .mapToolbar{display:flex;gap:10px;flex-wrap:wrap;padding:14px 18px;background:#303030;border-bottom:1px solid var(--line)}
-    .toolBtn{border:1px solid #666;background:#303030;color:#fff;border-radius:6px;padding:12px 18px;font-size:25px;font-weight:650;min-height:52px;cursor:pointer}
-    .mapHost{flex:1;min-height:360px;position:relative;background:#1f2835}
-    #map{height:100%;width:100%}
-    .mapInfo{position:absolute;top:12px;left:14px;right:14px;background:#898989;color:#fff;border-radius:5px;z-index:500;padding:10px 14px;display:none;grid-template-columns:90px minmax(0,1fr);gap:14px;align-items:center;box-shadow:var(--shadow)}
-    .mapInfo.show{display:grid}
-    .mapInfo .primary{font-size:21px;text-align:center;white-space:normal;color:#fff}.mapInfo .secondary{font-size:14px;text-align:center;white-space:normal;color:#eee}
-    .vehMarker{position:relative;min-width:72px;max-width:88px;background:#2f86ee;color:#fff;border-radius:7px;padding:4px 6px 5px;text-align:center;box-shadow:0 2px 7px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.25);line-height:1}
-    .vehMarker:after{content:"";position:absolute;left:50%;bottom:-9px;margin-left:-7px;border-left:7px solid transparent;border-right:7px solid transparent;border-top:9px solid #2f86ee}
-    .vmLine{font-size:18px;font-weight:950;line-height:1}.vmDest{font-size:11px;font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.1;margin-top:2px}.vmFleet{font-size:11px;font-weight:900;line-height:1.05;margin-top:2px}.vmArrow{position:absolute;right:-7px;top:-8px;color:#fff;font-size:13px;text-shadow:0 1px 2px #000;transform-origin:center}
-    .leaflet-popup-content{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-weight:700;font-size:15px;line-height:1.25}.leaflet-container{background:#1b2634}
-
-    .favStar{font-size:40px;color:#fff;background:transparent;border:0;margin-right:8px;cursor:pointer}
-    .pillRoutes{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}.miniRoute{background:#0ea4df;color:#fff;min-width:40px;height:28px;display:flex;align-items:center;justify-content:center;padding:0 8px;font-size:18px;font-weight:900}
-    .miniRoute.black{background:#050505}.miniRoute.yellow{background:#ffdf29;color:#111}.miniRoute.orange{background:#ff9900;color:#fff}
-
-    .errorBox{padding:28px 24px;font-size:28px;font-weight:900;color:#ddd;line-height:1.35}.loading{padding:28px 22px;font-size:28px;font-weight:900;color:#ddd}.spin{display:inline-block;width:28px;height:28px;border:4px solid #777;border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;margin-right:10px;vertical-align:-4px}@keyframes spin{to{transform:rotate(360deg)}}
-
-    @media (max-width:480px){
-      .topbar{height:56px;min-height:56px;padding-left:10px;padding-right:8px}.topbar.home{height:62px;min-height:62px}.iconBtn{width:38px;height:38px;font-size:29px}.title{font-size:24px}.flagBtn{width:36px;height:30px;font-size:22px}.locateBtn{font-size:30px}
-      .statusbar{height:48px;min-height:48px;font-size:22px;gap:16px;padding:0 16px}.dot{width:16px;height:16px}
-      .searchWrap{padding:18px 16px 12px}.searchField{min-height:70px}.searchField label{font-size:18px}.searchInput{font-size:29px}.searchIcon{font-size:31px;margin-left:17px}.clearBtn{width:48px;height:48px;font-size:31px;margin-right:12px}
-      .sectionTitle{font-size:21px;padding:8px 12px}.listHeader{font-size:30px;padding:18px 16px 10px}.row{grid-template-columns:78px minmax(0,1fr) auto;gap:10px;min-height:76px;padding:8px 12px}.row.tripStop{grid-template-columns:75px minmax(0,1fr) 54px;min-height:66px;padding:7px 16px}
-      .ticket{width:68px;height:42px;font-size:28px}.ticket.routeBig{width:82px;height:52px;font-size:36px}.ticket.stop .brand{font-size:9px}.ticket.stop .code{font-size:26px}
-      .primary{font-size:25px}.secondary{font-size:19px}.tertiary{font-size:16px}.arrow{font-size:32px}.timeBox{min-width:64px}.timeMain{font-size:34px}.timeSub{font-size:18px}
-      .stopTitle{font-size:25px;padding:15px 14px}.hero{grid-template-columns:96px minmax(0,1fr) 106px;min-height:100px;padding:12px}.hero .primary{font-size:26px}.hero .secondary{font-size:18px}.delayBox{min-width:92px;height:54px;font-size:25px}
-      .toolBtn{font-size:22px;padding:10px 16px;min-height:50px}.mapToolbar{padding:12px 16px}
-    }
+    :root{--bg:#2f2f2f;--panel:#303030;--top:#858585;--line:#464646;--text:#f3f3f3;--muted:#c9c9c9;--blue:#12a8df;--accent:#397bd4;--green:#38ff45;--greenBg:#205c28;--red:#ff5555;--cream:#f4f2dc;--safeTop:env(safe-area-inset-top,0px);--safeBottom:env(safe-area-inset-bottom,0px);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{height:100%;margin:0;background:var(--bg);color:var(--text);overflow:hidden}button,input{font:inherit}#app{height:100%;display:flex;flex-direction:column;background:var(--bg)}.topbar{height:58px;min-height:58px;background:var(--top);color:#fff;display:flex;align-items:center;gap:8px;padding:0 10px;padding-top:var(--safeTop);box-shadow:0 2px 8px rgba(0,0,0,.3);z-index:20}.topbar.home{height:64px;min-height:64px}.iconBtn{width:38px;height:38px;border:0;background:transparent;color:#fff;font-size:30px;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;flex:0 0 auto}.title{font-size:25px;line-height:1.05;font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}.langBox{display:flex;gap:5px;align-items:center;flex:0 0 auto}.flagBtn{border:0;background:rgba(0,0,0,.18);color:#fff;width:36px;height:30px;border-radius:8px;font-size:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:.78}.flagBtn.active{outline:2px solid #fff;opacity:1;background:rgba(255,255,255,.16)}.locateBtn{font-size:30px}.statusbar{height:46px;min-height:46px;background:#050505;color:#fff;display:flex;align-items:center;gap:16px;padding:0 16px;font-size:22px;font-weight:900;z-index:19}.dot{width:16px;height:16px;border-radius:50%;background:var(--green);box-shadow:0 0 14px var(--green);display:inline-block;margin-right:7px;vertical-align:-2px}.dot.err{background:var(--red);box-shadow:0 0 14px var(--red)}.statusItem{white-space:nowrap}.content{flex:1;overflow:auto;overscroll-behavior:contain;background:var(--bg);padding-bottom:calc(10px + var(--safeBottom))}.content.mapContent{overflow:hidden;padding-bottom:0;display:flex;flex-direction:column}.searchWrap{padding:18px 16px 12px;background:var(--bg)}.searchField{position:relative;border:3px solid #4f93ff;border-radius:5px;display:flex;align-items:center;min-height:70px;background:#2f2f2f}.searchField label{position:absolute;top:-18px;left:16px;background:var(--bg);padding:0 7px;color:#4f93ff;font-size:18px;font-weight:750}.searchIcon{font-size:32px;color:#cfcfcf;margin:0 14px 0 16px;flex:0 0 auto}.searchInput{flex:1;min-width:0;border:0;outline:0;background:transparent;color:#fff;font-size:30px;font-weight:500;padding:12px 6px}.clearBtn{width:48px;height:48px;border:0;border-radius:50%;background:#ddd;color:#222;font-size:32px;line-height:1;margin:0 12px 0 8px;display:flex;align-items:center;justify-content:center}.sectionTitle{background:var(--accent);color:#fff;font-size:21px;font-weight:900;padding:8px 12px;line-height:1.2}.sectionBody{padding:14px 18px;color:#d7d7d7;font-size:20px}.empty,.errorBox,.loading{padding:28px 24px;color:#ddd;font-size:28px;line-height:1.35;font-weight:900}.smallNote{font-size:17px;color:#bdbdbd;font-weight:650;margin-top:6px}.resultList,.list{display:flex;flex-direction:column}.listHeader{font-size:31px;padding:18px 16px 10px;font-weight:950;color:#f0f0f0}.row{display:grid;grid-template-columns:78px minmax(0,1fr) auto;align-items:center;gap:10px;min-height:76px;padding:8px 12px;border-bottom:1px solid var(--line);background:#303030;cursor:pointer;position:relative;overflow:hidden}.row.noAction{cursor:default}.row:active{background:#3b3b3b}.row.compact{min-height:70px}.row.tripStop{grid-template-columns:75px minmax(0,1fr) 56px;min-height:66px;padding:7px 16px}.row.tripStop.past{color:#919191;background:#2d2d2d}.row.tripStop.live,.row.tripStop.live_future{color:var(--green)}.row.tripStop.current{background:var(--greenBg);color:var(--green)}.row.liveRow{color:var(--green)}.row.dueRow{animation:dueBlink 1s linear infinite;background:#28572e;color:var(--green)}@keyframes dueBlink{0%,100%{filter:brightness(1)}50%{filter:brightness(1.45)}}.ticket{width:68px;height:42px;border-radius:4px;background:linear-gradient(#23b8ed,#0b9fd8);box-shadow:inset 0 2px 0 rgba(255,255,255,.28),inset 0 -3px 0 rgba(0,0,0,.12),0 0 0 2px rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;color:#fff;font-size:28px;font-weight:950;letter-spacing:.2px;overflow:hidden;text-align:center;line-height:.95;position:relative;flex:0 0 auto}.ticket.stop{flex-direction:column}.ticket.stop .brand{font-size:9px;line-height:1;margin-top:2px;letter-spacing:.4px}.ticket.stop .code{font-size:25px;line-height:1.05}.ticket.routeBig{width:82px;height:52px;font-size:36px}.mainText{min-width:0;text-align:left;overflow:hidden}.mainText.center{text-align:center}.primary{font-size:25px;line-height:1.08;font-weight:950;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eee}.secondary{font-size:18px;line-height:1.1;color:#c9c9c9;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:5px}.tertiary{font-size:16px;color:#aaa;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px}.arrow{font-size:34px;color:#fff;padding:0 2px;font-weight:500}.timeBox{text-align:right;min-width:64px}.timeMain{font-size:34px;line-height:1;font-weight:950;color:#fff;white-space:nowrap}.timeSub{font-size:18px;line-height:1;margin-top:8px;font-weight:650;color:#ccc;white-space:nowrap}.liveRow .primary,.liveRow .timeMain,.liveRow .timeSub,.dueRow .primary,.dueRow .timeMain,.dueRow .timeSub{color:var(--green)}.stopTitle{font-size:25px;line-height:1.1;font-weight:950;padding:15px 14px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#303030}.hero{display:grid;grid-template-columns:96px minmax(0,1fr) 104px;gap:10px;align-items:center;background:#303030;border-bottom:4px solid var(--blue);padding:12px;min-height:98px}.hero .primary{text-align:center;font-size:26px}.hero .secondary{text-align:center;font-size:17px;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.delayBox{background:var(--cream);color:#111;min-width:92px;height:54px;display:flex;align-items:center;justify-content:center;font-size:25px;font-weight:950}.delayBox.live{font-size:25px}.delayBox.late{background:#41a832;color:#fff}.delayBox.early{background:#cf3434;color:#fff}.mapToolbar{display:flex;gap:10px;flex-wrap:wrap;padding:12px 16px;background:#303030;border-bottom:1px solid var(--line)}.toolBtn{border:1px solid #666;background:#303030;color:#fff;border-radius:6px;padding:10px 16px;font-size:22px;font-weight:650;min-height:50px;cursor:pointer}.mapHost{flex:1;min-height:360px;position:relative;background:#1f2835}#map{height:100%;width:100%}.mapInfo{position:absolute;top:12px;left:14px;right:14px;background:#898989;color:#fff;border-radius:5px;z-index:500;padding:10px 14px;display:none;grid-template-columns:84px minmax(0,1fr);gap:12px;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.32)}.mapInfo.show{display:grid}.vehMarker{position:relative;min-width:72px;max-width:90px;background:#2f86ee;color:#fff;border-radius:7px;padding:4px 6px 5px;text-align:center;box-shadow:0 2px 7px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.25);line-height:1}.vehMarker:after{content:"";position:absolute;left:50%;bottom:-9px;margin-left:-7px;border-left:7px solid transparent;border-right:7px solid transparent;border-top:9px solid #2f86ee}.vmLine{font-size:18px;font-weight:950}.vmDest{font-size:11px;font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}.vmFleet{font-size:11px;font-weight:900;margin-top:2px}.vmArrow{position:absolute;right:-7px;top:-8px;color:#fff;font-size:13px;text-shadow:0 1px 2px #000;transform-origin:center}.favStar{font-size:38px;color:#fff;background:transparent;border:0;margin-right:4px;cursor:pointer}.spin{display:inline-block;width:28px;height:28px;border:4px solid #777;border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;margin-right:10px;vertical-align:-4px}@keyframes spin{to{transform:rotate(360deg)}}@media(min-width:700px){.row{grid-template-columns:88px minmax(0,1fr) auto}.ticket{width:76px;height:46px}.content{max-width:820px;width:100%;margin:0 auto}.mapContent{max-width:none}}
   </style>
 </head>
 <body>
 <div id="app">
   <div id="topbar" class="topbar home">
-    <button id="backBtn" class="iconBtn" aria-label="Back">☰</button>
+    <button id="backBtn" class="iconBtn">☰</button>
     <div id="title" class="title">Megállóhelyi Menetrend</div>
-    <div class="langBox">
-      <button id="huBtn" class="flagBtn" title="Magyar">🇭🇺</button>
-      <button id="enBtn" class="flagBtn" title="English">🇬🇧</button>
-    </div>
-    <button id="locBtn" class="iconBtn locateBtn" aria-label="Locate">⌾</button>
+    <div class="langBox"><button id="huBtn" class="flagBtn">🇭🇺</button><button id="enBtn" class="flagBtn">🇬🇧</button></div>
+    <button id="locBtn" class="iconBtn locateBtn">⌾</button>
   </div>
-  <div id="statusbar" class="statusbar">
-    <div id="liveStatus" class="statusItem"><span class="dot"></span>LIVE: --</div>
-    <div id="gtfsStatus" class="statusItem"><span class="dot"></span>GTFS: --</div>
-  </div>
+  <div class="statusbar"><div id="liveStatus" class="statusItem"><span class="dot"></span>LIVE: --</div><div id="gtfsStatus" class="statusItem"><span class="dot"></span>GTFS: --</div></div>
   <main id="content" class="content"></main>
 </div>
-
 <script>
 (() => {
   const API = '';
-  const state = {
-    lang: localStorage.getItem('bu_lang') || 'hu',
-    view: 'home',
-    params: {},
-    stack: [],
-    status: null,
-    map: null,
-    markers: [],
-    polylines: [],
-    selectedMapVehicle: null,
-    refreshTimer: null,
-    searchTimer: null,
-  };
-
+  const state = {lang:localStorage.getItem('bu_lang') || 'hu',view:'home',params:{},stack:[],map:null,markers:[],polylines:[],searchTimer:null,lastSearch:''};
   const T = {
-    hu: {
-      appTitle:'Megállóhelyi Menetrend', searchLabel:'Megálló vagy viszonylat keresése', featured:'Kiemelt forgalmi változások', noAlerts:'Jelenleg nincs kiemelt forgalmi változás.', favourites:'Kedvenc megállók és viszonylatok', noFav:'Nincsenek kedvencek', favHelp:'Megálló vagy viszonylat mentéséhez nyisd meg és használd a csillagot.', results:'Találatok a(z) "{q}" kifejezésre', stops:'Megállók', routes:'Járatok', stop:'Megálló', route:'Viszonylat', trip:'Járat', vehicles:'Járművek', map:'Térkép', scheduled:'Menetrendi adat', live:'Élő adat', liveShort:'LIVE', scheduledShort:'Scheduled', due:'Due', min:'perc', noDepartures:'Nincs indulás a következő időablakban.', departureError:'Hiba az indulások betöltésénél.', routeVehicles:'A viszonylaton közlekedő járművek listája:', routeMap:'A viszonylat útvonala térképen:', routeStops:'A viszonylat megállóinak listája irányonként:', vehicleList:'Járművek listája forgalmi számokkal', vehicleListSub:'Csak aktuális live járművek', viewMap:'Térkép megtekintése', viewMapSub:'Útvonal + bejelentkezett járművek', filter:'Szűrő', clearFilter:'Szűrő törlése', refresh:'Frissítés', all:'mind', moving:'Mozgásban', atStop:'Megállóban', nextStop:'Következő megálló', currentStop:'Aktuális megálló', liveMatched:'Élő jármű párosítva', noLiveVehicles:'Nincs aktuális live jármű ezen a viszonylaton.', onlyDepartures:'Csak indulások láthatók; végállomási érkezések elrejtve.', loading:'Betöltés...', routeNotFound:'Hiba a viszonylat betöltésénél.', networkError:'Hálózati hiba az adatok betöltésénél.', addFav:'Hozzáadás kedvencekhez', removeFav:'Kedvenc törlése', destination:'Célállomás', fleet:'Fleet', delay:'Eltérés', early:'siet', late:'késik'
-    },
-    en: {
-      appTitle:'Stop Timetable', searchLabel:'Search stop or route', featured:'Featured service changes', noAlerts:'No featured service changes at the moment.', favourites:'Favourite stops and routes', noFav:'No favourites', favHelp:'Open a stop or route and tap the star to save it.', results:'Results for "{q}"', stops:'Stops', routes:'Routes', stop:'Stop', route:'Route', trip:'Trip', vehicles:'Vehicles', map:'Map', scheduled:'Scheduled', live:'Live', liveShort:'LIVE', scheduledShort:'Scheduled', due:'Due', min:'min', noDepartures:'No departures in the next time window.', departureError:'Could not load departures.', routeVehicles:'Vehicles currently on this route:', routeMap:'Route on map:', routeStops:'Stops by direction:', vehicleList:'Vehicle list with fleet numbers', vehicleListSub:'Current live vehicles only', viewMap:'View map', viewMapSub:'Route + logged-in vehicles', filter:'Filter', clearFilter:'Clear filter', refresh:'Refresh', all:'all', moving:'Moving', atStop:'At stop', nextStop:'Next stop', currentStop:'Current stop', liveMatched:'Live vehicle matched', noLiveVehicles:'No current live vehicles on this route.', onlyDepartures:'Only boarding departures are shown; terminal arrivals are hidden.', loading:'Loading...', routeNotFound:'Could not load route.', networkError:'NetworkError when attempting to fetch resource.', addFav:'Add favourite', removeFav:'Remove favourite', destination:'Destination', fleet:'Fleet', delay:'Delay', early:'early', late:'late'
-    }
+    hu:{appTitle:'Megállóhelyi Menetrend',searchLabel:'Megálló vagy viszonylat keresése',featured:'Kiemelt forgalmi változások',noAlerts:'Jelenleg nincs kiemelt forgalmi változás.',favourites:'Kedvenc megállók és viszonylatok',noFav:'Nincsenek kedvencek',favHelp:'Megálló vagy viszonylat mentéséhez nyisd meg és használd a csillagot.',results:'Találatok a(z) "{q}" kifejezésre',stops:'Megállók',routes:'Járatok',stop:'Megálló',route:'Viszonylat',trip:'Járat',vehicles:'Járművek',map:'Térkép',scheduled:'Menetrendi adat',live:'Élő adat',due:'Due',min:'perc',noDepartures:'Nincs indulás a következő időablakban.',departureError:'Hiba az indulások betöltésénél.',routeError:'Hiba a viszonylat betöltésénél.',routeVehicles:'A viszonylaton közlekedő járművek listája:',routeMap:'A viszonylat útvonala térképen:',routeStops:'A viszonylat megállóinak listája irányonként:',vehicleList:'Járművek listája forgalmi számokkal',vehicleListSub:'Csak aktuális live járművek',viewMap:'Térkép megtekintése',viewMapSub:'Útvonal + bejelentkezett járművek',filter:'Szűrő',clearFilter:'Szűrő törlése',refresh:'Frissítés',all:'mind',nextStop:'Következő megálló',currentStop:'Aktuális megálló',liveMatched:'Élő jármű párosítva',noLiveVehicles:'Nincs aktuális live jármű ezen a viszonylaton.',onlyDepartures:'Csak indulások láthatók; végállomási érkezések elrejtve.',loading:'Betöltés...',networkError:'Hálózati hiba az adatok betöltésénél.',addFav:'Hozzáadás kedvencekhez',removeFav:'Kedvenc törlése'},
+    en:{appTitle:'Stop Timetable',searchLabel:'Search stop or route',featured:'Featured service changes',noAlerts:'No featured service changes at the moment.',favourites:'Favourite stops and routes',noFav:'No favourites',favHelp:'Open a stop or route and tap the star to save it.',results:'Results for "{q}"',stops:'Stops',routes:'Routes',stop:'Stop',route:'Route',trip:'Trip',vehicles:'Vehicles',map:'Map',scheduled:'Scheduled',live:'Live',due:'Due',min:'min',noDepartures:'No departures in the next time window.',departureError:'Could not load departures.',routeError:'Could not load route.',routeVehicles:'Vehicles currently on this route:',routeMap:'Route on map:',routeStops:'Stops by direction:',vehicleList:'Vehicle list with fleet numbers',vehicleListSub:'Current live vehicles only',viewMap:'View map',viewMapSub:'Route + logged-in vehicles',filter:'Filter',clearFilter:'Clear filter',refresh:'Refresh',all:'all',nextStop:'Next stop',currentStop:'Current stop',liveMatched:'Live vehicle matched',noLiveVehicles:'No current live vehicles on this route.',onlyDepartures:'Only boarding departures are shown; terminal arrivals are hidden.',loading:'Loading...',networkError:'NetworkError when attempting to fetch resource.',addFav:'Add favourite',removeFav:'Remove favourite'}
   };
-  const tr = (k, vars={}) => {
-    let s = (T[state.lang] && T[state.lang][k]) || T.hu[k] || k;
-    for (const [a,b] of Object.entries(vars)) s = s.replaceAll('{'+a+'}', b);
-    return s;
-  };
-
-  const content = document.getElementById('content');
-  const topbar = document.getElementById('topbar');
-  const titleEl = document.getElementById('title');
-  const backBtn = document.getElementById('backBtn');
-  const huBtn = document.getElementById('huBtn');
-  const enBtn = document.getElementById('enBtn');
-  const locBtn = document.getElementById('locBtn');
-
-  function esc(s){ return String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
-  function enc(s){ return encodeURIComponent(String(s ?? '')); }
-  function isLiveRow(x){ return !!x.live || x.source === 'live'; }
-  function setLang(lang){ state.lang = lang; localStorage.setItem('bu_lang', lang); huBtn.classList.toggle('active', lang==='hu'); enBtn.classList.toggle('active', lang==='en'); renderCurrent(false); }
-  huBtn.onclick = () => setLang('hu');
-  enBtn.onclick = () => setLang('en');
-
-  function updateHeader(title, back=true){
-    titleEl.textContent = title || tr('appTitle');
-    topbar.classList.toggle('home', !back);
-    backBtn.textContent = back ? '‹' : '☰';
-    backBtn.onclick = back ? goBack : showHome;
-    huBtn.classList.toggle('active', state.lang==='hu');
-    enBtn.classList.toggle('active', state.lang==='en');
-  }
-  locBtn.onclick = () => {
-    if (state.view !== 'map') return;
-    if (!navigator.geolocation || !state.map) return;
-    navigator.geolocation.getCurrentPosition(pos => {
-      state.map.setView([pos.coords.latitude, pos.coords.longitude], 15);
-    });
-  };
-
-  async function api(path){
-    const res = await fetch(API + path, {cache:'no-store'});
-    const text = await res.text();
-    let data;
-    try { data = JSON.parse(text); } catch(e){ throw new Error(text || res.statusText); }
-    if (!res.ok || data.ok === false) throw new Error(data.error || res.statusText);
-    return data;
-  }
-
-  function loading(){ content.className = 'content'; content.innerHTML = `<div class="loading"><span class="spin"></span>${esc(tr('loading'))}</div>`; }
-  function errorBox(msg){ content.className = 'content'; content.innerHTML = `<div class="errorBox">${esc(msg || tr('networkError'))}</div>`; }
-
-  async function refreshStatus(force=false){
-    try{
-      const data = await api('/api/status' + (force ? '?t='+Date.now() : ''));
-      state.status = data;
-      const live = data.live || {};
-      const gtfs = data.gtfs || {};
-      document.getElementById('liveStatus').innerHTML = `<span class="dot ${live.ok?'':'err'}"></span>LIVE: ${live.ok ? `ON (${live.activeCount ?? 0})` : 'ERR'}`;
-      document.getElementById('gtfsStatus').innerHTML = `<span class="dot ${gtfs.ok?'':'err'}"></span>GTFS: ${gtfs.ok ? 'OK' : 'ERR'}`;
-    }catch(e){
-      document.getElementById('liveStatus').innerHTML = `<span class="dot err"></span>LIVE: ERR`;
-      document.getElementById('gtfsStatus').innerHTML = `<span class="dot err"></span>GTFS: ERR`;
-    }
-  }
-
-  function push(view, params={}){
-    if (state.view) state.stack.push({view:state.view, params:state.params});
-    state.view = view; state.params = params; renderCurrent(true);
-  }
-  function replace(view, params={}){ state.view = view; state.params = params; renderCurrent(true); }
-  function goBack(){
-    const prev = state.stack.pop();
-    if (!prev) return showHome();
-    state.view = prev.view; state.params = prev.params; renderCurrent(true);
-  }
-  function renderCurrent(doFetch=true){
-    if (state.view === 'home') return renderHome();
-    if (state.view === 'stop') return renderStop(state.params.stopId);
-    if (state.view === 'route') return renderRoute(state.params.line);
-    if (state.view === 'vehicles') return renderVehicles(state.params.line);
-    if (state.view === 'map') return renderMap(state.params.line || '');
-    if (state.view === 'trip') return renderTrip(state.params.tripId, state.params.serviceDate || '', state.params.vehicle || '');
-    renderHome();
-  }
-  function showHome(){ state.stack=[]; state.view='home'; state.params={}; renderHome(); }
-
-  function ticket(label, cls=''){
-    const safe = esc(label || '?');
-    if (cls.includes('stop')) return `<div class="ticket stop"><div class="brand">BLUESTAR</div><div class="code">${safe}</div></div>`;
-    return `<div class="ticket ${cls}">${safe}</div>`;
-  }
-
-  function getFavs(){ try{return JSON.parse(localStorage.getItem('bu_favs') || '[]')}catch(e){return []} }
-  function setFavs(f){ localStorage.setItem('bu_favs', JSON.stringify(f)); }
-  function favKey(type,id){ return `${type}:${id}`; }
-  function isFav(type,id){ return getFavs().some(f => f.key === favKey(type,id)); }
-  function toggleFav(type,id,name,code){
-    const key = favKey(type,id); let f = getFavs();
-    if (f.some(x=>x.key===key)) f = f.filter(x=>x.key!==key);
-    else f.unshift({key,type,id,name,code});
-    setFavs(f.slice(0,60)); renderCurrent(false);
-  }
-
-  function renderHome(){
-    updateHeader(tr('appTitle'), false);
-    content.className = 'content';
-    const favs = getFavs();
-    content.innerHTML = `
-      <div class="searchWrap">
-        <div class="searchField">
-          <label>${esc(tr('searchLabel'))}</label>
-          <div class="searchIcon">⌕</div>
-          <input id="searchInput" class="searchInput" autocomplete="off" inputmode="search" />
-          <button id="clearSearch" class="clearBtn" style="display:none">×</button>
-        </div>
-      </div>
-      <div id="searchResults"></div>
-      <div id="homeSections">
-        <div class="sectionTitle">${esc(tr('featured'))}</div>
-        <div class="sectionBody">${esc(tr('noAlerts'))}</div>
-        <div class="sectionTitle">${esc(tr('favourites'))}</div>
-        <div id="favList">${renderFavs(favs)}</div>
-      </div>`;
-    const input = document.getElementById('searchInput');
-    const clear = document.getElementById('clearSearch');
-    input.focus({preventScroll:true});
-    input.addEventListener('input', () => {
-      clear.style.display = input.value ? 'flex' : 'none';
-      clearTimeout(state.searchTimer);
-      state.searchTimer = setTimeout(() => doSearch(input.value), 180);
-    });
-    clear.onclick = () => { input.value=''; clear.style.display='none'; doSearch(''); input.focus(); };
-  }
-
-  function renderFavs(favs){
-    if (!favs.length) return `<div class="sectionBody"><b>${esc(tr('noFav'))}</b><div class="smallNote">${esc(tr('favHelp'))}</div></div>`;
-    return `<div class="resultList">${favs.map(f => `
-      <div class="row compact" data-fav-type="${esc(f.type)}" data-fav-id="${esc(f.id)}">
-        ${ticket(f.code || (f.type==='route'?f.id:'BUS'), f.type==='stop'?'stop':'')}
-        <div class="mainText"><div class="primary">${esc(f.name || f.id)}</div><div class="secondary">${esc(f.type==='route'?tr('route'):f.id)}</div></div>
-        <div class="arrow">→</div>
-      </div>`).join('')}</div>`;
-  }
-
-  async function doSearch(q){
-    const box = document.getElementById('searchResults');
-    const home = document.getElementById('homeSections');
-    if (!box) return;
-    q = (q || '').trim();
-    if (!q){ box.innerHTML=''; if(home) home.style.display='block'; return; }
-    if(home) home.style.display='none';
-    try{
-      const data = await api('/api/search?q=' + enc(q));
-      box.innerHTML = renderSearchResults(data);
-    }catch(e){ box.innerHTML = `<div class="errorBox">${esc(e.message || tr('networkError'))}</div>`; }
-  }
-
-  function renderSearchResults(data){
-    const q = data.query || '';
-    const stops = data.stops || [];
-    const routes = data.routes || [];
-    let html = `<div class="sectionTitle">${esc(tr('results',{q}))}</div>`;
-    if (stops.length){
-      html += `<div class="listHeader">${esc(tr('stops'))}</div><div class="resultList">` + stops.map(s => `
-        <div class="row" onclick="window.BU.openStop('${esc(s.id)}')">
-          ${ticket(s.code || 'BUS', 'stop')}
-          <div class="mainText"><div class="primary">${esc(s.name)}</div><div class="secondary">${esc(s.subtitle || s.id)}</div></div>
-          <div class="arrow">→</div>
-        </div>`).join('') + `</div>`;
-    }
-    if (routes.length){
-      html += `<div class="listHeader">${esc(tr('routes'))}</div><div class="resultList">` + routes.map(r => `
-        <div class="row" onclick="window.BU.openRoute('${esc(r.id)}')">
-          ${ticket(r.code || r.name)}
-          <div class="mainText"><div class="primary">${esc(r.name)}</div><div class="secondary">${esc(tr('route'))}</div></div>
-          <div class="arrow">→</div>
-        </div>`).join('') + `</div>`;
-    }
-    if (!stops.length && !routes.length) html += `<div class="empty">${esc(tr('noDepartures'))}</div>`;
-    return html;
-  }
-
-  async function renderStop(stopId){
-    updateHeader(tr('stop'), true);
-    loading();
-    try{
-      const data = await api('/api/stops/' + enc(stopId) + '/departures?minutes=120');
-      const stop = data.stop || {stop_id:stopId, stop_name:stopId};
-      const fav = isFav('stop', stop.stop_id);
-      content.innerHTML = `
-        <div class="stopTitle">${esc(stop.stop_name)} (${esc(stop.stop_id)}) <button class="favStar" title="${esc(fav?tr('removeFav'):tr('addFav'))}" onclick="window.BU.toggleFav('stop','${esc(stop.stop_id)}','${esc(stop.stop_name)}','${esc(stop.stop_code||'BUS')}')">${fav?'★':'☆'}</button></div>
-        <div class="list">${renderDepartures(data.departures || [])}</div>
-        <div class="smallNote" style="padding:12px 18px">${esc(tr('onlyDepartures'))}</div>`;
-    }catch(e){
-      content.innerHTML = `<div class="stopTitle">${esc(stopId)}</div><div class="errorBox">${esc(tr('departureError'))}</div>`;
-    }
-  }
-
-  function renderDepartures(rows){
-    if (!rows.length) return `<div class="empty">${esc(tr('noDepartures'))}</div>`;
-    return rows.map(d => {
-      const live = isLiveRow(d);
-      const due = !!d.due;
-      const cls = due ? 'dueRow' : (live ? 'liveRow' : '');
-      const status = live ? tr('live') : tr('scheduled');
-      const minText = due ? tr('due') : `${d.minutes ?? ''} ${tr('min')}`.trim();
-      const vehicleParts = [];
-      if (d.fleet) vehicleParts.push(d.fleet);
-      if (d.registration) vehicleParts.push(d.registration);
-      if (d.vehicle_type) vehicleParts.push(d.vehicle_type);
-      if (d.next_stop_name) vehicleParts.push(`${tr('nextStop')}: ${d.next_stop_name}`);
-      const sub = vehicleParts.length ? vehicleParts.join(' · ') : `${status} · ${d.stop_name || ''}`;
-      const click = d.trip_id ? `onclick="window.BU.openTrip('${esc(d.trip_id)}','${esc(d.service_date||'')}','${esc(d.fleet||d.vehicle_ref||'')}')"` : '';
-      return `<div class="row ${cls}" ${click}>
-        ${ticket(d.badge || d.line || '?')}
-        <div class="mainText center"><div class="primary">${esc(d.destination || '')}</div><div class="secondary">${esc(sub)}</div></div>
-        <div class="timeBox"><div class="timeMain">${esc(d.expected_time || d.time || '--')}</div><div class="timeSub">${esc(minText)}</div></div>
-      </div>`;
-    }).join('');
-  }
-
-  async function renderRoute(line){
-    updateHeader(tr('route'), true);
-    loading();
-    try{
-      const data = await api('/api/routes/' + enc(line));
-      const fav = isFav('route', line);
-      let html = `<div class="row noAction compact">
-        ${ticket(data.badge || line)}
-        <div class="mainText"><div class="primary">${esc(line)}</div></div>
-        <button class="favStar" onclick="window.BU.toggleFav('route','${esc(line)}','${esc(line)}','${esc(data.badge||line)}')">${fav?'★':'☆'}</button>
-      </div>`;
-      html += `<div class="sectionTitle">${esc(tr('routeVehicles'))}</div>
-        <div class="row" onclick="window.BU.openVehicles('${esc(line)}')">${ticket(data.badge || line,'routeBig')}<div class="mainText"><div class="primary">${esc(tr('vehicleList'))}</div><div class="secondary">${esc(tr('vehicleListSub'))}</div></div><div class="arrow">→</div></div>`;
-      html += `<div class="sectionTitle">${esc(tr('routeMap'))}</div>
-        <div class="row" onclick="window.BU.openMap('${esc(line)}')">${ticket(data.badge || line,'routeBig')}<div class="mainText"><div class="primary">${esc(tr('viewMap'))}</div><div class="secondary">${esc(tr('viewMapSub'))}</div></div><div class="arrow">→</div></div>`;
-      html += `<div class="sectionTitle">${esc(tr('routeStops'))}</div>`;
-      const dirs = data.directions || [];
-      if (!dirs.length) html += `<div class="errorBox">${esc(tr('routeNotFound'))}</div>`;
-      html += dirs.map(d => `<div class="row" onclick="window.BU.openTrip('${esc(d.trip_id)}','','')">
-        ${ticket(d.badge || line,'routeBig')}
-        <div class="mainText"><div class="primary">▶ ${esc(d.headsign || d.to?.stop_name || '')}</div><div class="secondary">${esc((d.from?.stop_name || '') + ' → ' + (d.to?.stop_name || ''))}</div></div>
-        <div class="arrow">→</div>
-      </div>`).join('');
-      content.className = 'content';
-      content.innerHTML = html;
-    }catch(e){ errorBox(tr('routeNotFound')); }
-  }
-
-  async function renderVehicles(line){
-    updateHeader(tr('vehicles'), true);
-    loading();
-    try{
-      const data = await api('/api/routes/' + enc(line) + '/vehicles');
-      const vehicles = data.vehicles || [];
-      let html = '';
-      if (!vehicles.length) html += `<div class="empty">${esc(tr('noLiveVehicles'))}</div>`;
-      html += vehicles.map(v => {
-        const status = v.at_stop ? tr('atStop') : tr('moving');
-        const detail = [v.fleet, status, v.next_stop || v.current_stop].filter(Boolean).join(' · ');
-        return `<div class="row" ${v.matched_trip_id ? `onclick="window.BU.openTrip('${esc(v.matched_trip_id)}','${esc(v.service_date||'')}','${esc(v.fleet||v.vehicle_ref||'')}')"` : ''}>
-          ${ticket(v.badge || v.line)}
-          <div class="mainText"><div class="primary">${esc(v.destination || '')}</div><div class="secondary">${esc(detail)}</div><div class="tertiary">${esc(v.vehicle_type || v.registration || '')}</div></div>
-          <div class="arrow">→</div>
-        </div>`;
-      }).join('');
-      content.className = 'content';
-      content.innerHTML = html;
-    }catch(e){ errorBox(e.message || tr('networkError')); }
-  }
-
-  async function renderTrip(tripId, serviceDate='', vehicle=''){
-    updateHeader(tr('trip'), true);
-    loading();
-    try{
-      const data = await api('/api/trip/' + enc(tripId) + `?service_date=${enc(serviceDate)}&vehicle=${enc(vehicle)}`);
-      const v = data.vehicle || {};
-      let delayCls = 'live';
-      let delayText = data.live ? 'LIVE' : '--';
-      if (data.live && Number(data.delay_min) > 0) { delayCls='late'; delayText = '+' + Number(data.delay_min).toFixed(0); }
-      if (data.live && Number(data.delay_min) < 0) { delayCls='early'; delayText = String(Number(data.delay_min).toFixed(0)); }
-      const subParts = [];
-      if (data.live) subParts.push(`${tr('liveMatched')} · ${v.fleet || v.vehicle_ref || ''}`);
-      else subParts.push(tr('scheduled'));
-      if (v.vehicle_type) subParts.push(v.vehicle_type);
-      if (v.next_stop) subParts.push(`${tr('nextStop')}: ${v.next_stop}`);
-      const hero = `<div class="hero">
-        ${ticket(data.badge || data.line || '?','routeBig')}
-        <div class="mainText center"><div class="primary">${esc(data.destination || '')}</div><div class="secondary">${esc(subParts.filter(Boolean).join(' · '))}</div></div>
-        <div class="delayBox ${delayCls}">${esc(delayText)}</div>
-      </div>`;
-      const stops = (data.stops || []).map(s => {
-        const cls = s.status === 'live' ? 'current' : (s.due ? 'dueRow' : (s.live ? 'live_future' : (s.status==='past'?'past':'')));
-        const right = s.right || (s.minutes != null ? `${s.minutes}'` : '');
-        return `<div class="row tripStop ${cls}">
-          <div class="timeMain" style="font-size:29px;text-align:left;color:inherit">${esc(s.expected_time || s.time || s.scheduled_time || '--')}</div>
-          <div class="mainText center"><div class="primary" style="font-size:24px;color:inherit">${esc(s.stop_name || '')}</div></div>
-          <div class="timeMain" style="font-size:28px;text-align:right;color:inherit">${esc(right)}</div>
-        </div>`;
-      }).join('');
-      content.className = 'content';
-      content.innerHTML = hero + stops;
-    }catch(e){ errorBox(e.message || tr('networkError')); }
-  }
-
-  async function renderMap(line=''){
-    updateHeader(tr('map'), true);
-    content.className = 'content mapContent';
-    content.innerHTML = `
-      <div class="mapToolbar">
-        <button class="toolBtn">${esc(tr('filter'))}: ${esc(line || tr('all'))}</button>
-        <button class="toolBtn" onclick="window.BU.openMap('')">${esc(tr('clearFilter'))}</button>
-        <button class="toolBtn" onclick="window.BU.refreshMap()">${esc(tr('refresh'))}</button>
-      </div>
-      <div class="mapHost"><div id="map"></div><div id="mapInfo" class="mapInfo"></div></div>`;
-    setTimeout(() => initMap(line), 60);
-  }
-
-  async function initMap(line=''){
-    try{
-      const data = await api('/api/map' + (line ? '?line=' + enc(line) : ''));
-      const mapEl = document.getElementById('map'); if (!mapEl) return;
-      if (state.map) { state.map.remove(); state.map = null; }
-      state.map = L.map('map', {zoomControl:true, attributionControl:true});
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(state.map);
-      state.markers = []; state.polylines = [];
-      const bounds = [];
-      (data.shapes || []).forEach(sh => {
-        const pts = (sh.points || []).filter(p => p[0] && p[1]);
-        if (pts.length >= 2){
-          const pl = L.polyline(pts, {color:'#159fd8', weight:5, opacity:.9}).addTo(state.map);
-          state.polylines.push(pl); pts.forEach(p => bounds.push(p));
-        }
-      });
-      (data.vehicles || []).forEach(v => {
-        if (!v.lat || !v.lon) return;
-        const html = vehicleMarkerHtml(v);
-        const icon = L.divIcon({html, className:'', iconSize:[84,58], iconAnchor:[42,54], popupAnchor:[0,-48]});
-        const m = L.marker([v.lat, v.lon], {icon}).addTo(state.map);
-        m.on('click', () => showMapInfo(v));
-        m.bindPopup(`<b>${esc(v.line)} ${esc(v.destination)}</b><br>${esc(v.fleet || '')}<br>${esc(v.next_stop || v.current_stop || '')}`);
-        state.markers.push(m); bounds.push([v.lat, v.lon]);
-      });
-      if (bounds.length) state.map.fitBounds(bounds, {padding:[30,30], maxZoom:15});
-      else state.map.setView([50.91, -1.40], 11);
-      setTimeout(() => state.map && state.map.invalidateSize(), 250);
-    }catch(e){ errorBox(e.message || tr('networkError')); }
-  }
-
-  function vehicleMarkerHtml(v){
-    const dest = (v.destination || '').length > 10 ? (v.destination || '').slice(0,9) + '…' : (v.destination || '');
-    const bearing = Number(v.bearing || 0);
-    return `<div class="vehMarker"><div class="vmLine">${esc(v.badge || v.line || '?')}</div><div class="vmDest">${esc(dest)}</div><div class="vmFleet">${esc(v.fleet || '')}</div><div class="vmArrow" style="transform:rotate(${bearing}deg)">▲</div></div>`;
-  }
-
-  function showMapInfo(v){
-    const el = document.getElementById('mapInfo'); if (!el) return;
-    const detail = [v.fleet, v.vehicle_type, v.next_stop ? `${tr('nextStop')}: ${v.next_stop}` : '', v.current_stop ? `${tr('currentStop')}: ${v.current_stop}` : ''].filter(Boolean).join(' · ');
-    el.innerHTML = `${ticket(v.badge || v.line)}<div><div class="primary">${esc(v.line)} ${esc(v.destination || '')}</div><div class="secondary">${esc(detail)}</div></div>`;
-    el.classList.add('show');
-  }
-
-  window.BU = {
-    openStop: id => push('stop', {stopId:id}),
-    openRoute: line => push('route', {line}),
-    openVehicles: line => push('vehicles', {line}),
-    openMap: line => push('map', {line}),
-    openTrip: (tripId, serviceDate='', vehicle='') => push('trip', {tripId, serviceDate, vehicle}),
-    toggleFav,
-    refreshMap: () => initMap(state.params.line || ''),
-  };
-
-  // Delegate favourite clicks from home list.
-  document.addEventListener('click', (e) => {
-    const row = e.target.closest('[data-fav-type]');
-    if (!row) return;
-    const type = row.getAttribute('data-fav-type');
-    const id = row.getAttribute('data-fav-id');
-    if (type === 'route') push('route', {line:id}); else push('stop', {stopId:id});
-  });
-
-  refreshStatus(true);
-  setInterval(refreshStatus, 20000);
-  showHome();
+  const content=document.getElementById('content'),topbar=document.getElementById('topbar'),titleEl=document.getElementById('title'),backBtn=document.getElementById('backBtn'),huBtn=document.getElementById('huBtn'),enBtn=document.getElementById('enBtn'),locBtn=document.getElementById('locBtn');
+  const tr=(k,v={})=>{let s=(T[state.lang]&&T[state.lang][k])||T.hu[k]||k;Object.entries(v).forEach(([a,b])=>s=s.replaceAll('{'+a+'}',b));return s};
+  const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+  const attr=s=>esc(String(s??''));
+  const enc=s=>encodeURIComponent(String(s??''));
+  const val=(o,...ks)=>{for(const k of ks){if(o&&o[k]!==undefined&&o[k]!==null&&String(o[k]).trim()!=='')return String(o[k]).trim()}return ''};
+  const lineNorm=s=>String(s??'').trim().toUpperCase().replace(/\s+/g,'');
+  const isLive=x=>!!(x&&(x.live||x.source==='live'||x.is_live||x.isLive));
+  function stopId(s){return val(s,'id','stop_id','stopId','atco_code','atcoCode','naptan','StopPointRef')}
+  function stopName(s){return val(s,'name','stop_name','stopName','title')||stopId(s)}
+  function stopCode(s){let name=stopName(s);let m=name.match(/\[([A-Z0-9]{1,6})\]/i);return val(s,'code','platform_code','platformCode','stop_code','stopCode')||(m?m[1].toUpperCase():'BUS')}
+  function routeLine(r){return val(r,'code','line','short_name','shortName','route_short_name','routeShortName','publishedLineName','name','id','route_id','routeId')}
+  function routeTitle(r){return val(r,'name','title','route_short_name','short_name','line','code','id','route_id')||'?'}
+  function depLine(d){return val(d,'badge','line','route_short_name','routeShortName','publishedLineName','route','code')||'?'}
+  function depTrip(d){return val(d,'trip_id','tripId','datedVehicleJourneyRef','dated_vehicle_journey_ref')}
+  function depServiceDate(d){return val(d,'service_date','serviceDate')}
+  function depVehicle(d){return val(d,'fleet','fleet_number','fleetNumber','vehicle_ref','vehicleRef','vehicleUniqueId')}
+  function ticket(label,cls=''){const safe=esc(label||'?');if(cls.includes('stop'))return `<div class="ticket stop"><div class="brand">BLUESTAR</div><div class="code">${safe}</div></div>`;return `<div class="ticket ${cls}">${safe}</div>`}
+  function updateHeader(title,back=true){titleEl.textContent=title||tr('appTitle');topbar.classList.toggle('home',!back);backBtn.textContent=back?'‹':'☰';backBtn.onclick=back?goBack:showHome;huBtn.classList.toggle('active',state.lang==='hu');enBtn.classList.toggle('active',state.lang==='en')}
+  huBtn.onclick=()=>setLang('hu');enBtn.onclick=()=>setLang('en');function setLang(l){state.lang=l;localStorage.setItem('bu_lang',l);renderCurrent(false)}
+  locBtn.onclick=()=>{if(state.view!=='map'||!state.map||!navigator.geolocation)return;navigator.geolocation.getCurrentPosition(p=>state.map.setView([p.coords.latitude,p.coords.longitude],15))};
+  async function api(path){const r=await fetch(API+path,{cache:'no-store'});const txt=await r.text();let d;try{d=JSON.parse(txt)}catch(e){throw new Error(txt||r.statusText)}if(!r.ok||d.ok===false)throw new Error(d.error||r.statusText);return d}
+  function loading(){content.className='content';content.innerHTML=`<div class="loading"><span class="spin"></span>${esc(tr('loading'))}</div>`}function errorBox(m){content.className='content';content.innerHTML=`<div class="errorBox">${esc(m||tr('networkError'))}</div>`}
+  async function refreshStatus(force=false){try{const d=await api('/api/status'+(force?'?t='+Date.now():''));const live=d.live||{},gtfs=d.gtfs||{};document.getElementById('liveStatus').innerHTML=`<span class="dot ${live.ok?'':'err'}"></span>LIVE: ${live.ok?`ON (${live.activeCount??0})`:'ERR'}`;document.getElementById('gtfsStatus').innerHTML=`<span class="dot ${gtfs.ok?'':'err'}"></span>GTFS: ${gtfs.ok?'OK':'ERR'}`}catch(e){document.getElementById('liveStatus').innerHTML='<span class="dot err"></span>LIVE: ERR';document.getElementById('gtfsStatus').innerHTML='<span class="dot err"></span>GTFS: ERR'}}
+  function push(view,params={}){if(state.view)state.stack.push({view:state.view,params:state.params});state.view=view;state.params=params;renderCurrent(true)}function goBack(){const p=state.stack.pop();if(!p)return showHome();state.view=p.view;state.params=p.params;renderCurrent(true)}function showHome(){state.stack=[];state.view='home';state.params={};renderHome()}
+  function renderCurrent(){if(state.view==='home')return renderHome();if(state.view==='stop')return renderStop(state.params.stopId);if(state.view==='route')return renderRoute(state.params.line);if(state.view==='vehicles')return renderVehicles(state.params.line);if(state.view==='map')return renderMap(state.params.line||'');if(state.view==='trip')return renderTrip(state.params.tripId,state.params.serviceDate||'',state.params.vehicle||'');renderHome()}
+  function favs(){try{return JSON.parse(localStorage.getItem('bu_favs')||'[]')}catch(e){return[]}}function saveFavs(f){localStorage.setItem('bu_favs',JSON.stringify(f))}function favKey(t,id){return `${t}:${id}`}function isFav(t,id){return favs().some(f=>f.key===favKey(t,id))}function toggleFav(t,id,name,code){let f=favs(),key=favKey(t,id);if(f.some(x=>x.key===key))f=f.filter(x=>x.key!==key);else f.unshift({key,type:t,id,name,code});saveFavs(f.slice(0,60));renderCurrent(false)}
+  function renderHome(){updateHeader(tr('appTitle'),false);content.className='content';content.innerHTML=`<div class="searchWrap"><div class="searchField"><label>${esc(tr('searchLabel'))}</label><div class="searchIcon">⌕</div><input id="searchInput" class="searchInput" autocomplete="off" inputmode="search"/><button id="clearSearch" class="clearBtn" style="display:none">×</button></div></div><div id="searchResults"></div><div id="homeSections"><div class="sectionTitle">${esc(tr('featured'))}</div><div class="sectionBody">${esc(tr('noAlerts'))}</div><div class="sectionTitle">${esc(tr('favourites'))}</div><div id="favList">${renderFavs(favs())}</div></div>`;const inp=document.getElementById('searchInput'),clr=document.getElementById('clearSearch');inp.focus({preventScroll:true});inp.addEventListener('input',()=>{clr.style.display=inp.value?'flex':'none';clearTimeout(state.searchTimer);state.searchTimer=setTimeout(()=>doSearch(inp.value),180)});clr.onclick=()=>{inp.value='';clr.style.display='none';doSearch('');inp.focus()}}
+  function renderFavs(f){if(!f.length)return `<div class="sectionBody"><b>${esc(tr('noFav'))}</b><div class="smallNote">${esc(tr('favHelp'))}</div></div>`;return `<div class="resultList">${f.map(x=>`<div class="row compact jsRow" data-act="${x.type==='route'?'route':'stop'}" data-id="${attr(x.id)}">${ticket(x.code||(x.type==='route'?x.id:'BUS'),x.type==='stop'?'stop':'')}<div class="mainText"><div class="primary">${esc(x.name||x.id)}</div><div class="secondary">${esc(x.type==='route'?tr('route'):x.id)}</div></div><div class="arrow">→</div></div>`).join('')}</div>`}
+  async function doSearch(q){const box=document.getElementById('searchResults'),home=document.getElementById('homeSections');if(!box)return;q=(q||'').trim();state.lastSearch=q;if(!q){box.innerHTML='';if(home)home.style.display='block';return}if(home)home.style.display='none';try{const d=await api('/api/search?q='+enc(q));box.innerHTML=renderSearchResults(d,q)}catch(e){box.innerHTML=`<div class="errorBox">${esc(e.message||tr('networkError'))}</div>`}}
+  function renderSearchResults(data,q){const stops=Array.isArray(data.stops)?data.stops:[],routes=Array.isArray(data.routes)?data.routes:[];let html=`<div class="sectionTitle">${esc(tr('results',{q:q||data.query||state.lastSearch||''}))}</div>`;if(stops.length){html+=`<div class="listHeader">${esc(tr('stops'))}</div><div class="resultList">`+stops.map(s=>{const id=stopId(s),name=stopName(s),code=stopCode(s),sub=val(s,'subtitle','stop_id','stopId','atco_code')||id;return `<div class="row jsRow" data-act="stop" data-id="${attr(id)}">${ticket(code,'stop')}<div class="mainText"><div class="primary">${esc(name)}</div><div class="secondary">${esc(sub)}</div></div><div class="arrow">→</div></div>`}).join('')+`</div>`}if(routes.length){html+=`<div class="listHeader">${esc(tr('routes'))}</div><div class="resultList">`+routes.map(r=>{const line=routeLine(r),title=routeTitle(r);return `<div class="row jsRow" data-act="route" data-id="${attr(line)}">${ticket(line||title)}<div class="mainText"><div class="primary">${esc(title)}</div><div class="secondary">${esc(tr('route'))}</div></div><div class="arrow">→</div></div>`}).join('')+`</div>`}if(!stops.length&&!routes.length)html+=`<div class="empty">${esc(tr('noDepartures'))}</div>`;return html}
+  async function renderStop(id){updateHeader(tr('stop'),true);loading();try{const d=await api('/api/stops/'+enc(id)+'/departures?minutes=120');const s=d.stop||{stop_id:id,stop_name:id};const sid=stopId(s)||id,name=stopName(s),fav=isFav('stop',sid);content.innerHTML=`<div class="stopTitle">${esc(name)} (${esc(sid)}) <button class="favStar jsFav" data-type="stop" data-id="${attr(sid)}" data-name="${attr(name)}" data-code="${attr(stopCode(s))}">${fav?'★':'☆'}</button></div><div class="list">${renderDepartures(d.departures||[])}</div><div class="smallNote" style="padding:12px 18px">${esc(tr('onlyDepartures'))}</div>`}catch(e){content.innerHTML=`<div class="errorBox">${esc(tr('departureError'))}</div>`}}
+  function renderDepartures(rows){if(!rows.length)return `<div class="empty">${esc(tr('noDepartures'))}</div>`;return rows.map(d=>{const live=isLive(d),due=!!(d.due||d.is_due),cls=due?'dueRow':(live?'liveRow':''),line=depLine(d),trip=depTrip(d),svc=depServiceDate(d),veh=depVehicle(d),mins=val(d,'minutes','mins','countdown'),minText=due?tr('due'):(mins?`${mins} ${tr('min')}`:''),time=val(d,'expected_time','expectedTime','time','departure_time','departureTime')||'--',dest=val(d,'destination','destinationFull','headsign','trip_headsign')||'',parts=[live?tr('live'):tr('scheduled'),veh,val(d,'vehicle_type','vehicleType','registration'),val(d,'next_stop_name','nextStopName')?`${tr('nextStop')}: ${val(d,'next_stop_name','nextStopName')}`:''].filter(Boolean);return `<div class="row ${cls} jsRow" data-act="trip" data-trip="${attr(trip)}" data-service="${attr(svc)}" data-veh="${attr(veh)}">${ticket(line)}<div class="mainText center"><div class="primary">${esc(dest)}</div><div class="secondary">${esc(parts.join(' · '))}</div></div><div class="timeBox"><div class="timeMain">${esc(time)}</div><div class="timeSub">${esc(minText)}</div></div></div>`}).join('')}
+  async function renderRoute(line){updateHeader(tr('route'),true);if(!line){errorBox(tr('routeError'));return}loading();try{const d=await api('/api/routes/'+enc(line));const badge=val(d,'badge','line','code','route_short_name')||line,fav=isFav('route',line);let html=`<div class="row noAction compact">${ticket(badge)}<div class="mainText"><div class="primary">${esc(line)}</div></div><button class="favStar jsFav" data-type="route" data-id="${attr(line)}" data-name="${attr(line)}" data-code="${attr(badge)}">${fav?'★':'☆'}</button></div>`;html+=`<div class="sectionTitle">${esc(tr('routeVehicles'))}</div><div class="row jsRow" data-act="vehicles" data-id="${attr(line)}">${ticket(badge,'routeBig')}<div class="mainText"><div class="primary">${esc(tr('vehicleList'))}</div><div class="secondary">${esc(tr('vehicleListSub'))}</div></div><div class="arrow">→</div></div>`;html+=`<div class="sectionTitle">${esc(tr('routeMap'))}</div><div class="row jsRow" data-act="map" data-id="${attr(line)}">${ticket(badge,'routeBig')}<div class="mainText"><div class="primary">${esc(tr('viewMap'))}</div><div class="secondary">${esc(tr('viewMapSub'))}</div></div><div class="arrow">→</div></div>`;html+=`<div class="sectionTitle">${esc(tr('routeStops'))}</div>`;(d.directions||[]).forEach(x=>{html+=`<div class="row jsRow" data-act="trip" data-trip="${attr(val(x,'trip_id','tripId'))}">${ticket(val(x,'badge')||badge,'routeBig')}<div class="mainText"><div class="primary">▶ ${esc(val(x,'headsign','destination')||val(x.to||{},'stop_name','name'))}</div><div class="secondary">${esc((val(x.from||{},'stop_name','name')||'')+' → '+(val(x.to||{},'stop_name','name')||''))}</div></div><div class="arrow">→</div></div>`});content.className='content';content.innerHTML=html}catch(e){errorBox(tr('routeError'))}}
+  async function renderVehicles(line){updateHeader(tr('vehicles'),true);loading();try{const d=await api('/api/routes/'+enc(line)+'/vehicles');const vs=d.vehicles||[];content.innerHTML=vs.length?vs.map(v=>`<div class="row jsRow" data-act="trip" data-trip="${attr(val(v,'matched_trip_id','matchedTripId','trip_id','tripId'))}" data-service="${attr(val(v,'service_date','serviceDate'))}" data-veh="${attr(val(v,'fleet','vehicle_ref','vehicleRef'))}">${ticket(val(v,'badge','line')||line)}<div class="mainText"><div class="primary">${esc(val(v,'destination','destinationFull'))}</div><div class="secondary">${esc([val(v,'fleet','fleet_number','vehicle_ref','vehicleRef'),val(v,'current_stop','currentStop'),val(v,'next_stop','nextStop')].filter(Boolean).join(' · '))}</div><div class="tertiary">${esc(val(v,'vehicle_type','vehicleType','registration'))}</div></div><div class="arrow">→</div></div>`).join(''):`<div class="empty">${esc(tr('noLiveVehicles'))}</div>`}catch(e){errorBox(e.message||tr('networkError'))}}
+  async function renderTrip(tripId,serviceDate='',vehicle=''){updateHeader(tr('trip'),true);if(!tripId){errorBox(tr('networkError'));return}loading();try{const d=await api('/api/trip/'+enc(tripId)+`?service_date=${enc(serviceDate)}&vehicle=${enc(vehicle)}`);const v=d.vehicle||{},badge=val(d,'badge','line')||val(v,'line')||'?';let box='--',boxCls='';if(d.live){box='LIVE';boxCls='live';const dm=Number(d.delay_min);if(!Number.isNaN(dm)&&dm>0){box='+'+Math.round(dm);boxCls='late'}if(!Number.isNaN(dm)&&dm<0){box=String(Math.round(dm));boxCls='early'}}let html=`<div class="hero">${ticket(badge,'routeBig')}<div class="mainText center"><div class="primary">${esc(val(d,'destination','headsign'))}</div><div class="secondary">${esc([d.live?tr('liveMatched'):tr('scheduled'),val(v,'fleet','vehicle_ref','vehicleRef')||vehicle,val(v,'vehicle_type','vehicleType'),val(v,'next_stop','nextStop')?`${tr('nextStop')}: ${val(v,'next_stop','nextStop')}`:''].filter(Boolean).join(' · '))}</div></div><div class="delayBox ${boxCls}">${esc(box)}</div></div>`;(d.stops||[]).forEach(s=>{const cls=s.status==='live'?'current':(s.due?'dueRow':(s.live?'live_future':(s.status==='past'?'past':'')));html+=`<div class="row tripStop ${cls}"><div class="timeMain" style="font-size:29px;text-align:left;color:inherit">${esc(val(s,'expected_time','expectedTime','time','scheduled_time','scheduledTime')||'--')}</div><div class="mainText center"><div class="primary" style="font-size:23px;color:inherit">${esc(val(s,'stop_name','stopName','name'))}</div></div><div class="timeMain" style="font-size:27px;text-align:right;color:inherit">${esc(val(s,'right','minutes')||'')}</div></div>`});content.className='content';content.innerHTML=html}catch(e){errorBox(e.message||tr('networkError'))}}
+  async function renderMap(line=''){updateHeader(tr('map'),true);content.className='content mapContent';content.innerHTML=`<div class="mapToolbar"><button class="toolBtn">${esc(tr('filter'))}: ${esc(line||tr('all'))}</button><button class="toolBtn jsRow" data-act="map" data-id="">${esc(tr('clearFilter'))}</button><button class="toolBtn" id="refreshMapBtn">${esc(tr('refresh'))}</button></div><div class="mapHost"><div id="map"></div><div id="mapInfo" class="mapInfo"></div></div>`;document.getElementById('refreshMapBtn').onclick=()=>initMap(line);setTimeout(()=>initMap(line),60)}
+  async function initMap(line=''){try{const d=await api('/api/map'+(line?'?line='+enc(line):''));if(state.map){state.map.remove();state.map=null}state.map=L.map('map',{zoomControl:true,attributionControl:true});L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(state.map);const bounds=[];(d.shapes||[]).forEach(sh=>{const pts=(sh.points||[]).filter(p=>p&&p[0]&&p[1]);if(pts.length>1){L.polyline(pts,{color:'#159fd8',weight:5,opacity:.9}).addTo(state.map);pts.forEach(p=>bounds.push(p))}});(d.vehicles||[]).forEach(v=>{const lat=Number(val(v,'lat','latitude')),lon=Number(val(v,'lon','longitude'));if(!lat||!lon)return;const ic=L.divIcon({html:vehMarker(v),className:'',iconSize:[86,60],iconAnchor:[43,55],popupAnchor:[0,-48]});const m=L.marker([lat,lon],{icon:ic}).addTo(state.map);m.on('click',()=>showMapInfo(v));m.bindPopup(`<b>${esc(val(v,'line','badge'))} ${esc(val(v,'destination'))}</b><br>${esc(val(v,'fleet','vehicle_ref','vehicleRef'))}<br>${esc(val(v,'next_stop','current_stop'))}`);bounds.push([lat,lon])});if(bounds.length)state.map.fitBounds(bounds,{padding:[30,30],maxZoom:15});else state.map.setView([50.91,-1.40],11);setTimeout(()=>state.map&&state.map.invalidateSize(),250)}catch(e){errorBox(e.message||tr('networkError'))}}
+  function vehMarker(v){const dest=val(v,'destination','destinationFull');const short=dest.length>10?dest.slice(0,9)+'…':dest;const bearing=Number(val(v,'bearing','direction'))||0;return `<div class="vehMarker"><div class="vmLine">${esc(val(v,'badge','line')||'?')}</div><div class="vmDest">${esc(short)}</div><div class="vmFleet">${esc(val(v,'fleet','fleet_number','vehicle_ref','vehicleRef'))}</div><div class="vmArrow" style="transform:rotate(${bearing}deg)">▲</div></div>`}
+  function showMapInfo(v){const el=document.getElementById('mapInfo');if(!el)return;const detail=[val(v,'fleet','fleet_number','vehicle_ref','vehicleRef'),val(v,'vehicle_type','vehicleType'),val(v,'next_stop','nextStop')?`${tr('nextStop')}: ${val(v,'next_stop','nextStop')}`:'',val(v,'current_stop','currentStop')?`${tr('currentStop')}: ${val(v,'current_stop','currentStop')}`:''].filter(Boolean).join(' · ');el.innerHTML=`${ticket(val(v,'badge','line')||'?')}<div><div class="primary">${esc(val(v,'line','badge'))} ${esc(val(v,'destination'))}</div><div class="secondary">${esc(detail)}</div></div>`;el.classList.add('show')}
+  document.addEventListener('click',e=>{const fav=e.target.closest('.jsFav');if(fav){toggleFav(fav.dataset.type,fav.dataset.id,fav.dataset.name,fav.dataset.code);return}const row=e.target.closest('.jsRow');if(!row)return;const a=row.dataset.act,id=row.dataset.id||'';if(a==='stop'&&id)push('stop',{stopId:id});else if(a==='route'&&id)push('route',{line:lineNorm(id)});else if(a==='vehicles'&&id)push('vehicles',{line:lineNorm(id)});else if(a==='map')push('map',{line:lineNorm(id)});else if(a==='trip'&&row.dataset.trip)push('trip',{tripId:row.dataset.trip,serviceDate:row.dataset.service||'',vehicle:row.dataset.veh||''})});
+  refreshStatus(true);setInterval(refreshStatus,20000);showHome();
 })();
 </script>
 </body>
