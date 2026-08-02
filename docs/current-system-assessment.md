@@ -74,12 +74,22 @@ search, stop, trip, route and map endpoints return an explanatory HTTP 503.
 
 ## SIRI and live matching flow
 
-`LiveStore` in `main.py` synchronously downloads XML from `LIVE_FEED_URL`, adding
-`LIVE_API_KEY`/`BODS_API_KEY` as query parameter and header. It parses SIRI
-`MonitoredVehicleJourney` records, filters by operator and maximum age, and
-caches results for a short TTL. Departures are matched on normalized line,
-destination, time proximity and current stop. Trip matching additionally uses
-vehicle/journey identifiers and stop sequence.
+`app/services/siri_client.py` performs bounded HTTP download with timeout,
+response-size limits, masked diagnostics and `LIVE_API_KEY`/`BODS_API_KEY`
+compatibility. `app/services/siri_parser.py` performs deterministic, namespace-
+aware XML parsing and rejects DTD/ENTITY input. It receives reference time,
+operator filter and maximum record age explicitly.
+
+`LiveRefreshService` starts in the FastAPI lifespan without blocking startup,
+attempts an immediate background refresh, and then follows `LIVE_CACHE_TTL_SEC`.
+`LiveSnapshotProvider` atomically publishes complete snapshots. Failed refreshes
+preserve the last successful vehicle tuple while reporting `ok=false`, `stale`
+and the error. `/health` and `/api/status` only inspect memory and never fetch.
+
+Departure/trip matching is implemented in `app/services/live_matching.py`, and
+scheduled/live time merging is in `app/services/departure_service.py`. Both take
+GTFS, vehicle and time dependencies explicitly and preserve the previous scoring
+weights and response fields.
 
 The separate `siri_live.py` is not imported. It depends on undeclared `aiohttp`
 and `python-dateutil`, confirming that it is a parallel legacy implementation.
@@ -108,10 +118,10 @@ until visual and contract regression tests support safe removal or consolidation
 
 ## Third-stage migration boundary
 
-The root `main.py` imports and re-exports the shared helper API and imported
-`GTFSStore`; it no longer contains a second GTFSStore implementation. It retains
-the FastAPI instance, route declarations, SIRI XML parsing and fetching,
-live/scheduled matching, response assembly and frontend serving. A compatibility
+The root `main.py` imports and re-exports the shared helper and service APIs. It
+no longer contains GTFS, SIRI parsing, HTTP download, cache or matching
+implementations. It retains the FastAPI instance, route declarations, response
+assembly and frontend serving. A compatibility
 `gtfs` proxy resolves historic read access through the active provider, while
 application endpoints use explicit request-level snapshots.
 
@@ -121,10 +131,9 @@ and invalid identifier 404 responses. They use a local GTFS fixture and mocked
 live data; no real network service is involved. No endpoint contract changed in
 this stage.
 
-The next stage should extract `LiveStore`, SIRI XML parsing and live matching
-into `app/services/siri_*` modules with a provider/cache boundary and mocked XML
-fixtures. Endpoint groups should move into `app/api/` routers only after those
-services are stable.
+The next stage is endpoint-router migration into `app/api/`. The first candidate
+should be the read-only `/api/vehicles` and `/api/map` group because it already
+depends only on explicit live snapshots and the GTFS provider.
 
 ## Incremental migration plan
 
@@ -133,7 +142,8 @@ services are stable.
 3. **Complete:** move pure time, text and geo helpers into `app/utils/`.
 4. **Complete:** move `GTFSStore` and calendar logic into `app/services/` and
    activate complete candidates through a store provider.
-5. Move SIRI fetching and live matching into isolated services with mocked tests.
+5. **Complete:** move SIRI fetching and live matching into isolated services
+   with mocked HTTP and XML fixtures.
 6. Move endpoint groups into `app/api/` routers one at a time, retaining aliases.
 7. Split the active inline frontend into `static/css` and `static/js/views` only
    after browser-level regression coverage exists.

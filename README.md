@@ -31,6 +31,18 @@ The existing application accepts `GTFS_DIR`, `GTFS_ZIP`, `LIVE_FEED_URL`,
 `LIVE_MAX_AGE_SECONDS`, `LIVE_OPERATOR_FILTER`, `DEPARTURE_WINDOW_MIN`,
 `DEPARTURE_LIMIT`, and `LIVE_MATCH_MINUTES`.
 
+The SIRI live layer supports these additional settings:
+
+- `LIVE_REQUEST_TIMEOUT_SECONDS`: HTTP timeout, default 20 seconds.
+- `LIVE_MAX_RESPONSE_BYTES`: maximum XML response size, default 8 MiB.
+- `LIVE_USER_AGENT`: request user agent.
+- `LIVE_REFRESH_ATTEMPTS`: bounded attempts, 1-3, default 3.
+
+`LIVE_API_KEY` remains primary and `BODS_API_KEY` remains its compatibility
+fallback. Keys are sent through `x-api-key` and, when the URL does not already
+contain `api_key` or `key`, an `api_key` query parameter. Diagnostic URLs mask
+sensitive query values.
+
 Automatic GTFS refresh is enabled by default and uses:
 
 `https://www.bluestarbus.co.uk/open-data/network/current?format=gtfs`
@@ -73,13 +85,21 @@ an already successful data activation.
 The refresh worker is process-local. Railway should run one web worker unless
 duplicate per-process feed checks are intentionally acceptable.
 
+SIRI parsing is isolated in `app/services/siri_parser.py`; network download is
+isolated in `app/services/siri_client.py`. `LiveRefreshService` starts a daemon
+worker without blocking application startup, immediately attempts one fetch and
+then refreshes at `LIVE_CACHE_TTL_SEC`. A thread-safe provider atomically swaps
+complete snapshots. On download or parse failure the last successful vehicles
+remain available and the snapshot becomes stale with an error diagnostic.
+`/health` and `/api/status` never initiate a SIRI download.
+
 ## Migration status
 
 `app.main:app` is the deployment entry point. During the compatibility phase it
 exports the proven FastAPI instance from the root `main.py`, preserving the
 existing endpoint contracts. Pure time, text and geographic helpers plus the
-GTFS loader/calendar/provider have moved into `app/`; SIRI parsing, live matching
-and endpoint declarations remain in the root compatibility module. No legacy
+GTFS and SIRI services have moved into `app/`; endpoint declarations and response
+assembly remain in the root compatibility module. No legacy
 GTFS, SIRI or frontend file has been deleted. See `docs/current-system-assessment.md`.
 
 ## Tests

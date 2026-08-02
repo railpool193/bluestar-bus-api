@@ -7,6 +7,8 @@ import main as legacy
 from app.config import settings
 from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_refresh import GTFSRefreshService
+from app.services.live_refresh import LiveRefreshService
+from app.services.siri_client import SIRIClient, SIRIClientConfig
 
 
 app = legacy.app
@@ -35,14 +37,26 @@ gtfs_refresh = GTFSRefreshService(
 )
 app.state.gtfs_refresh = gtfs_refresh
 
+live_config = SIRIClientConfig.from_env()
+live_refresh = LiveRefreshService(
+    client=SIRIClient(live_config),
+    provider=legacy.live_snapshot_provider,
+    interval_seconds=legacy.LIVE_CACHE_TTL_SEC,
+    max_age_seconds=legacy.LIVE_MAX_AGE_SECONDS,
+    operator_filter=legacy.LIVE_OPERATOR_FILTER,
+)
+app.state.live_refresh = live_refresh
+
 
 @asynccontextmanager
 async def lifespan(_app):
     legacy.initialize_legacy_stores()
     gtfs_refresh.start()
+    live_refresh.start()
     try:
         yield
     finally:
+        live_refresh.stop()
         gtfs_refresh.stop()
 
 

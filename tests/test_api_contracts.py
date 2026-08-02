@@ -8,7 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from app.main import app, gtfs_refresh
+from app.main import app, gtfs_refresh, live_refresh
+from app.services.live_store_provider import LiveSnapshot
 import main as legacy
 
 
@@ -109,6 +110,8 @@ class APIContractTests(unittest.TestCase):
         cls.temp.cleanup()
 
     def setUp(self):
+        self.previous_live = legacy.live_snapshot_provider.get()
+        legacy.live_snapshot_provider.replace(LiveSnapshot())
         self.store_patch = patch.object(legacy.gtfs_provider, "get", return_value=self.store)
         self.now_patch = patch.object(legacy, "now_london", return_value=FIXED_NOW)
         self.live_patch = patch.object(legacy.live_store, "fetch", return_value=[])
@@ -134,6 +137,7 @@ class APIContractTests(unittest.TestCase):
         self.live_patch.stop()
         self.now_patch.stop()
         self.store_patch.stop()
+        legacy.live_snapshot_provider.replace(self.previous_live)
 
     def test_health_contract(self):
         status, body = get("/health")
@@ -206,6 +210,32 @@ class APIContractTests(unittest.TestCase):
                 self.assertEqual(status, 503, path)
                 self.assertFalse(body["ok"])
                 self.assertIn("GTFS data unavailable", body["error"])
+
+    def test_health_and_status_never_trigger_live_network(self):
+        with patch.object(live_refresh.client, "download") as download:
+            self.assertEqual(get("/health")[0], 200)
+            self.assertEqual(get("/api/status")[0], 200)
+        download.assert_not_called()
+
+    def test_siri_failure_preserves_scheduled_departures_and_empty_vehicles(self):
+        legacy.live_snapshot_provider.replace(LiveSnapshot(error="SIRI offline", stale=True))
+        status_code, status = get("/api/status")
+        self.assertEqual(status_code, 200)
+        self.assertEqual(status["live"]["error"], "SIRI offline")
+        departures_code, departures = get("/api/stops/S1/departures")
+        self.assertEqual(departures_code, 200)
+        self.assertTrue(departures["departures"])
+        self.assertTrue(all(not item["live"] for item in departures["departures"]))
+        vehicles_code, vehicles = get("/api/vehicles")
+        self.assertEqual(vehicles_code, 200)
+        self.assertEqual(vehicles["vehicles"], [])
+
+    def test_live_fields_flow_through_route_trip_and_map_contracts(self):
+        vehicle = {"line": "1", "destination": "Terminal", "destinationFull": "Terminal Stop", "fleet": "1234", "vehicleRef": "V1234", "codes": ["1234", "T1"], "datedVehicleJourneyRef": "T1", "currentStopRef": "S1", "currentStopName": "Central Stop", "vehicleAtStop": True, "liveTime": "2026-08-02T10:15:00+01:00", "delayMinutes": 0, "latitude": 50.9, "longitude": -1.4}
+        legacy.live_snapshot_provider.replace(LiveSnapshot((vehicle,), True))
+        self.assertEqual(get("/api/routes/1")[1]["vehicles"][0]["fleet"], "1234")
+        self.assertEqual(get("/api/trips/T1", {"service_date": "2026-08-02"})[1]["live"]["fleet"], "1234")
+        self.assertEqual(get("/api/map", {"line": "1"})[1]["vehicles"][0]["fleet"], "1234")
 
 
 if __name__ == "__main__":
