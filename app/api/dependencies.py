@@ -40,3 +40,27 @@ class StatusRuntime:
 
     def live_snapshot(self) -> LiveSnapshot:
         return self.live_provider.get()
+
+
+@dataclass(frozen=True)
+class SearchRuntime:
+    gtfs_provider: GTFSStoreProvider
+
+    def gtfs_snapshot(self) -> GTFSStore:
+        return self.gtfs_provider.get()
+
+
+@dataclass(frozen=True)
+class StopRuntime:
+    gtfs_provider: GTFSStoreProvider
+    live_provider: LiveSnapshotProvider
+    now: Callable[[], datetime]
+    departure_window_minutes: int
+    departure_limit: int
+    matching_minutes: int
+
+    def gtfs_snapshot(self) -> GTFSStore:
+        return self.gtfs_provider.get()
+
+    def live_snapshot(self) -> LiveSnapshot:
+        return self.live_provider.get()

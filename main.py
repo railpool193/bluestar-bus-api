@@ -8,19 +8,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.services.gtfs_calendar import service_days
 from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_store_provider import GTFSStoreProvider, GTFSStoreProxy
-from app.services.departure_service import enrich_departure
-from app.services.live_matching import find_live_for_trip, match_live_to_departure, stop_same
+from app.services.live_matching import find_live_for_trip, stop_same
 from app.services.live_store_provider import LiveSnapshotProvider
 from app.services.siri_parser import children_by_local, xml_text
 from app.services.vehicle_service import vehicles_for_line
 from app.api.map import create_map_router
 from app.api.health import create_health_router
+from app.api.search import create_search_router
 from app.api.status import create_status_router
+from app.api.stops import create_stops_router
 from app.api.vehicles import create_vehicles_router
-from app.api.dependencies import APIRuntime, StatusRuntime
+from app.api.dependencies import APIRuntime, SearchRuntime, StatusRuntime, StopRuntime
 from app.utils.geo_utils import haversine_m
 from app.utils.text_utils import (
     clean_text, destination_match, extract_codes, fleet_from_vehicle_ref,
@@ -87,10 +87,6 @@ class LiveStoreProxy:
 live_store = LiveStoreProxy()
 
 
-def service_days_for_departures() -> List[date]:
-    return service_days(now_london())
-
-
 def trip_headsign(trip: Dict[str, Any]) -> str:
     return human_name(trip.get("trip_headsign") or trip.get("destination") or "")
 
@@ -139,79 +135,6 @@ def index():
     if p.exists():
         return FileResponse(str(p))
     return HTMLResponse("Bluestar Unilink")
-
-
-@app.get("/api/search")
-def api_search(q: str = ""):
-    store, unavailable = require_gtfs()
-    if unavailable:
-        return unavailable
-    query = clean_text(q)
-    nq = norm(query)
-    stops = []
-    routes = []
-    if nq:
-        for sid, st in store.stops.items():
-            hay = norm(st.get("stop_name", "") + " " + sid + " " + st.get("code", ""))
-            if nq in hay:
-                stops.append({
-                    "id": sid,
-                    "stop_id": sid,
-                    "name": st.get("stop_name", sid),
-                    "code": st.get("code", "BUS"),
-                    "lat": st.get("lat"),
-                    "lon": st.get("lon"),
-                })
-                if len(stops) >= 50:
-                    break
-        for rid, rt in store.routes.items():
-            line = rt.get("route_short_name", "")
-            hay = norm(line + " " + rt.get("route_long_name", "") + " " + rid)
-            if nq in hay or nq == norm(line):
-                routes.append({
-                    "id": line,
-                    "routeId": rid,
-                    "line": line,
-                    "name": line,
-                    "subtitle": rt.get("route_long_name", ""),
-                })
-        routes.sort(key=lambda r: (0 if line_norm(r.get("line")) == line_norm(query) else 1, r.get("line")))
-    return {"ok": True, "query": query, "stops": stops[:50], "routes": routes[:40]}
-
-
-@app.get("/api/stops/{stop_id}/departures")
-def api_stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN):
-    store, unavailable = require_gtfs()
-    if unavailable:
-        return unavailable
-    stop = store.stops.get(stop_id)
-    if not stop:
-        return api_error("Stop not found", 404)
-    n = now_london()
-    end = n + timedelta(minutes=max(10, min(minutes, 360)))
-    vehicles = current_live_vehicles()
-    result = []
-    for service_day in service_days_for_departures():
-        active = store.active_service_ids(service_day)
-        for dep in store.stop_departures_index.get(stop_id, []):
-            if active and dep.get("service_id") not in active:
-                continue
-            if clean_text(dep.get("pickup_type")) == "1" or dep.get("is_last_stop"):
-                continue
-            sched_dt = gtfs_time_to_datetime(service_day, dep.get("departure_time") or dep.get("arrival_time"))
-            if not sched_dt or sched_dt < n - timedelta(minutes=2) or sched_dt > end:
-                continue
-            result.append(enrich_departure(store, dep, service_day, sched_dt, vehicles, reference_time=n, matching_minutes=LIVE_MATCH_MINUTES))
-    result.sort(key=lambda x: x.get("displayTimeIso") or x.get("scheduledTimeIso") or "")
-    dedup = []
-    seen = set()
-    for x in result:
-        key = (x.get("tripId"), x.get("serviceDate"), x.get("stopSequence"))
-        if key in seen:
-            continue
-        seen.add(key)
-        dedup.append(x)
-    return {"ok": True, "stop": stop, "departures": dedup[:DEPARTURE_LIMIT], "now": now_london().isoformat()}
 
 
 @app.get("/api/trips/{trip_id}")
@@ -357,6 +280,21 @@ status_router, status = create_status_router(
         live_refresh_interval_seconds=LIVE_CACHE_TTL_SEC,
     ),
 )
+search_router, api_search = create_search_router(
+    runtime=SearchRuntime(gtfs_provider=gtfs_provider),
+    unavailable_response=api_error,
+)
+stops_router, api_stop_departures = create_stops_router(
+    runtime=StopRuntime(
+        gtfs_provider=gtfs_provider,
+        live_provider=live_snapshot_provider,
+        now=lambda: now_london(),
+        departure_window_minutes=DEPARTURE_WINDOW_MIN,
+        departure_limit=DEPARTURE_LIMIT,
+        matching_minutes=LIVE_MATCH_MINUTES,
+    ),
+    unavailable_response=api_error,
+)
 map_router, api_map = create_map_router(
     runtime=APIRuntime(
         gtfs_provider=gtfs_provider,
@@ -369,6 +307,8 @@ map_router, api_map = create_map_router(
 )
 app.router.routes.extend(health_router.routes)
 app.router.routes.extend(status_router.routes)
+app.router.routes.extend(search_router.routes)
+app.router.routes.extend(stops_router.routes)
 app.router.routes.extend(vehicles_router.routes)
 app.router.routes.extend(map_router.routes)
 

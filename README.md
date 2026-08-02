@@ -100,11 +100,13 @@ exports the proven FastAPI instance from the root `main.py`, preserving the
 existing endpoint contracts. Pure time, text and geographic helpers plus the
 GTFS and SIRI services have moved into `app/`. `/api/vehicles` is implemented by
 `app/api/vehicles.py` and `/api/map` by `app/api/map.py`; `/health` and
-`/api/status` are implemented by their matching `app/api/` modules. Their
-APIRouters receive explicit runtime dependencies. Status reads one existing GTFS
-snapshot, one existing live snapshot and one refresh diagnostic snapshot without
-loading or downloading data. Remaining endpoint declarations and response
-assembly stay in the root compatibility module. No legacy
+`/api/status`, `/api/search`, and `/api/stops/{stop_id}/departures` are
+implemented by their matching `app/api/` modules. Their APIRouters receive
+explicit runtime dependencies. Search reads one existing GTFS snapshot. Stop
+departures reads one GTFS snapshot, one live snapshot and one current-time value
+per request; stale or unavailable SIRI data falls back to scheduled departures.
+No migrated request loads or downloads data. Remaining endpoint declarations and
+response assembly stay in the root compatibility module. No legacy
 GTFS, SIRI or frontend file has been deleted. See `docs/current-system-assessment.md`.
 
 ## Tests

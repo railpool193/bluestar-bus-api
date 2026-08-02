@@ -161,9 +161,27 @@ fetching, XML parsing or refresh startup. Sensitive query values in reported GTF
 sources are masked. The response keys and missing/stale-data behavior remain
 compatible.
 
-The root compatibility module still declares `/api/search`, stop departures,
-trips, routes, `/`, and the frontend fallback. The next router migration should
-move search and stop endpoints.
+## Seventh-stage search and stop-departure boundary
+
+`GET /api/search` now lives in `app/api/search.py`, with deterministic pure
+lookup logic in `app/services/search_service.py`. It reads one existing GTFS
+snapshot and never accesses live state, files or the network. Stop and route
+result shapes, normalization, ordering, and the 50/40 result limits are
+unchanged.
+
+`GET /api/stops/{stop_id}/departures` now lives in `app/api/stops.py`. The full
+response assembly is in `app/services/departure_service.py`, reusing the existing
+calendar, time, enrichment, and live-matching functions. Each successful request
+reads one GTFS snapshot, one live snapshot and one current-time value, keeping
+them local for the complete calculation. Missing or stale SIRI data therefore
+still returns scheduled departures without initiating a fetch.
+
+Both routers are registered exactly once before the frontend catch-all. The root
+compatibility module retains callable aliases but no decorators or copied
+response assembly for these endpoints. Trips, routes, `/`, and the frontend
+fallback remain in the root module. The next migration should move trips and
+routes, with trips first because routes can then reuse the extracted trip/shape
+presentation services.
 
 ## Incremental migration plan
 
@@ -175,7 +193,8 @@ move search and stop endpoints.
 5. **Complete:** move SIRI fetching and live matching into isolated services
    with mocked HTTP and XML fixtures.
 6. **In progress:** move endpoint groups into `app/api/` routers one at a time,
-   retaining aliases. Vehicles, map, health and status are complete.
+   retaining aliases. Vehicles, map, health, status, search, and stop departures
+   are complete; trips and routes remain.
 7. Split the active inline frontend into `static/css` and `static/js/views` only
    after browser-level regression coverage exists.
 8. Compare and archive duplicate data/code only after runtime references and
