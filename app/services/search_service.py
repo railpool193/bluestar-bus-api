@@ -40,6 +40,7 @@ def search_gtfs(store: GTFSStore, query_value: str = "") -> dict[str, Any]:
                         "line": line,
                         "name": line,
                         "subtitle": route.get("route_long_name", ""),
+                        "routeColor": clean_text(route.get("route_color")),
                     }
                 )
         routes.sort(

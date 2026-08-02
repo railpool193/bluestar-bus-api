@@ -20,6 +20,12 @@
       --greenBg:#225f2b;
       --red:#ff5454;
       --cream:#f4f2dc;
+      --surface:#303030;
+      --surfaceRaised:#383838;
+      --focus:#4f93ff;
+      --statusLive:#3eff45;
+      --statusTimetable:#c8c8c8;
+      --statusError:#ff5454;
       --safeTop:env(safe-area-inset-top,0px);
       --safeBottom:env(safe-area-inset-bottom,0px);
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
@@ -64,6 +70,9 @@
     .ticket.stop .brand{font-size:10px;line-height:1;letter-spacing:.4px;margin-top:1px}
     .ticket.stop .code{font-size:28px;line-height:1.05}
     .ticket.big{width:98px;height:58px;font-size:40px}
+    .ticket.routeBadge{background:var(--route-colour,var(--blue));color:var(--route-text,#fff)}
+    .statusLabel{font-size:16px;font-weight:850;text-transform:uppercase;letter-spacing:.04em}
+    .statusLabel.live{color:var(--statusLive)}.statusLabel.timetable{color:var(--statusTimetable)}.statusLabel.error{color:var(--statusError)}
     .mainText{min-width:0;overflow:hidden}
     .mainText.center{text-align:center}
     .primary{font-size:28px;line-height:1.08;font-weight:950;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eee}
@@ -149,7 +158,9 @@
     }
   };
 
-  const state={lang:localStorage.getItem('lang')||'hu',view:'home',params:{},stack:[],map:null,markers:[],polylines:[],refreshTimer:null,lastLine:''};
+  const state={lang:localStorage.getItem('lang')||'hu',view:'home',params:{},map:null,markers:[],polylines:[],refreshTimer:null};
+  const validViews=new Set(['home','stop','trip','route','vehicles','map']);
+  const requiredParam={stop:'stopId',trip:'tripId',route:'line'};
 
   function tr(k){return (T[state.lang]&&T[state.lang][k])||T.hu[k]||k}
   function esc(s){return String(s==null?'':s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
@@ -159,22 +170,27 @@
   function setLang(lang){state.lang=lang;localStorage.setItem('lang',lang);huBtn.classList.toggle('active',lang==='hu');enBtn.classList.toggle('active',lang==='en');renderCurrent(false)}
   huBtn.onclick=()=>setLang('hu');
   enBtn.onclick=()=>setLang('en');
-  mapTopBtn.onclick=()=>push('map',{line:state.lastLine||state.params.line||''});
-  backBtn.onclick=()=>{if(state.stack.length){const prev=state.stack.pop();go(prev.view,prev.params,false)}else{go('home',{},false)}};
-  window.onpopstate=()=>{if(state.stack.length){const prev=state.stack.pop();go(prev.view,prev.params,false)}else{go('home',{},false)}};
+  mapTopBtn.onclick=()=>push('map',{line:state.params.line||''});
+  backBtn.onclick=()=>{if(state.view==='home')go('home',{},false);else history.back()};
+  window.onpopstate=()=>syncFromLocation();
 
-  function updateHeader(name,back){title.textContent=name;backBtn.textContent=back?'‹':'☰';huBtn.classList.toggle('active',state.lang==='hu');enBtn.classList.toggle('active',state.lang==='en')}
+  function updateHeader(name,back){title.textContent=name;document.title=name+' · Bluestar Unilink';backBtn.textContent=back?'‹':'☰';huBtn.classList.toggle('active',state.lang==='hu');enBtn.classList.toggle('active',state.lang==='en')}
   function loading(){content.className='content';content.innerHTML='<div class="loading">Loading...</div>'}
   function errorBox(msg){content.className='content';content.innerHTML='<div class="errorBox">'+esc(msg)+'</div>'}
-  function ticket(text,cls=''){text=(text||'?').toString();if(cls==='stop')return `<div class="ticket stop"><div class="brand">BLUESTAR</div><div class="code">${esc(text)}</div></div>`;return `<div class="ticket ${cls}">${esc(text)}</div>`}
+  function routeColour(value){const colour=String(value||'').replace(/^#/,'');return /^[0-9a-f]{6}$/i.test(colour)?'#'+colour:''}
+  function ticket(text,cls='',colour=''){text=(text||'?').toString();if(cls==='stop')return `<div class="ticket stop"><div class="brand">BLUESTAR</div><div class="code">${esc(text)}</div></div>`;const style=routeColour(colour)?` style="--route-colour:${routeColour(colour)}"`:'';return `<div class="ticket routeBadge ${cls}"${style}>${esc(text)}</div>`}
   function short(s,n=24){s=String(s||'');return s.length>n?s.slice(0,n-1)+'…':s}
   function favs(){try{return JSON.parse(localStorage.getItem('favs')||'[]')}catch(e){return[]}}
   function setFavs(v){localStorage.setItem('favs',JSON.stringify(v))}
   function isFav(type,id){return favs().some(f=>f.type===type&&f.id===id)}
   function toggleFav(type,id,name,code){let f=favs();const i=f.findIndex(x=>x.type===type&&x.id===id);if(i>=0)f.splice(i,1);else f.unshift({type,id,name,code});setFavs(f);renderCurrent(false)}
-  function push(view,params){state.stack.push({view:state.view,params:state.params});go(view,params,true)}
-  function go(view,params,addHistory){state.view=view;state.params=params||{};if(addHistory)history.pushState({view,params},'',location.pathname+'#'+view);renderCurrent(true)}
-  function renderCurrent(resetScroll){clearTimers();content.className='content';if(resetScroll)content.scrollTop=0;if(state.view==='home')renderHome();if(state.view==='stop')renderStop(state.params.stopId);if(state.view==='trip')renderTrip(state.params.tripId,state.params.serviceDate,state.params.vehicle);if(state.view==='route')renderRoute(state.params.line);if(state.view==='vehicles')renderVehicles(state.params.line||'');if(state.view==='map')renderMap(state.params.line||'')}
+  function normalizeLocation(view,params){const cleanParams={};Object.entries(params||{}).forEach(([key,value])=>{if(value!=null&&String(value)!=='')cleanParams[key]=String(value)});if(!validViews.has(view)||(requiredParam[view]&&!cleanParams[requiredParam[view]]))return {view:'home',params:{}};return {view,params:cleanParams}}
+  function locationHash(view,params){const query=new URLSearchParams(params||{}).toString();return '#'+view+(query?'?'+query:'')}
+  function parseLocation(){const raw=location.hash.replace(/^#/,'');const split=raw.split('?');return normalizeLocation(split[0]||'home',Object.fromEntries(new URLSearchParams(split.slice(1).join('?'))))}
+  function push(view,params){go(view,params,true)}
+  function go(view,params,addHistory){const target=normalizeLocation(view,params);state.view=target.view;state.params=target.params;const hash=locationHash(target.view,target.params);if(addHistory)history.pushState(target,'',location.pathname+location.search+hash);else if(location.hash!==hash)history.replaceState(target,'',location.pathname+location.search+hash);renderCurrent(true)}
+  function syncFromLocation(){const target=parseLocation();state.view=target.view;state.params=target.params;const canonical=locationHash(target.view,target.params);if(location.hash!==canonical)history.replaceState(target,'',location.pathname+location.search+canonical);renderCurrent(true)}
+  function renderCurrent(resetScroll){clearTimers();content.className='content';if(resetScroll)content.scrollTop=0;if(state.view==='home')return renderHome();if(state.view==='stop')return renderStop(state.params.stopId);if(state.view==='trip')return renderTrip(state.params.tripId,state.params.serviceDate,state.params.vehicle);if(state.view==='route')return renderRoute(state.params.line);if(state.view==='vehicles')return renderVehicles(state.params.line||'');if(state.view==='map')return renderMap(state.params.line||'');go('home',{},false)}
 
   async function refreshStatus(){try{const s=await api('/api/status?t='+Date.now());liveStatus.innerHTML=`<span class="dot ${s.live.ok?'':'err'}"></span>LIVE: ${s.live.ok?'ON':'ERR'} (${s.live.activeCount||0})`;gtfsStatus.innerHTML=`<span class="dot ${s.gtfs.ok?'':'err'}"></span>GTFS: ${s.gtfs.ok?'OK':'ERR'}`}catch(e){liveStatus.innerHTML='<span class="dot err"></span>LIVE: ERR';gtfsStatus.innerHTML='<span class="dot err"></span>GTFS: ERR'}}
   setInterval(refreshStatus,10000);
@@ -188,7 +204,7 @@
   function renderHome(){updateHeader(tr('home'),false);content.innerHTML=homeHtml();attachSearch()}
   function attachSearch(){const input=document.getElementById('searchInput');const clear=document.getElementById('clearSearch');if(!input)return;let timer=null;input.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>doSearch(input.value),250)};clear.onclick=()=>{input.value='';renderHome()};setTimeout(()=>input.focus(),50)}
   async function doSearch(q){if(!q.trim()){renderHome();return}try{const data=await api('/api/search?q='+enc(q)+'&t='+Date.now());content.innerHTML=homeHtml(q,data);attachSearch();const input=document.getElementById('searchInput');if(input){input.focus();input.setSelectionRange(input.value.length,input.value.length)}}catch(e){errorBox(e.message||tr('networkError'))}}
-  function renderSearchResults(data){const stops=data.stops||[],routes=data.routes||[];let html='';if(stops.length){html+=`<div class="listHeader">${esc(tr('stops'))}</div><div class="list">`+stops.map(s=>`<div class="row" data-action="stop" data-id="${esc(s.id)}">${ticket(s.code||'BUS','stop')}<div class="mainText"><div class="primary">${esc(s.name)}</div></div><div class="arrow">→</div></div>`).join('')+`</div>`}if(routes.length){html+=`<div class="listHeader">${esc(tr('routes'))}</div><div class="list">`+routes.map(r=>`<div class="row" data-action="route" data-id="${esc(r.line||r.id)}">${ticket(r.line||r.id||'?')}<div class="mainText"><div class="primary">${esc(r.line||r.id)}</div><div class="secondary">${esc(r.subtitle||tr('route'))}</div></div><div class="arrow">→</div></div>`).join('')+`</div>`}if(!stops.length&&!routes.length)html+=`<div class="empty">Nincs találat.</div>`;return html}
+  function renderSearchResults(data){const stops=data.stops||[],routes=data.routes||[];let html='';if(stops.length){html+=`<div class="listHeader">${esc(tr('stops'))}</div><div class="list">`+stops.map(s=>`<div class="row" data-action="stop" data-id="${esc(s.id)}">${ticket(s.code||'BUS','stop')}<div class="mainText"><div class="primary">${esc(s.name)}</div></div><div class="arrow">→</div></div>`).join('')+`</div>`}if(routes.length){html+=`<div class="listHeader">${esc(tr('routes'))}</div><div class="list">`+routes.map(r=>`<div class="row" data-action="route" data-id="${esc(r.line||r.id)}">${ticket(r.line||r.id||'?','',r.routeColor)}<div class="mainText"><div class="primary">${esc(r.line||r.id)}</div><div class="secondary">${esc(r.subtitle||tr('route'))}</div></div><div class="arrow">→</div></div>`).join('')+`</div>`}if(!stops.length&&!routes.length)html+=`<div class="empty">Nincs találat.</div>`;return html}
 
   async function renderStop(stopId){updateHeader(tr('stop'),true);loading();try{const data=await api('/api/stops/'+enc(stopId)+'/departures?t='+Date.now());const stop=data.stop||{};let html=`<div class="stopTitle"><button class="favStar" data-action="fav-stop" data-id="${esc(stopId)}" data-name="${esc(stop.name||stop.stop_name||stopId)}" data-code="${esc(stop.code||'BUS')}">${isFav('stop',stopId)?'★':'☆'}</button>${esc(stop.name||stop.stop_name||stopId)}</div>`;const deps=data.departures||[];if(!deps.length)html+=`<div class="empty">${esc(tr('noDepartures'))}</div>`;else html+=`<div class="list">`+deps.map(d=>{const live=!!d.live,due=!!d.isDue,cls=due?'dueRow':(live?'liveRow':'');const mins=d.minutes;const minTxt=d.minutesText||(mins!=null?(mins<=1?tr('due'):`${mins} ${tr('min')}`):'');return `<div class="row ${cls}" data-action="trip" data-trip="${esc(d.tripId||d.trip_id)}" data-service="${esc(d.serviceDate||'')}" data-line="${esc(d.line||'')}" data-vehicle="${esc(d.fleet||d.vehicleRef||'')}">${ticket(d.line||'?')}<div class="mainText center"><div class="primary">${esc(d.destination||'')}</div><div class="secondary">${esc(live?tr('live'):tr('scheduled'))}${d.fleet?' · '+esc(d.fleet):''}</div></div><div class="timeBox"><div class="timeMain">${esc(d.displayTime||d.scheduledTime||'')}</div><div class="timeSub">${esc(minTxt)}</div></div></div>`}).join('')+`</div>`;content.innerHTML=html}catch(e){errorBox(tr('departureError')+' '+(e.message||''))}}
 
@@ -208,7 +224,7 @@
 
   window.BU={openStop:id=>push('stop',{stopId:id}),openRoute:line=>push('route',{line}),openMap:line=>push('map',{line:line||''})};
   refreshStatus();
-  renderHome();
+  syncFromLocation();
 })();
 </script>
 </body>

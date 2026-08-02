@@ -5,15 +5,18 @@ from typing import Any, Mapping, Sequence
 
 from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_calendar import service_days
-from app.services.live_matching import match_live_to_departure
+from app.services.live_matching import match_live_to_departure, match_live_to_departures
 from app.services.live_store_provider import LiveSnapshot
 from app.utils.text_utils import clean_text
 from app.utils.text_utils import short_destination
 from app.utils.time_utils import gtfs_time_to_datetime, hhmm, parse_iso_dt
 
 
-def enrich_departure(store: GTFSStore, departure: Mapping[str, Any], service_day: date, scheduled_at: datetime, vehicles: Sequence[Mapping[str, Any]], *, reference_time: datetime, matching_minutes: int) -> dict[str, Any]:
-    live = match_live_to_departure(store, departure, scheduled_at, vehicles, matching_minutes=matching_minutes)
+_MATCH_AUTOMATICALLY = object()
+
+
+def enrich_departure(store: GTFSStore, departure: Mapping[str, Any], service_day: date, scheduled_at: datetime, vehicles: Sequence[Mapping[str, Any]], *, reference_time: datetime, matching_minutes: int, matched_live: Any = _MATCH_AUTOMATICALLY) -> dict[str, Any]:
+    live = match_live_to_departure(store, departure, scheduled_at, vehicles, matching_minutes=matching_minutes) if matched_live is _MATCH_AUTOMATICALLY else matched_live
     live_at = parse_iso_dt(live.get("liveTime")) if live else None
     display_at = live_at or scheduled_at
     minutes = int(round((display_at - reference_time).total_seconds() / 60))
@@ -21,7 +24,7 @@ def enrich_departure(store: GTFSStore, departure: Mapping[str, Any], service_day
     due = bool(minutes is not None and minutes <= 1)
     return {
         "tripId": departure.get("trip_id"), "trip_id": departure.get("trip_id"), "serviceDate": service_day.isoformat(),
-        "line": departure.get("line", ""), "routeId": departure.get("route_id", ""), "stopId": departure.get("stop_id", ""),
+        "line": departure.get("line", ""), "routeId": departure.get("route_id", ""), "routeColor": store.routes.get(departure.get("route_id"), {}).get("route_color", ""), "stopId": departure.get("stop_id", ""),
         "stopName": departure.get("stop_name", ""), "stopSequence": departure.get("stop_sequence", 0),
         "destination": short_destination(departure.get("headsign_full") or departure.get("headsign")),
         "destinationFull": departure.get("headsign_full") or departure.get("headsign"),
@@ -48,7 +51,7 @@ def stop_departures(
         return None
     end = reference_time + timedelta(minutes=max(10, min(window_minutes, 360)))
     vehicles = tuple(dict(vehicle) for vehicle in live_snapshot.vehicles)
-    result: list[dict[str, Any]] = []
+    candidates: list[tuple[Mapping[str, Any], date, datetime]] = []
     for service_day in service_days(reference_time):
         active = store.active_service_ids(service_day)
         for departure in store.stop_departures_index.get(stop_id, []):
@@ -66,17 +69,16 @@ def stop_departures(
                 or scheduled_at > end
             ):
                 continue
-            result.append(
-                enrich_departure(
-                    store,
-                    departure,
-                    service_day,
-                    scheduled_at,
-                    vehicles,
-                    reference_time=reference_time,
-                    matching_minutes=matching_minutes,
-                )
-            )
+            candidates.append((departure, service_day, scheduled_at))
+    matches = match_live_to_departures(store, [(departure, scheduled_at) for departure, _day, scheduled_at in candidates], vehicles, matching_minutes=matching_minutes)
+    result = [
+        enrich_departure(
+            store, departure, service_day, scheduled_at, vehicles,
+            reference_time=reference_time, matching_minutes=matching_minutes,
+            matched_live=matches.get(index),
+        )
+        for index, (departure, service_day, scheduled_at) in enumerate(candidates)
+    ]
     result.sort(key=lambda item: item.get("displayTimeIso") or item.get("scheduledTimeIso") or "")
     deduplicated: list[dict[str, Any]] = []
     seen: set[tuple[Any, Any, Any]] = set()

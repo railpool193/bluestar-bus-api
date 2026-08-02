@@ -136,7 +136,7 @@ class GTFSStore:
             for index, row in enumerate(rows):
                 stop_id = row.get("stop_id")
                 stop = self.stops.get(stop_id, {})
-                self.stop_departures_index[stop_id].append({**row, "line": trip.get("line", ""), "route_id": trip.get("route_id", ""), "service_id": trip.get("service_id", ""), "direction_id": trip.get("direction_id", ""), "headsign": short_destination(row.get("stop_headsign") or trip.get("trip_headsign") or trip.get("destination")), "headsign_full": human_name(row.get("stop_headsign") or trip.get("trip_headsign") or trip.get("destination")), "stop_name": stop.get("stop_name", stop_id), "stop_code": stop.get("code", "BUS"), "is_last_stop": index == len(rows) - 1})
+                self.stop_departures_index[stop_id].append({**row, "line": trip.get("line", ""), "route_id": trip.get("route_id", ""), "service_id": trip.get("service_id", ""), "block_id": trip.get("block_id", ""), "direction_id": trip.get("direction_id", ""), "headsign": short_destination(row.get("stop_headsign") or trip.get("trip_headsign") or trip.get("destination")), "headsign_full": human_name(row.get("stop_headsign") or trip.get("trip_headsign") or trip.get("destination")), "stop_name": stop.get("stop_name", stop_id), "stop_code": stop.get("code", "BUS"), "is_last_stop": index == len(rows) - 1})
         for row in reader("shapes.txt"):
             shape_id, latitude, longitude = clean_text(row.get("shape_id")), safe_float(row.get("shape_pt_lat")), safe_float(row.get("shape_pt_lon"))
             if shape_id and latitude is not None and longitude is not None:

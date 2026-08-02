@@ -95,7 +95,7 @@ class SearchStopLegacyContractTests(unittest.TestCase):
         _, stop_result = response_body(legacy.api_search("central"))
         self.assertEqual(set(stop_result["stops"][0]), {"id", "stop_id", "name", "code", "lat", "lon"})
         _, route_result = response_body(legacy.api_search("airport"))
-        self.assertEqual(set(route_result["routes"][0]), {"id", "routeId", "line", "name", "subtitle"})
+        self.assertEqual(set(route_result["routes"][0]), {"id", "routeId", "line", "name", "subtitle", "routeColor"})
 
     def test_search_is_partial_case_insensitive_and_supports_codes_and_lines(self):
         self.assertEqual(legacy.api_search("STAT")["stops"][0]["stop_id"], "S1")
@@ -124,7 +124,7 @@ class SearchStopLegacyContractTests(unittest.TestCase):
         departure = next(item for item in result["departures"] if item["tripId"] == "T24")
         self.assertEqual(
             set(departure),
-            {"tripId", "trip_id", "serviceDate", "line", "routeId", "stopId", "stopName", "stopSequence", "destination", "destinationFull", "scheduledTime", "scheduledTimeIso", "displayTime", "displayTimeIso", "minutes", "minutesText", "live", "isDue", "vehicleRef", "fleet", "delayMinutes"},
+            {"tripId", "trip_id", "serviceDate", "line", "routeId", "routeColor", "stopId", "stopName", "stopSequence", "destination", "destinationFull", "scheduledTime", "scheduledTimeIso", "displayTime", "displayTimeIso", "minutes", "minutesText", "live", "isDue", "vehicleRef", "fleet", "delayMinutes"},
         )
         self.assertEqual(departure["serviceDate"], "2026-08-02")
         self.assertEqual(departure["scheduledTime"], "01:05")
