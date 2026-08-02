@@ -69,6 +69,21 @@ This is a parity target derived from the supplied reference recording, the reque
 - API: `GET /api/map?line=` already supplies vehicles, shapes and centre.
 - Missing/extension: follow mode and marker-to-trip require a reliable trip reference; current OSM/Leaflet can remain. A production dark tile provider must have suitable licensing and availability.
 
+### 7a. Route details
+
+- Coloured route badge, route name, directions, ordered stops, live vehicle
+  count and map action. Source: `/api/routes/{line}` and GTFS route colour.
+- Favourite/open-stop/vehicles/map interactions. Service alerts and frequency
+  summaries remain unavailable without a trustworthy source.
+
+### 7b. Selected vehicle card
+
+- Show route/destination and SIRI position/status first; optionally show fleet,
+  registration, type, fuel, livery name, garage and features from cached
+  Bustimes metadata. Never inject livery CSS, notes, HTML or external images.
+- Missing, ambiguous or withdrawn-only metadata omits model/registration and
+  cannot alter the marker or trip action.
+
 ### 8. Navigation / back / close / deep-link
 
 - The URL hash is canonical: `#view?key=value`; stop/trip/route require their identifiers. Map and vehicles permit an optional line.
@@ -81,11 +96,19 @@ This is a parity target derived from the supplied reference recording, the reque
 - Existing API errors remain authoritative; no synthetic vehicles, predictions, models, or availability are rendered.
 - Next extension: accessible retry controls and `aria-live` announcements.
 
+- **GTFS error:** explain timetable unavailability; never synthesize departures.
+- **SIRI/live error:** keep timetable screens usable and mark rows scheduled.
+- **Fleet metadata unavailable:** keep all live fields, omit model/registration,
+  and never display an invented “Unknown bus”.
+
 ### 10. Responsive behaviour
 
 - At <=430 px use compact rows, controls and typography with touch targets retained. Respect safe-area insets.
 - At wider sizes retain the same navigation and ordering, cap list reading width where useful, and allow a taller/wider map/card layout.
 - Next extension: test 320, 390, 430, 768, 1024 and 1440 px plus keyboard-only and reduced-motion modes.
+
+Mobile retains a touch-safe single column. Desktop adds reading width and
+map/card space without changing information order or navigation semantics.
 
 ## Manual browser regression checklist
 

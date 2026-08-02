@@ -20,6 +20,7 @@ def _env_bool(name: str, default: bool) -> bool:
 class Settings:
     gtfs_download_url: str
     gtfs_zip_path: Path
+    gtfs_runtime_zip_path: Path
     gtfs_auto_refresh: bool
     gtfs_refresh_interval_seconds: int
     gtfs_download_timeout_seconds: int
@@ -27,6 +28,14 @@ class Settings:
     gtfs_max_uncompressed_bytes: int
     gtfs_metadata_path: Path
     gtfs_refresh_attempts: int
+    bustimes_vehicles_api_url: str
+    fleet_metadata_refresh_seconds: int
+    fleet_metadata_auto_refresh: bool
+    fleet_metadata_timeout_seconds: int
+    fleet_metadata_max_bytes: int
+    fleet_metadata_cache_path: Path
+    fleet_metadata_path: Path
+    fleet_metadata_operator_id: str
     app_name: str = "Bluestar Unilink Menetrend"
     gtfs_directory_path: Path = PROJECT_ROOT / "gtfs"
     live_cache_ttl_seconds: int = 8
@@ -51,6 +60,12 @@ class Settings:
         return cls(
             gtfs_download_url=url,
             gtfs_zip_path=Path(os.getenv("GTFS_ZIP", str(PROJECT_ROOT / "gtfs.zip"))),
+            gtfs_runtime_zip_path=Path(
+                os.getenv(
+                    "GTFS_RUNTIME_ZIP",
+                    str(PROJECT_ROOT / "data" / "runtime" / "gtfs" / "current.zip"),
+                )
+            ),
             gtfs_auto_refresh=_env_bool("GTFS_AUTO_REFRESH", bool(url)),
             gtfs_refresh_interval_seconds=max(
                 300, int(interval)
@@ -65,11 +80,19 @@ class Settings:
                 1_048_576, int(os.getenv("GTFS_MAX_UNCOMPRESSED_BYTES", "1073741824"))
             ),
             gtfs_metadata_path=Path(
-                os.getenv("GTFS_METADATA_PATH", str(PROJECT_ROOT / "data" / "gtfs" / "metadata.json"))
+                os.getenv("GTFS_METADATA_PATH", str(PROJECT_ROOT / "data" / "runtime" / "gtfs" / "metadata.json"))
             ),
             gtfs_refresh_attempts=min(
                 3, max(1, int(os.getenv("GTFS_REFRESH_ATTEMPTS", "3")))
             ),
+            bustimes_vehicles_api_url=os.getenv("BUSTIMES_VEHICLES_API_URL", "https://bustimes.org/api/vehicles/").strip(),
+            fleet_metadata_refresh_seconds=max(3600, int(os.getenv("FLEET_METADATA_REFRESH_SECONDS", "86400"))),
+            fleet_metadata_auto_refresh=_env_bool("FLEET_METADATA_AUTO_REFRESH", True),
+            fleet_metadata_timeout_seconds=max(5, int(os.getenv("FLEET_METADATA_TIMEOUT_SECONDS", "20"))),
+            fleet_metadata_max_bytes=max(65536, int(os.getenv("FLEET_METADATA_MAX_BYTES", "4194304"))),
+            fleet_metadata_cache_path=Path(os.getenv("FLEET_METADATA_CACHE_PATH", str(PROJECT_ROOT / "data" / "fleet" / "vehicles.json"))),
+            fleet_metadata_path=Path(os.getenv("FLEET_METADATA_STATUS_PATH", str(PROJECT_ROOT / "data" / "fleet" / "metadata.json"))),
+            fleet_metadata_operator_id=os.getenv("FLEET_METADATA_OPERATOR_ID", "BLUS").strip().upper(),
             app_name=os.getenv("APP_NAME", "Bluestar Unilink Menetrend"),
             gtfs_directory_path=Path(os.getenv("GTFS_DIR", str(PROJECT_ROOT / "gtfs"))),
             live_cache_ttl_seconds=int(os.getenv("LIVE_CACHE_TTL_SEC", "8")),

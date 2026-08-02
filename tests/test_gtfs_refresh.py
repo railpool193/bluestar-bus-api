@@ -57,6 +57,9 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.gtfs_download_url, DEFAULT_GTFS_DOWNLOAD_URL)
         self.assertEqual(settings.gtfs_refresh_interval_seconds, 21600)
         self.assertTrue(settings.gtfs_auto_refresh)
+        self.assertEqual(settings.gtfs_zip_path.name, "gtfs.zip")
+        self.assertEqual(settings.gtfs_runtime_zip_path.as_posix().split("/")[-4:], ["data", "runtime", "gtfs", "current.zip"])
+        self.assertEqual(settings.gtfs_metadata_path.name, "metadata.json")
 
     def test_environment_priority_and_primary_interval_name(self):
         env = {

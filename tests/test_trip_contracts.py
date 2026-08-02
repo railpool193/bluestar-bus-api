@@ -11,6 +11,7 @@ from app.main import app, live_refresh
 from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_store_provider import GTFSStoreProvider
 from app.services.live_store_provider import LiveSnapshot, LiveSnapshotProvider
+from app.services.fleet_registry import FleetRegistryProvider, FleetSnapshot
 from app.utils.time_utils import LONDON
 import main as legacy
 from tests.route_helpers import application_routes
@@ -182,6 +183,15 @@ class TripRouterBoundaryTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertLess(matches[0], fallback_index)
         self.assertEqual(list(app.openapi()["paths"]).count(path), 1)
+
+    def test_trip_live_vehicle_is_enriched_after_pairing(self):
+        fleet = FleetRegistryProvider(FleetSnapshot(({"operatorId": "BLUS", "fleetCode": "1234", "registration": "HJ25BYG", "vehicleType": "ADL Enviro400 MMC", "withdrawn": False},)))
+        _, endpoint = create_trips_router(
+            runtime=TripRuntime(GTFSStoreProvider(trip_store()), LiveSnapshotProvider(LiveSnapshot((live_vehicle(),), True)), lambda: NOW, fleet, "BLUS"),
+            unavailable_response=api_error,
+        )
+        live = endpoint("T1", "2026-08-02")["live"]
+        self.assertEqual((live["registration"], live["vehicleType"]), ("HJ25BYG", "ADL Enviro400 MMC"))
 
     def test_each_snapshot_and_time_are_read_once_without_io(self):
         store = trip_store()

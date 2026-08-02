@@ -1,0 +1,24 @@
+{
+  "count": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 673264,
+      "slug": "blus-1804",
+      "fleet_number": 1804,
+      "fleet_code": "1804",
+      "reg": "HJ25 BYG",
+      "previous_reg": "OLD 1804",
+      "vehicle_type": {"name": "ADL Enviro400 MMC", "style": "double decker", "fuel": "diesel", "double_decker": true, "coach": false, "electric": false},
+      "livery": {"name": "Bluestar One", "left": "untrusted css", "right": "untrusted css"},
+      "branding": "one",
+      "operator": {"id": "BLUS", "slug": "bluestar", "name": "Bluestar"},
+      "garage": {"code": "SO", "name": "Southampton"},
+      "name": "",
+      "withdrawn": false,
+      "special_features": ["USB-A", "USB-C"],
+      "notes": "must not be copied"
+    }
+  ]
+}

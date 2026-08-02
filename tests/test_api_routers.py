@@ -11,6 +11,7 @@ from app.main import app
 from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_store_provider import GTFSStoreProvider
 from app.services.live_store_provider import LiveSnapshot, LiveSnapshotProvider
+from app.services.fleet_registry import FleetRegistryProvider, FleetSnapshot
 from app.utils.time_utils import LONDON
 from tests.route_helpers import application_routes
 
@@ -38,11 +39,20 @@ def loaded_store(*, shape=True):
     return store
 
 
-def runtime(store, live):
-    return APIRuntime(store, live, Path("missing.zip"), Path("missing-dir"), lambda: NOW)
+def runtime(store, live, fleet=None):
+    return APIRuntime(store, live, Path("missing.zip"), Path("missing-dir"), lambda: NOW, fleet)
 
 
 class APIRouterMigrationTests(unittest.TestCase):
+    def test_vehicle_and_map_responses_add_metadata_without_fetch(self):
+        metadata = {"fleetCode": "1804", "registration": "HJ25BYG", "vehicleType": "ADL Enviro400 MMC", "fuel": "diesel", "doubleDecker": True, "coach": False, "electric": False, "livery": "Bluestar One", "branding": "one", "garage": "Southampton", "vehicleName": "", "specialFeatures": ["USB-C"], "withdrawn": False, "operatorId": "BLUS"}
+        fleet = FleetRegistryProvider(FleetSnapshot((metadata,)))
+        live = CountingLiveProvider(LiveSnapshot(({"operator": "BLUS", "line": "1", "fleet": "1804", "latitude": 50.9, "longitude": -1.4},), True))
+        api_runtime = runtime(CountingGTFSProvider(loaded_store()), live, fleet)
+        _, vehicles = create_vehicles_router(runtime=api_runtime)
+        _, map_endpoint = create_map_router(runtime=api_runtime, unavailable_response=lambda text, status: JSONResponse({"error": text}, status_code=status))
+        self.assertEqual(vehicles()["vehicles"][0]["vehicleType"], "ADL Enviro400 MMC")
+        self.assertEqual(map_endpoint()["vehicles"][0]["registration"], "HJ25BYG")
     def test_routes_and_openapi_are_registered_exactly_once_before_fallback(self):
         for path in ("/api/vehicles", "/api/map"):
             self.assertEqual(sum(getattr(route, "path", None) == path for route in application_routes(app)), 1)

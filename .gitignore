@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 *.gtfs.tmp
 data/gtfs/metadata.json
+data/runtime/
+data/fleet/vehicles.json
+data/fleet/metadata.json

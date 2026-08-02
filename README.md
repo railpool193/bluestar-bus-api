@@ -26,7 +26,7 @@ Railway starts the same application through the `Procfile`.
 
 ## Configuration
 
-The existing application accepts `GTFS_DIR`, `GTFS_ZIP`, `LIVE_FEED_URL`,
+The existing application accepts `GTFS_DIR`, `GTFS_ZIP`, `GTFS_RUNTIME_ZIP`, `LIVE_FEED_URL`,
 `LIVE_API_KEY` (or `BODS_API_KEY`), `LIVE_CACHE_TTL_SEC`,
 `LIVE_MAX_AGE_SECONDS`, `LIVE_OPERATOR_FILTER`, `DEPARTURE_WINDOW_MIN`,
 `DEPARTURE_LIMIT`, and `LIVE_MATCH_MINUTES`.
@@ -58,7 +58,15 @@ Sensitive query parameter values are masked in status output.
 - `GTFS_MAX_DOWNLOAD_BYTES`: size limit; minimum 1 MiB, default 250 MiB.
 - `GTFS_MAX_UNCOMPRESSED_BYTES`: ZIP expansion limit; default 1 GiB.
 - `GTFS_REFRESH_ATTEMPTS`: bounded network attempts; 1-3, default 3.
-- `GTFS_METADATA_PATH`: defaults to `data/gtfs/metadata.json`.
+- `GTFS_ZIP`: tracked or deployment-provided read-only seed, default `gtfs.zip`.
+- `GTFS_RUNTIME_ZIP`: writable runtime cache, default `data/runtime/gtfs/current.zip`.
+- `GTFS_METADATA_PATH`: defaults to `data/runtime/gtfs/metadata.json`.
+
+The tracked `gtfs.zip` is never a refresh target. Startup prefers a valid runtime
+cache, falls back to the seed ZIP, and finally tries `GTFS_DIR`. Downloads are
+validated and atomically replace only the ignored runtime cache under
+`data/runtime/`; a failed download leaves the active snapshot and previous cache
+untouched. This keeps the repository working tree clean during server operation.
 
 The downloader sends `If-None-Match` and `If-Modified-Since` when cached ETag
 or Last-Modified values exist. A 304 response updates `lastCheckedAt` without
@@ -84,6 +92,34 @@ an already successful data activation.
 
 The refresh worker is process-local. Railway should run one web worker unless
 duplicate per-process feed checks are intentionally acceptable.
+
+## Vehicle metadata
+
+Optional vehicle information is enriched from the JSON API at
+`https://bustimes.org/api/vehicles/`. Vehicle information: bustimes.org. The
+dataset includes community contributions, is not guaranteed complete, and is
+not an official Bluestar fleet register. A fleet code can identify ticketing
+equipment and can move between physical vehicles.
+
+Verified server-side filters are `operator=BLUS`, `fleet_code=...`, and
+`reg=...`. The API uses `count`, `next`, `previous`, and `results` with `limit`
+and `offset`; operator slug query names were observed to be ignored and are not
+used. The integration caps pages, records, bytes, timeout, and retries, and only
+follows HTTPS pagination URLs on `bustimes.org` below `/api/vehicles/`.
+
+Metadata is adapted into an internal model and cached atomically in
+`data/fleet/vehicles.json`; refresh defaults to 86400 seconds. A failed refresh
+keeps the prior snapshot. Requests never fetch Bustimes directly. Bustimes data
+is descriptive metadata only and never influences route, destination, trip,
+stop or delay matching. Free-text notes, external CSS and images are not used.
+
+- `BUSTIMES_VEHICLES_API_URL`: default `https://bustimes.org/api/vehicles/`.
+- `FLEET_METADATA_REFRESH_SECONDS`: minimum 3600, default 86400.
+- `FLEET_METADATA_AUTO_REFRESH`: defaults to enabled.
+- `FLEET_METADATA_TIMEOUT_SECONDS`: minimum 5, default 20.
+- `FLEET_METADATA_MAX_BYTES`: default 4 MiB.
+- `FLEET_METADATA_OPERATOR_ID`: default verified Bluestar ID `BLUS`.
+- `FLEET_METADATA_CACHE_PATH` and `FLEET_METADATA_STATUS_PATH`: cache paths.
 
 SIRI parsing is isolated in `app/services/siri_parser.py`; network download is
 isolated in `app/services/siri_client.py`. `LiveRefreshService` starts a daemon

@@ -1,5 +1,7 @@
 import asyncio
+from dataclasses import replace
 import importlib
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -10,8 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import app.main as package_main
 from app.factory import create_app
 from app.runtime import create_runtime
+from app.config import Settings
 from app.services.gtfs_loader import GTFSStore
 from tests.route_helpers import application_routes
+from tests.test_gtfs_refresh import FakeResponse, gtfs_bytes
 
 
 KNOWN_PATHS = (
@@ -59,10 +63,11 @@ class ApplicationFactoryTests(unittest.TestCase):
 
     def test_factory_does_not_start_services(self):
         runtime = create_runtime()
-        with patch.object(runtime.gtfs_refresh, "start") as gtfs_start, patch.object(runtime.live_refresh, "start") as live_start:
+        with patch.object(runtime.gtfs_refresh, "start") as gtfs_start, patch.object(runtime.live_refresh, "start") as live_start, patch.object(runtime.fleet_refresh, "start") as fleet_start:
             create_app(runtime)
         gtfs_start.assert_not_called()
         live_start.assert_not_called()
+        fleet_start.assert_not_called()
 
     def test_routes_are_unique_ordered_and_openapi_complete(self):
         routes = application_routes(package_main.app)
@@ -81,20 +86,20 @@ class ApplicationFactoryTests(unittest.TestCase):
         runtime = create_runtime()
         app = create_app(runtime)
         events = []
-        with patch.object(runtime, "initialize_local_gtfs", side_effect=lambda: events.append("load")), patch.object(runtime.gtfs_refresh, "start", side_effect=lambda: events.append("gtfs-start")), patch.object(runtime.live_refresh, "start", side_effect=lambda: events.append("live-start")), patch.object(runtime.live_refresh, "stop", side_effect=lambda: events.append("live-stop")), patch.object(runtime.gtfs_refresh, "stop", side_effect=lambda: events.append("gtfs-stop")):
+        with patch.object(runtime, "initialize_local_gtfs", side_effect=lambda: events.append("load")), patch.object(runtime.gtfs_refresh, "start", side_effect=lambda: events.append("gtfs-start")), patch.object(runtime.live_refresh, "start", side_effect=lambda: events.append("live-start")), patch.object(runtime.fleet_refresh, "start", side_effect=lambda: events.append("fleet-start")), patch.object(runtime.fleet_refresh, "stop", side_effect=lambda: events.append("fleet-stop")), patch.object(runtime.live_refresh, "stop", side_effect=lambda: events.append("live-stop")), patch.object(runtime.gtfs_refresh, "stop", side_effect=lambda: events.append("gtfs-stop")):
             async def exercise():
                 async with app.router.lifespan_context(app):
                     events.append("serve")
             asyncio.run(exercise())
-        self.assertEqual(events, ["load", "gtfs-start", "live-start", "serve", "live-stop", "gtfs-stop"])
+        self.assertEqual(events, ["load", "gtfs-start", "live-start", "fleet-start", "serve", "fleet-stop", "live-stop", "gtfs-stop"])
 
     def test_local_candidate_replaces_only_when_loaded(self):
         runtime = create_runtime()
         previous = runtime.gtfs_provider.get()
         loaded = GTFSStore(); loaded.loaded = True
         unavailable = GTFSStore(); unavailable.error = "missing"
-        loaded.load = lambda: loaded
-        unavailable.load = lambda: unavailable
+        loaded.load_from_path = lambda _path: loaded
+        unavailable.load_from_path = lambda _path: unavailable
         with patch("app.runtime.GTFSStore", return_value=loaded):
             runtime.initialize_local_gtfs()
         self.assertIs(runtime.gtfs_provider.get(), loaded)
@@ -103,16 +108,54 @@ class ApplicationFactoryTests(unittest.TestCase):
         self.assertIs(runtime.gtfs_provider.get(), loaded)
         self.assertIsNot(runtime.gtfs_provider.get(), previous)
 
+    def test_runtime_cache_preferred_and_invalid_cache_falls_back_to_seed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            seed, runtime_zip = root / "seed.zip", root / "runtime" / "current.zip"
+            seed.write_bytes(gtfs_bytes())
+            configured = replace(
+                Settings.from_env(), gtfs_zip_path=seed,
+                gtfs_runtime_zip_path=runtime_zip,
+                gtfs_directory_path=root / "missing", gtfs_auto_refresh=False,
+            )
+            runtime = create_runtime(configured)
+            self.assertEqual(runtime.initialize_local_gtfs().source, "zip:seed.zip")
+            runtime_zip.parent.mkdir(parents=True)
+            runtime_zip.write_bytes(gtfs_bytes(calendar=False, calendar_dates=True))
+            self.assertEqual(runtime.initialize_local_gtfs().source, "zip:current.zip")
+            runtime_zip.write_bytes(b"corrupt")
+            self.assertEqual(runtime.initialize_local_gtfs().source, "zip:seed.zip")
+
+    def test_refresh_writes_runtime_cache_without_modifying_seed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            seed, runtime_zip = root / "seed.zip", root / "runtime" / "current.zip"
+            original = gtfs_bytes(calendar=False, calendar_dates=True)
+            seed.write_bytes(original)
+            configured = replace(
+                Settings.from_env(), gtfs_zip_path=seed,
+                gtfs_runtime_zip_path=runtime_zip,
+                gtfs_metadata_path=root / "runtime" / "metadata.json",
+                gtfs_directory_path=root / "missing", gtfs_auto_refresh=True,
+            )
+            runtime = create_runtime(configured)
+            runtime.gtfs_refresh.opener = lambda *_args, **_kwargs: FakeResponse(gtfs_bytes())
+            self.assertTrue(runtime.gtfs_refresh.refresh())
+            self.assertEqual(seed.read_bytes(), original)
+            self.assertTrue(runtime_zip.is_file())
+
     def test_startup_failure_is_controlled_and_other_service_runs(self):
         runtime = create_runtime()
         app = create_app(runtime)
-        with patch.object(runtime, "initialize_local_gtfs", side_effect=RuntimeError("load failed")), patch.object(runtime.gtfs_refresh, "start", side_effect=RuntimeError("start failed")), patch.object(runtime.live_refresh, "start") as live_start, patch.object(runtime.live_refresh, "stop") as live_stop:
+        with patch.object(runtime, "initialize_local_gtfs", side_effect=RuntimeError("load failed")), patch.object(runtime.gtfs_refresh, "start", side_effect=RuntimeError("start failed")), patch.object(runtime.live_refresh, "start") as live_start, patch.object(runtime.live_refresh, "stop") as live_stop, patch.object(runtime.fleet_refresh, "start") as fleet_start, patch.object(runtime.fleet_refresh, "stop") as fleet_stop:
             async def exercise():
                 async with app.router.lifespan_context(app):
                     pass
             asyncio.run(exercise())
         live_start.assert_called_once_with()
         live_stop.assert_called_once_with()
+        fleet_start.assert_called_once_with()
+        fleet_stop.assert_called_once_with()
 
     def test_root_shim_identity_and_no_reverse_import(self):
         root_main = importlib.import_module("main")

@@ -131,7 +131,7 @@ class HealthStatusRouterTests(unittest.TestCase):
         response = endpoint()
 
         self.assertEqual((gtfs_provider.get_count, live_provider.get_count, refresh_snapshot.call_count), (1, 1, 1))
-        self.assertEqual(set(response), {"live", "gtfs", "serverTime", "timezone"})
+        self.assertEqual(set(response), {"live", "gtfs", "fleetMetadata", "serverTime", "timezone"})
         self.assertEqual(
             set(response["live"]),
             {"ok", "activeCount", "rawCount", "maxAgeSeconds", "operatorFilter", "error", "lastFetchTime", "lastAttemptAt", "lastSuccessAt", "stale", "ageSeconds", "fetchDurationMs", "refreshIntervalSeconds"},

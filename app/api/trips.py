@@ -7,6 +7,7 @@ from fastapi import APIRouter
 
 from app.api.dependencies import TripRuntime
 from app.services.trip_service import present_trip
+from app.services.fleet_registry import enrich_vehicle
 
 
 def create_trips_router(
@@ -44,6 +45,8 @@ def create_trips_router(
         )
         if response is None:
             return unavailable_response("Trip not found", 404)
+        if response.get("live") and runtime.fleet_provider is not None:
+            response["live"] = enrich_vehicle(response["live"], runtime.fleet_provider.get(), operator=runtime.fleet_operator_id)
         return response
 
     return router, api_trip

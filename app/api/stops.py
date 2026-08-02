@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from app.api.dependencies import StopRuntime
 from app.services.departure_service import stop_departures
+from app.services.fleet_registry import enrich_vehicle
 
 
 def create_stops_router(
@@ -39,6 +40,13 @@ def create_stops_router(
         )
         if response is None:
             return unavailable_response("Stop not found", 404)
+        if runtime.fleet_provider is not None:
+            registry = runtime.fleet_provider.get()
+            response["departures"] = [
+                enrich_vehicle(departure, registry, operator=runtime.fleet_operator_id)
+                if departure.get("live") else departure
+                for departure in response["departures"]
+            ]
         return response
 
     return router, api_stop_departures

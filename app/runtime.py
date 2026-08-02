@@ -8,6 +8,9 @@ from app.config import Settings
 from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_refresh import GTFSRefreshService
 from app.services.gtfs_store_provider import GTFSStoreProvider, GTFSStoreProxy
+from app.services.bustimes_vehicle_client import BustimesVehicleClient, BustimesVehicleClientConfig
+from app.services.fleet_refresh import FleetRefreshService
+from app.services.fleet_registry import FleetRegistryProvider
 from app.services.live_refresh import LiveRefreshService
 from app.services.live_store_provider import LiveSnapshotProvider
 from app.services.siri_client import SIRIClient, SIRIClientConfig
@@ -42,24 +45,36 @@ class ApplicationRuntime:
     live_provider: LiveSnapshotProvider
     gtfs_refresh: GTFSRefreshService
     live_refresh: LiveRefreshService
+    fleet_provider: FleetRegistryProvider
+    fleet_refresh: FleetRefreshService
     now: Callable[[], datetime]
     gtfs: GTFSStoreProxy
     live_store: LiveStoreProxy
     endpoints: dict[str, Callable[..., Any]] = field(default_factory=dict)
 
     @property
-    def gtfs_zip_path(self): return self.settings.gtfs_zip_path
+    def gtfs_zip_path(self): return self.settings.gtfs_runtime_zip_path
+    @property
+    def gtfs_seed_path(self): return self.settings.gtfs_zip_path
+    @property
+    def gtfs_runtime_path(self): return self.settings.gtfs_runtime_zip_path
     @property
     def gtfs_directory_path(self): return self.settings.gtfs_directory_path
 
     def initialize_local_gtfs(self) -> GTFSStore:
-        candidate = GTFSStore(
-            zip_path=self.gtfs_zip_path,
-            directory_path=self.gtfs_directory_path,
-        ).load()
-        if candidate.loaded:
-            self.gtfs_provider.replace(candidate)
-        return candidate
+        candidates = (
+            ("runtime", lambda: GTFSStore().load_from_path(self.gtfs_runtime_path)),
+            ("seed", lambda: GTFSStore().load_from_path(self.gtfs_seed_path)),
+            ("directory", lambda: GTFSStore(directory_path=self.gtfs_directory_path).load()),
+        )
+        last = GTFSStore()
+        for _source, loader in candidates:
+            candidate = loader()
+            last = candidate
+            if candidate.loaded:
+                self.gtfs_provider.replace(candidate)
+                return candidate
+        return last
 
 
 def create_runtime(
@@ -70,11 +85,12 @@ def create_runtime(
     selected = settings or Settings.from_env()
     gtfs_provider = GTFSStoreProvider(
         GTFSStore(
-            zip_path=selected.gtfs_zip_path,
+            zip_path=selected.gtfs_runtime_zip_path,
             directory_path=selected.gtfs_directory_path,
         )
     )
     live_provider = LiveSnapshotProvider()
+    fleet_provider = FleetRegistryProvider()
 
     def build_candidate(path):
         return GTFSStore().load_from_path(path)
@@ -84,7 +100,7 @@ def create_runtime(
 
     gtfs_refresh = GTFSRefreshService(
         source_url=selected.gtfs_download_url,
-        target_path=selected.gtfs_zip_path,
+        target_path=selected.gtfs_runtime_zip_path,
         metadata_path=selected.gtfs_metadata_path,
         interval_seconds=selected.gtfs_refresh_interval_seconds,
         timeout_seconds=selected.gtfs_download_timeout_seconds,
@@ -102,12 +118,27 @@ def create_runtime(
         max_age_seconds=selected.live_max_age_seconds,
         operator_filter=selected.live_operator_filter,
     )
+    fleet_refresh = FleetRefreshService(
+        client=BustimesVehicleClient(BustimesVehicleClientConfig(
+            base_url=selected.bustimes_vehicles_api_url,
+            timeout_seconds=selected.fleet_metadata_timeout_seconds,
+            max_bytes=selected.fleet_metadata_max_bytes,
+        )),
+        provider=fleet_provider,
+        operator_id=selected.fleet_metadata_operator_id,
+        cache_path=selected.fleet_metadata_cache_path,
+        metadata_path=selected.fleet_metadata_path,
+        interval_seconds=selected.fleet_metadata_refresh_seconds,
+        enabled=selected.fleet_metadata_auto_refresh,
+    )
     return ApplicationRuntime(
         settings=selected,
         gtfs_provider=gtfs_provider,
         live_provider=live_provider,
         gtfs_refresh=gtfs_refresh,
         live_refresh=live_refresh,
+        fleet_provider=fleet_provider,
+        fleet_refresh=fleet_refresh,
         now=now or (lambda: now_london()),
         gtfs=GTFSStoreProxy(gtfs_provider),
         live_store=LiveStoreProxy(live_provider),

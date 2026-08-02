@@ -13,6 +13,7 @@ from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_store_provider import GTFSStoreProvider
 from app.services.live_store_provider import LiveSnapshot
 from app.services.live_store_provider import LiveSnapshotProvider
+from app.services.fleet_registry import FleetRegistryProvider, FleetSnapshot
 from app.utils.time_utils import LONDON
 import main as legacy
 from tests.route_helpers import application_routes
@@ -151,6 +152,16 @@ class SearchStopLegacyContractTests(unittest.TestCase):
 
 
 class SearchStopRouterBoundaryTests(unittest.TestCase):
+    def test_live_departure_is_enriched_after_matching(self):
+        store = contract_store()
+        vehicle = {"operator": "BLUS", "line": "U1", "destinationFull": "University Interchange", "liveTime": (NOW + timedelta(minutes=5)).isoformat(), "currentStopRef": "S1", "fleet": "1804", "datedVehicleJourneyRef": "T24"}
+        fleet = FleetRegistryProvider(FleetSnapshot(({"operatorId": "BLUS", "fleetCode": "1804", "registration": "HJ25BYG", "vehicleType": "ADL Enviro400 MMC", "withdrawn": False},)))
+        _, endpoint = create_stops_router(
+            runtime=StopRuntime(CountingGTFSProvider(store), CountingLiveProvider(LiveSnapshot((vehicle,), True)), lambda: NOW, 120, 80, 38, fleet, "BLUS"),
+            unavailable_response=api_error,
+        )
+        departure = next(item for item in endpoint("S1")["departures"] if item["tripId"] == "T24")
+        self.assertEqual((departure["registration"], departure["vehicleType"]), ("HJ25BYG", "ADL Enviro400 MMC"))
     def test_routes_and_openapi_are_registered_once_before_fallback(self):
         routes = application_routes(app)
         fallback_index = next(

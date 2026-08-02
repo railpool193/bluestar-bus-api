@@ -245,6 +245,21 @@ that safety net.
 
 ## Incremental migration plan
 
+### Runtime GTFS and fleet metadata stabilization
+
+The repository `gtfs.zip` is a read-only seed. Runtime downloads target the
+gitignored `data/runtime/gtfs/current.zip`. Startup tries runtime cache, seed,
+then `GTFS_DIR`; invalid cache data cannot hide a usable seed. Atomic refresh
+replacement applies only to the runtime cache, keeping the Git worktree clean.
+
+`BustimesVehicleClient` uses only the JSON API and verified `operator=BLUS`,
+`fleet_code`, and `reg` filters, with bounded pagination, bytes, records,
+retries, and strict next-URL validation. `FleetRefreshService` atomically
+persists a daily cache and swaps a thread-safe snapshot. `fleet_registry.py` is
+the sole external adapter. Response copies are enriched after live matching, so
+metadata cannot alter trip/stop matching. Ambiguous or withdrawn-only matches
+expose no guessed model or registration.
+
 1. Keep `app.main:app` as the stable deployment boundary and retain legacy code.
 2. Add tests around current endpoint contracts and representative GTFS fixtures.
 3. **Complete:** move pure time, text and geo helpers into `app/utils/`.

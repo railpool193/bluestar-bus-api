@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from app.api.dependencies import APIRuntime
 from app.services.map_service import shape_for_trip
 from app.services.vehicle_service import vehicles_for_line
+from app.services.fleet_registry import enrich_vehicle
 from app.utils.text_utils import clean_text, line_norm
 
 
@@ -27,6 +28,9 @@ def create_map_router(
         current = runtime.now()
         normalized_line = line_norm(line)
         vehicles = vehicles_for_line(live_snapshot.vehicles, line)
+        if runtime.fleet_provider is not None:
+            registry = runtime.fleet_provider.get()
+            vehicles = [enrich_vehicle(vehicle, registry, operator=runtime.fleet_operator_id) for vehicle in vehicles]
         shapes: list[dict[str, Any]] = []
         if normalized_line:
             route_ids = store.route_by_short.get(normalized_line, [])

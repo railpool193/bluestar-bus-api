@@ -4,6 +4,7 @@ from datetime import date, datetime
 from app.services.departure_service import enrich_departure
 from app.services.gtfs_loader import GTFSStore
 from app.services.live_matching import find_live_for_trip, match_live_to_departure, match_live_to_departures
+from app.services.fleet_registry import FleetSnapshot, enrich_vehicle
 from app.utils.time_utils import LONDON
 
 
@@ -90,6 +91,14 @@ class LiveMatchingTests(unittest.TestCase):
             [vehicle(datedVehicleJourneyRef="")], matching_minutes=38,
         )
         self.assertEqual(matches, {})
+
+    def test_metadata_presence_does_not_change_matching(self):
+        raw = vehicle(datedVehicleJourneyRef="")
+        metadata = {"fleetCode": "1234", "operatorId": "BLUS", "vehicleType": "Test type", "withdrawn": False}
+        enriched = enrich_vehicle(raw, FleetSnapshot((metadata,)), operator="BLUS")
+        plain_match = match_live_to_departures(store_fixture(), self.departures(5, 15, 25), [raw], matching_minutes=38)
+        enriched_match = match_live_to_departures(store_fixture(), self.departures(5, 15, 25), [enriched], matching_minutes=38)
+        self.assertEqual(list(plain_match), list(enriched_match))
 
 
 if __name__ == "__main__": unittest.main()

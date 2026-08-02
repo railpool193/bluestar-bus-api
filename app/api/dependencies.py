@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping
 from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_store_provider import GTFSStoreProvider
 from app.services.live_store_provider import LiveSnapshot, LiveSnapshotProvider
+from app.services.fleet_registry import FleetRegistryProvider
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,8 @@ class APIRuntime:
     gtfs_zip_path: Path
     gtfs_directory_path: Path
     now: Callable[[], datetime]
+    fleet_provider: FleetRegistryProvider | None = None
+    fleet_operator_id: str = "BLUS"
 
     def gtfs_snapshot(self) -> GTFSStore:
         return self.gtfs_provider.get()
@@ -34,6 +37,7 @@ class StatusRuntime:
     live_max_age_seconds: int
     live_operator_filter: str
     live_refresh_interval_seconds: int
+    fleet_refresh_snapshot: Callable[[], Mapping[str, Any]] = lambda: {}
 
     def gtfs_snapshot(self) -> GTFSStore:
         return self.gtfs_provider.get()
@@ -58,6 +62,8 @@ class StopRuntime:
     departure_window_minutes: int
     departure_limit: int
     matching_minutes: int
+    fleet_provider: FleetRegistryProvider | None = None
+    fleet_operator_id: str = "BLUS"
 
     def gtfs_snapshot(self) -> GTFSStore:
         return self.gtfs_provider.get()
@@ -71,6 +77,8 @@ class TripRuntime:
     gtfs_provider: GTFSStoreProvider
     live_provider: LiveSnapshotProvider
     now: Callable[[], datetime]
+    fleet_provider: FleetRegistryProvider | None = None
+    fleet_operator_id: str = "BLUS"
 
     def gtfs_snapshot(self) -> GTFSStore:
         return self.gtfs_provider.get()

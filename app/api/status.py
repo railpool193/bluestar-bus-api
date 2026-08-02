@@ -20,6 +20,7 @@ def create_status_router(
         store = runtime.gtfs_snapshot()
         live_snapshot = runtime.live_snapshot().with_age(current)
         refresh = dict(runtime.gtfs_refresh_snapshot())
+        fleet_metadata = dict(runtime.fleet_refresh_snapshot())
         return {
             "live": {
                 "ok": live_snapshot.ok,
@@ -64,6 +65,7 @@ def create_status_router(
                     "shapes": len(store.shapes),
                 },
             },
+            "fleetMetadata": fleet_metadata,
             "serverTime": current.isoformat(),
             "timezone": "Europe/London",
         }
