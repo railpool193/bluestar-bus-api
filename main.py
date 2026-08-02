@@ -15,12 +15,13 @@ from app.services.siri_parser import children_by_local, xml_text
 from app.services.vehicle_service import vehicles_for_line
 from app.api.map import create_map_router
 from app.api.health import create_health_router
+from app.api.routes import create_routes_router
 from app.api.search import create_search_router
 from app.api.status import create_status_router
 from app.api.stops import create_stops_router
 from app.api.trips import create_trips_router
 from app.api.vehicles import create_vehicles_router
-from app.api.dependencies import APIRuntime, SearchRuntime, StatusRuntime, StopRuntime, TripRuntime
+from app.api.dependencies import APIRuntime, RouteRuntime, SearchRuntime, StatusRuntime, StopRuntime, TripRuntime
 from app.utils.geo_utils import haversine_m
 from app.utils.text_utils import (
     clean_text, destination_match, extract_codes, fleet_from_vehicle_ref,
@@ -87,10 +88,6 @@ class LiveStoreProxy:
 live_store = LiveStoreProxy()
 
 
-def trip_headsign(trip: Dict[str, Any]) -> str:
-    return human_name(trip.get("trip_headsign") or trip.get("destination") or "")
-
-
 def api_error(text: str, status: int = 400):
     return JSONResponse({"ok": False, "error": text}, status_code=status)
 
@@ -123,39 +120,6 @@ def index():
     if p.exists():
         return FileResponse(str(p))
     return HTMLResponse("Bluestar Unilink")
-
-
-@app.get("/api/routes/{line}")
-def api_route(line: str):
-    store, unavailable = require_gtfs()
-    if unavailable:
-        return unavailable
-    ln = line_norm(line)
-    route_ids = store.route_by_short.get(ln, [])
-    if not route_ids:
-        route_ids = [rid for rid, r in store.routes.items() if line_norm(r.get("route_id")) == ln]
-    if not route_ids:
-        return api_error("Route not found", 404)
-    vehicles = vehicles_for_line(current_live_vehicles(), line)
-    active = store.active_service_ids(now_london().date()) | store.active_service_ids((now_london() - timedelta(days=1)).date())
-    directions_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    for trip in store.trips.values():
-        if trip.get("route_id") not in route_ids:
-            continue
-        if active and trip.get("service_id") not in active:
-            continue
-        dest = short_destination(trip_headsign(trip))
-        key = (trip.get("direction_id", ""), dest)
-        if key in directions_map:
-            continue
-        stops = []
-        for r in store.stop_times_by_trip.get(trip.get("trip_id"), []):
-            st = store.stops.get(r.get("stop_id"), {})
-            stops.append({"id": r.get("stop_id"), "name": st.get("stop_name", r.get("stop_id")), "code": st.get("code", "BUS"), "lat": st.get("lat"), "lon": st.get("lon"), "sequence": r.get("stop_sequence")})
-        directions_map[key] = {"directionId": key[0], "destination": dest, "tripId": trip.get("trip_id"), "stops": stops}
-        if len(directions_map) >= 6:
-            break
-    return {"ok": True, "line": clean_text(line), "routes": [store.routes[rid] for rid in route_ids], "vehicles": vehicles, "directions": list(directions_map.values())}
 
 
 vehicles_router, api_vehicles = create_vehicles_router(
@@ -209,6 +173,14 @@ trips_router, api_trip = create_trips_router(
     ),
     unavailable_response=api_error,
 )
+routes_router, api_route = create_routes_router(
+    runtime=RouteRuntime(
+        gtfs_provider=gtfs_provider,
+        live_provider=live_snapshot_provider,
+        now=lambda: now_london(),
+    ),
+    unavailable_response=api_error,
+)
 map_router, api_map = create_map_router(
     runtime=APIRuntime(
         gtfs_provider=gtfs_provider,
@@ -224,6 +196,7 @@ app.router.routes.extend(status_router.routes)
 app.router.routes.extend(search_router.routes)
 app.router.routes.extend(stops_router.routes)
 app.router.routes.extend(trips_router.routes)
+app.router.routes.extend(routes_router.routes)
 app.router.routes.extend(vehicles_router.routes)
 app.router.routes.extend(map_router.routes)
 

@@ -101,14 +101,17 @@ existing endpoint contracts. Pure time, text and geographic helpers plus the
 GTFS and SIRI services have moved into `app/`. `/api/vehicles` is implemented by
 `app/api/vehicles.py` and `/api/map` by `app/api/map.py`; `/health` and
 `/api/status`, `/api/search`, `/api/stops/{stop_id}/departures`, and
-`/api/trips/{trip_id}` are implemented by their matching `app/api/` modules.
+`/api/trips/{trip_id}` and `/api/routes/{line}` are implemented by their
+matching `app/api/` modules.
 Their APIRouters receive explicit runtime dependencies. Search reads one existing
 GTFS snapshot. Stop departures and trips each read one GTFS snapshot, one live
 snapshot and one current-time value per request; stale or unavailable SIRI data
 falls back to scheduled output. Trip presentation reuses the shared live-matching
-and map-shape services, including stop-coordinate shape fallback. No migrated
-request loads or downloads data. Remaining endpoint declarations and response
-assembly stay in the root compatibility module. No legacy
+and map-shape services, including stop-coordinate shape fallback. Route requests
+also read one GTFS/live/time snapshot, combine current and previous service days,
+deduplicate directions by direction and destination, and retain at most six.
+No migrated request loads or downloads data. Only frontend route declarations
+remain in the root compatibility module. No legacy
 GTFS, SIRI or frontend file has been deleted. See `docs/current-system-assessment.md`.
 
 ## Tests

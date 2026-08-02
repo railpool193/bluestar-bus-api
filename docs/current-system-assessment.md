@@ -194,11 +194,25 @@ future-stop delay estimates, past-stop state and signed delay labels remain
 compatible. Without a matching SIRI vehicle it returns the full scheduled trip,
 and shape data falls back to stop coordinates when GTFS shapes are unavailable.
 
-The trip router is registered exactly once before the frontend catch-all. The
-root compatibility module now retains only the routes endpoint, `/`, and the
-frontend fallback. The next migration should move the routes endpoint while
-reusing the existing vehicle filtering, trip headsign, calendar, and stop/shape
-presentation services.
+The trip router is registered exactly once before the frontend catch-all.
+
+## Ninth-stage route boundary
+
+`GET /api/routes/{line}` now lives in `app/api/routes.py`; its full response
+assembly is in `app/services/route_service.py`. `RouteRuntime` supplies exactly
+one GTFS snapshot, one live snapshot and one current-time value per request.
+Short-name lookup remains primary, with normalized `route_id` fallback.
+
+The route service reuses `vehicles_for_line`, combines the current and previous
+service day's active IDs, and walks trips in stored order. Directions remain
+deduplicated by `(direction_id, shortened destination)`, with the first matching
+trip representative and a maximum of six. Missing or stale SIRI data does not
+prevent route and direction output.
+
+The router is registered exactly once before the frontend catch-all. The root
+compatibility module now contains only `GET /` and the frontend fallback as
+endpoint declarations. The next stage should migrate application assembly and
+frontend routes incrementally; it should not delete legacy files.
 
 ## Incremental migration plan
 
@@ -211,7 +225,8 @@ presentation services.
    with mocked HTTP and XML fixtures.
 6. **In progress:** move endpoint groups into `app/api/` routers one at a time,
    retaining aliases. Vehicles, map, health, status, search, stop departures,
-   and trips are complete; routes remains.
+   trips, and routes are complete. Application assembly and frontend routes
+   remain.
 7. Split the active inline frontend into `static/css` and `static/js/views` only
    after browser-level regression coverage exists.
 8. Compare and archive duplicate data/code only after runtime references and

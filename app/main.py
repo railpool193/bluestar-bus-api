@@ -66,3 +66,14 @@ app.router.lifespan_context = lifespan
 @app.get("/api/gtfs/refresh/status")
 def gtfs_refresh_status() -> dict:
     return gtfs_refresh.snapshot()
+
+
+# The compatibility app installs its frontend catch-all before this module adds
+# refresh diagnostics. Keep the API route ahead of that catch-all.
+_gtfs_refresh_route = app.router.routes.pop()
+_fallback_index = next(
+    index
+    for index, route in enumerate(app.router.routes)
+    if getattr(route, "path", None) == "/{path:path}"
+)
+app.router.routes.insert(_fallback_index, _gtfs_refresh_route)

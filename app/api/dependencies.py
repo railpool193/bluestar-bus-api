@@ -77,3 +77,16 @@ class TripRuntime:
 
     def live_snapshot(self) -> LiveSnapshot:
         return self.live_provider.get()
+
+
+@dataclass(frozen=True)
+class RouteRuntime:
+    gtfs_provider: GTFSStoreProvider
+    live_provider: LiveSnapshotProvider
+    now: Callable[[], datetime]
+
+    def gtfs_snapshot(self) -> GTFSStore:
+        return self.gtfs_provider.get()
+
+    def live_snapshot(self) -> LiveSnapshot:
+        return self.live_provider.get()
