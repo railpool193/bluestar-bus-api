@@ -131,9 +131,25 @@ and invalid identifier 404 responses. They use a local GTFS fixture and mocked
 live data; no real network service is involved. No endpoint contract changed in
 this stage.
 
-The next stage is endpoint-router migration into `app/api/`. The first candidate
-should be the read-only `/api/vehicles` and `/api/map` group because it already
-depends only on explicit live snapshots and the GTFS provider.
+## Fifth-stage router boundary
+
+`GET /api/vehicles` now lives in `app/api/vehicles.py`, and `GET /api/map` in
+`app/api/map.py`. Both are FastAPI `APIRouter` implementations registered exactly
+once before the frontend catch-all. The legacy module retains only callable
+aliases returned by their factories; it has no decorator or copied response
+implementation for these paths.
+
+`app/api/dependencies.py` supplies an explicit runtime context. The vehicles
+router reads one live-provider snapshot per request. The map router reads one
+GTFS-provider and one live-provider snapshot and keeps both locally. Shape and
+stop-coordinate fallback logic is in `app/services/map_service.py`. Neither
+endpoint initiates network activity, and missing GTFS retains the HTTP 503
+contract.
+
+The root compatibility module still declares `/health`, `/api/status`,
+`/api/search`, stop departures, trips, routes, `/`, and the frontend fallback.
+The next migration should move `/health` and `/api/status`, followed by search
+and stop routers.
 
 ## Incremental migration plan
 

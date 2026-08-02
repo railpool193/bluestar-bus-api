@@ -98,8 +98,11 @@ remain available and the snapshot becomes stale with an error diagnostic.
 `app.main:app` is the deployment entry point. During the compatibility phase it
 exports the proven FastAPI instance from the root `main.py`, preserving the
 existing endpoint contracts. Pure time, text and geographic helpers plus the
-GTFS and SIRI services have moved into `app/`; endpoint declarations and response
-assembly remain in the root compatibility module. No legacy
+GTFS and SIRI services have moved into `app/`. `/api/vehicles` is implemented by
+`app/api/vehicles.py` and `/api/map` by `app/api/map.py`; their APIRouters receive
+a runtime context containing the GTFS and live providers. Each request holds one
+local snapshot and never starts a network fetch. Remaining endpoint declarations
+and response assembly stay in the root compatibility module. No legacy
 GTFS, SIRI or frontend file has been deleted. See `docs/current-system-assessment.md`.
 
 ## Tests

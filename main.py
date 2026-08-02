@@ -16,6 +16,9 @@ from app.services.live_matching import find_live_for_trip, match_live_to_departu
 from app.services.live_store_provider import LiveSnapshotProvider
 from app.services.siri_parser import children_by_local, xml_text
 from app.services.vehicle_service import vehicles_for_line
+from app.api.map import create_map_router
+from app.api.vehicles import create_vehicles_router
+from app.api.dependencies import APIRuntime
 from app.utils.geo_utils import haversine_m
 from app.utils.text_utils import (
     clean_text, destination_match, extract_codes, fleet_from_vehicle_ref,
@@ -385,46 +388,27 @@ def api_route(line: str):
     return {"ok": True, "line": clean_text(line), "routes": [store.routes[rid] for rid in route_ids], "vehicles": vehicles, "directions": list(directions_map.values())}
 
 
-@app.get("/api/vehicles")
-def api_vehicles(line: str = ""):
-    vehicles = vehicles_for_line(current_live_vehicles(), line)
-    return {"ok": True, "line": clean_text(line), "vehicles": vehicles, "now": now_london().isoformat()}
-
-
-@app.get("/api/map")
-def api_map(line: str = ""):
-    store, unavailable = require_gtfs()
-    if unavailable:
-        return unavailable
-    ln = line_norm(line)
-    vehicles = vehicles_for_line(current_live_vehicles(), line)
-    shapes = []
-    if ln:
-        route_ids = store.route_by_short.get(ln, [])
-        active = store.active_service_ids(now_london().date()) | store.active_service_ids((now_london() - timedelta(days=1)).date())
-        seen = set()
-        for trip in store.trips.values():
-            sid = clean_text(trip.get("shape_id"))
-            if trip.get("route_id") in route_ids and sid and sid not in seen:
-                if active and trip.get("service_id") not in active:
-                    continue
-                pts = store.shapes.get(sid, [])
-                if pts:
-                    shapes.append({"shapeId": sid, "points": pts[:3000]})
-                    seen.add(sid)
-            if len(shapes) >= 8:
-                break
-        if not shapes:
-            for trip in store.trips.values():
-                if trip.get("route_id") in route_ids:
-                    shapes.append({"shapeId": trip.get("trip_id"), "points": shape_for_trip(store, trip)})
-                    break
-    pts = [(v.get("latitude"), v.get("longitude")) for v in vehicles if v.get("latitude") is not None and v.get("longitude") is not None]
-    if pts:
-        center = {"lat": sum(p[0] for p in pts) / len(pts), "lon": sum(p[1] for p in pts) / len(pts)}
-    else:
-        center = {"lat": 50.9097, "lon": -1.4044}
-    return {"ok": True, "line": clean_text(line), "vehicles": vehicles, "shapes": shapes, "center": center, "now": now_london().isoformat()}
+vehicles_router, api_vehicles = create_vehicles_router(
+    runtime=APIRuntime(
+        gtfs_provider=gtfs_provider,
+        live_provider=live_snapshot_provider,
+        gtfs_zip_path=GTFS_ZIP,
+        gtfs_directory_path=GTFS_DIR,
+        now=lambda: now_london(),
+    ),
+)
+map_router, api_map = create_map_router(
+    runtime=APIRuntime(
+        gtfs_provider=gtfs_provider,
+        live_provider=live_snapshot_provider,
+        gtfs_zip_path=GTFS_ZIP,
+        gtfs_directory_path=GTFS_DIR,
+        now=lambda: now_london(),
+    ),
+    unavailable_response=api_error,
+)
+app.router.routes.extend(vehicles_router.routes)
+app.router.routes.extend(map_router.routes)
 
 
 @app.get("/{path:path}", response_class=HTMLResponse)
