@@ -29,11 +29,12 @@ The compatibility entry point keeps every route and response shape unchanged.
 
 ## GTFS flow
 
-`GTFSStore` in `main.py` prefers `GTFS_ZIP` (default `gtfs.zip`) and falls back
-to `GTFS_DIR` (default `gtfs/`). It reads agency, stops, routes, trips, calendar,
-calendar exceptions, stop times and shapes into in-memory dictionaries and
-indexes. Service-day selection applies `calendar.txt` and
-`calendar_dates.txt`, including trips after 24:00.
+`GTFSStore` is implemented only in `app/services/gtfs_loader.py`. It accepts ZIP
+and directory paths explicitly, builds all agency, stop, route, trip, stop-time
+and shape indexes, and only then marks itself loaded. Calendar selection is in
+`app/services/gtfs_calendar.py`; it applies both `calendar.txt` and additions or
+removals from `calendar_dates.txt`. The shared time utility supports trips after
+24:00.
 
 The repository also contains `data/`, but the active application does not read
 it by default. Its files differ from `gtfs/`; for example, its calendar starts
@@ -50,15 +51,20 @@ Each refresh downloads to a temporary file with bounded retry, timeout and size
 limits. It verifies HTTP success, non-empty content, ZIP structure, CRC, safe
 member paths, total uncompressed size, required tables and at least one calendar
 table. It then builds a complete `GTFSStore` through `load_from_path`. Only a
-successfully loaded candidate may replace the active ZIP, after which a single
-assignment activates the candidate store. Requests therefore see either the old
-complete store or the new complete store, never a partially populated instance.
+successfully loaded candidate may replace the active ZIP, after which
+`GTFSStoreProvider.replace()` atomically activates it. Locking lasts only for
+`get()` or `replace()`. Each GTFS-dependent endpoint keeps one local store
+snapshot for the whole request, so replacement does not disturb an in-flight
+request using the old complete object.
 
 ETag and Last-Modified values are persisted and sent as `If-None-Match` and
 `If-Modified-Since`. HTTP 304 only updates `lastCheckedAt`; it does not rewrite
 or reload data. SHA-256 provides unchanged-content detection when cache headers
 are absent. Metadata is atomically written to `data/gtfs/metadata.json`; corrupt
-metadata is logged and ignored rather than blocking startup.
+metadata is logged and ignored rather than blocking startup. A write failure
+after successful activation appears as `metadataPersistenceError`; the new ZIP
+and store stay active, while `lastError` remains reserved for data or activation
+failures.
 
 The FastAPI lifespan owns one daemon refresh thread per process and stops it on
 shutdown. Multiple Railway workers would each perform their own checks, so one
@@ -100,12 +106,33 @@ until visual and contract regression tests support safe removal or consolidation
 - Hungarian/English frontend state and favourites.
 - Railway `$PORT` startup and environment-based secrets.
 
+## Third-stage migration boundary
+
+The root `main.py` imports and re-exports the shared helper API and imported
+`GTFSStore`; it no longer contains a second GTFSStore implementation. It retains
+the FastAPI instance, route declarations, SIRI XML parsing and fetching,
+live/scheduled matching, response assembly and frontend serving. A compatibility
+`gtfs` proxy resolves historic read access through the active provider, while
+application endpoints use explicit request-level snapshots.
+
+Contract tests cover `/health`, `/api/status`, `/api/search`, stop departures,
+trips, routes, vehicles and map responses, including missing-GTFS 503 responses
+and invalid identifier 404 responses. They use a local GTFS fixture and mocked
+live data; no real network service is involved. No endpoint contract changed in
+this stage.
+
+The next stage should extract `LiveStore`, SIRI XML parsing and live matching
+into `app/services/siri_*` modules with a provider/cache boundary and mocked XML
+fixtures. Endpoint groups should move into `app/api/` routers only after those
+services are stable.
+
 ## Incremental migration plan
 
 1. Keep `app.main:app` as the stable deployment boundary and retain legacy code.
 2. Add tests around current endpoint contracts and representative GTFS fixtures.
-3. Move pure time, text and geo helpers into `app/utils/` without behavior changes.
-4. Move `GTFSStore` and calendar logic into `app/services/`, then inject the store.
+3. **Complete:** move pure time, text and geo helpers into `app/utils/`.
+4. **Complete:** move `GTFSStore` and calendar logic into `app/services/` and
+   activate complete candidates through a store provider.
 5. Move SIRI fetching and live matching into isolated services with mocked tests.
 6. Move endpoint groups into `app/api/` routers one at a time, retaining aliases.
 7. Split the active inline frontend into `static/css` and `static/js/views` only

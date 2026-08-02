@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 from app.config import DEFAULT_GTFS_DOWNLOAD_URL, Settings
 from app.services.gtfs_refresh import GTFSRefreshService
+from app.services.gtfs_loader import GTFSStore
+from app.services.gtfs_store_provider import GTFSStoreProvider
 import main as legacy
 
 
@@ -135,6 +137,17 @@ class GTFSRefreshTests(unittest.TestCase):
         self.assertIn("S", store.stops)
         self.assertIn("R", store.routes)
         self.assertIn("T", store.trips)
+
+    def test_new_loader_candidate_activates_through_provider(self):
+        provider = GTFSStoreProvider(FakeStore(loaded=False))
+        service = self.service(
+            lambda *_args, **_kwargs: FakeResponse(gtfs_bytes()),
+            builder=lambda path: GTFSStore().load_from_path(path),
+        )
+        service.activate_candidate = provider.replace
+        self.assertTrue(service.refresh())
+        self.assertIsInstance(provider.get(), GTFSStore)
+        self.assertTrue(provider.get().loaded)
 
     def test_activation_order_is_candidate_then_zip_then_store(self):
         old = gtfs_bytes(calendar=False, calendar_dates=True)
@@ -292,6 +305,20 @@ class GTFSRefreshTests(unittest.TestCase):
         self.assertFalse(service.refresh())
         self.assertEqual(self.target.read_bytes(), old)
         self.assertIn("activation failed", service.snapshot()["lastError"])
+
+    def test_metadata_failure_after_activation_keeps_new_data_active(self):
+        old = gtfs_bytes(calendar=False, calendar_dates=True)
+        new = gtfs_bytes()
+        self.target.write_bytes(old)
+        active = []
+        service = self.service(lambda *_args, **_kwargs: FakeResponse(new))
+        service.activate_candidate = active.append
+        with patch.object(service, "_write_metadata", side_effect=OSError("metadata read-only")):
+            self.assertTrue(service.refresh())
+        self.assertEqual(self.target.read_bytes(), new)
+        self.assertEqual(len(active), 1)
+        self.assertIsNone(service.snapshot()["lastError"])
+        self.assertIn("metadata read-only", service.snapshot()["metadataPersistenceError"])
 
     def test_only_one_refresh_runs_at_a_time(self):
         entered = threading.Event()

@@ -1,22 +1,28 @@
-import csv
-import io
 import os
-import re
-import zipfile
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from collections import defaultdict
-from datetime import datetime, date, time, timedelta, timezone
-from math import asin, cos, radians, sin, sqrt
+from datetime import datetime, date, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from zoneinfo import ZoneInfo
+
+from app.services.gtfs_calendar import service_days
+from app.services.gtfs_loader import GTFSStore
+from app.services.gtfs_store_provider import GTFSStoreProvider, GTFSStoreProxy
+from app.utils.geo_utils import haversine_m
+from app.utils.text_utils import (
+    clean_text, destination_match, extract_codes, fleet_from_vehicle_ref,
+    human_name, line_norm, norm, public_stop_code, safe_float, safe_int,
+    short_destination, stop_code_from_name,
+)
+from app.utils.time_utils import (
+    LONDON, gtfs_time_to_datetime, hhmm, minutes_until, now_london, parse_iso_dt,
+)
 
 APP_NAME = "Bluestar Unilink Menetrend"
 BASE_DIR = Path(__file__).resolve().parent
@@ -24,7 +30,6 @@ TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 GTFS_DIR = Path(os.getenv("GTFS_DIR", str(BASE_DIR / "gtfs")))
 GTFS_ZIP = Path(os.getenv("GTFS_ZIP", str(BASE_DIR / "gtfs.zip")))
-LONDON = ZoneInfo("Europe/London")
 
 LIVE_FEED_URL_DEFAULT = "https://data.bus-data.dft.gov.uk/api/v1/datafeed/7721/"
 LIVE_FEED_URL = os.getenv("LIVE_FEED_URL", LIVE_FEED_URL_DEFAULT).strip()
@@ -48,175 +53,6 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-def now_london() -> datetime:
-    return datetime.now(LONDON)
-
-
-def clean_text(value: Any) -> str:
-    if value is None:
-        return ""
-    return re.sub(r"\s+", " ", str(value).replace("\ufeff", "").replace("_", " ").strip())
-
-
-def human_name(value: Any) -> str:
-    s = clean_text(value)
-    s = re.sub(r"\bStand\s+([A-Z0-9]+)\b", r"[\1]", s, flags=re.I)
-    s = re.sub(r"\bStop\s+([A-Z0-9]+)\b", r"[\1]", s, flags=re.I)
-    return re.sub(r"\s+", " ", s).strip()
-
-
-def norm(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", "", clean_text(value).lower())
-
-
-def line_norm(value: Any) -> str:
-    return re.sub(r"\s+", "", clean_text(value).upper())
-
-
-def safe_int(value: Any, default: int = 0) -> int:
-    try:
-        if value is None or str(value).strip() == "":
-            return default
-        return int(float(str(value)))
-    except Exception:
-        return default
-
-
-def safe_float(value: Any) -> Optional[float]:
-    try:
-        if value is None or str(value).strip() == "":
-            return None
-        return float(str(value))
-    except Exception:
-        return None
-
-
-def parse_iso_dt(value: Any) -> Optional[datetime]:
-    s = clean_text(value)
-    if not s:
-        return None
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(LONDON)
-    except Exception:
-        return None
-
-
-def gtfs_time_to_datetime(service_day: date, gtfs_time: str) -> Optional[datetime]:
-    gtfs_time = clean_text(gtfs_time)
-    if not gtfs_time:
-        return None
-    try:
-        hh, mm, *rest = gtfs_time.split(":")
-        h = int(hh)
-        m = int(mm)
-        sec = int(rest[0]) if rest else 0
-        extra = h // 24
-        h = h % 24
-        return datetime.combine(service_day + timedelta(days=extra), time(h, m, sec), tzinfo=LONDON)
-    except Exception:
-        return None
-
-
-def hhmm(dt: Optional[datetime]) -> str:
-    return dt.astimezone(LONDON).strftime("%H:%M") if dt else ""
-
-
-def minutes_until(dt: Optional[datetime]) -> Optional[int]:
-    if not dt:
-        return None
-    return int(round((dt.astimezone(LONDON) - now_london()).total_seconds() / 60))
-
-
-def stop_code_from_name(stop_name: str) -> str:
-    m = re.search(r"\[([A-Z0-9]{1,6})\]", clean_text(stop_name), flags=re.I)
-    return m.group(1).upper() if m else ""
-
-
-def public_stop_code(row: Dict[str, Any]) -> str:
-    by_name = stop_code_from_name(row.get("stop_name", ""))
-    if by_name:
-        return by_name
-    pc = clean_text(row.get("platform_code"))
-    if pc and len(pc) <= 6 and re.search(r"[A-Za-z]", pc):
-        return pc.upper()
-    return "BUS"
-
-
-def short_destination(value: str) -> str:
-    s = human_name(value).replace("Southampton, ", "")
-    known = [
-        ("Winchester Bus Station", "Winchester"),
-        ("Hanover Buildings", "Southampton"),
-        ("Vincents Walk", "Southampton"),
-        ("Bargate", "Southampton"),
-        ("City Centre", "City"),
-        ("Adanac Park", "Adanac Park"),
-        ("Lordshill", "Lordshill"),
-        ("Weston", "Weston"),
-        ("Millbrook", "Millbrook"),
-        ("Sholing", "Sholing"),
-        ("Hamble", "Hamble"),
-        ("Romsey", "Romsey"),
-        ("Eastleigh", "Eastleigh"),
-        ("Chandlers Ford", "Chandlers Ford"),
-        ("North Harbour", "North Harbour"),
-        ("Thornhill", "Thornhill"),
-        ("Fair Oak", "Fair Oak"),
-        ("Hedge End", "Hedge End"),
-        ("Totton", "Totton"),
-        ("Calmore", "Calmore"),
-        ("Bevois Valley", "Bevois Valley"),
-    ]
-    ns = norm(s)
-    for a, b in known:
-        if norm(a) in ns:
-            return b
-    s = re.sub(r"\s*\[[A-Z0-9]+\]\s*$", "", s).strip()
-    return s[:27].rstrip() + "…" if len(s) > 28 else s
-
-
-def destination_match(a: str, b: str) -> bool:
-    na, nb = norm(a), norm(b)
-    if not na or not nb:
-        return False
-    if na == nb or na in nb or nb in na:
-        return True
-    sa, sb = norm(short_destination(a)), norm(short_destination(b))
-    return bool(sa and sb and (sa == sb or sa in sb or sb in sa))
-
-
-def extract_codes(*values: Any) -> Set[str]:
-    out: Set[str] = set()
-    for value in values:
-        s = clean_text(value)
-        if not s:
-            continue
-        out.add(norm(s))
-        for m in re.finditer(r"\d{3,6}", s):
-            out.add(m.group(0))
-            out.add(m.group(0)[-4:])
-        for part in re.split(r"[^A-Za-z0-9]+", s):
-            p = part.strip()
-            if len(p) >= 3:
-                out.add(p.upper())
-    return {x for x in out if x}
-
-
-def haversine_m(lat1: Any, lon1: Any, lat2: Any, lon2: Any) -> Optional[float]:
-    try:
-        lat1, lon1, lat2, lon2 = float(lat1), float(lon1), float(lat2), float(lon2)
-        r = 6371000.0
-        dlat = radians(lat2 - lat1)
-        dlon = radians(lon2 - lon1)
-        a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
-        return 2 * r * asin(sqrt(a))
-    except Exception:
-        return None
-
-
 def stop_same(stop: Dict[str, Any], stop_ref: str = "", stop_name: str = "") -> bool:
     if stop_ref and clean_text(stop_ref).upper() == clean_text(stop.get("stop_id")).upper():
         return True
@@ -227,196 +63,10 @@ def stop_same(stop: Dict[str, Any], stop_ref: str = "", stop_name: str = "") -> 
     return False
 
 
-class GTFSStore:
-    def __init__(self):
-        self.loaded = False
-        self.error = ""
-        self.source = ""
-        self.agency: Dict[str, Dict[str, Any]] = {}
-        self.stops: Dict[str, Dict[str, Any]] = {}
-        self.routes: Dict[str, Dict[str, Any]] = {}
-        self.trips: Dict[str, Dict[str, Any]] = {}
-        self.calendar: Dict[str, Dict[str, Any]] = {}
-        self.calendar_dates: Dict[str, Dict[str, int]] = defaultdict(dict)
-        self.stop_times_by_trip: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        self.stop_departures_index: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        self.shapes: Dict[str, List[Dict[str, float]]] = defaultdict(list)
-        self.route_by_short: Dict[str, List[str]] = defaultdict(list)
-
-    def _read_zip(self, zf: zipfile.ZipFile, name: str) -> List[Dict[str, str]]:
-        target = None
-        for n in zf.namelist():
-            if n.lower() == name.lower() or n.lower().endswith("/" + name.lower()):
-                target = n
-                break
-        if not target:
-            return []
-        return list(csv.DictReader(io.StringIO(zf.read(target).decode("utf-8-sig", errors="replace"))))
-
-    def _read_dir(self, folder: Path, name: str) -> List[Dict[str, str]]:
-        p = folder / name
-        if not p.exists():
-            return []
-        return list(csv.DictReader(io.StringIO(p.read_text(encoding="utf-8-sig", errors="replace"))))
-
-    def load(self):
-        self.__init__()
-        try:
-            if GTFS_ZIP.exists():
-                self.load_from_path(GTFS_ZIP)
-                return
-            elif GTFS_DIR.exists():
-                self.source = f"dir:{GTFS_DIR.name}"
-                self._load_tables(lambda n: self._read_dir(GTFS_DIR, n))
-            else:
-                raise FileNotFoundError("GTFS not found: upload gtfs.zip or add gtfs/ folder")
-            self.loaded = bool(self.stops and self.routes and self.trips and self.stop_times_by_trip)
-            if not self.loaded:
-                raise RuntimeError("GTFS loaded but required tables are empty")
-        except Exception as exc:
-            self.loaded = False
-            self.error = str(exc)
-
-    def load_from_path(self, path: Path):
-        self.__init__()
-        candidate = Path(path)
-        try:
-            if not candidate.is_file():
-                raise FileNotFoundError(f"GTFS ZIP not found: {candidate}")
-            self.source = f"zip:{candidate.name}"
-            with zipfile.ZipFile(candidate, "r") as zf:
-                self._load_tables(lambda n: self._read_zip(zf, n))
-            self.loaded = bool(self.stops and self.routes and self.trips and self.stop_times_by_trip)
-            if not self.loaded:
-                raise RuntimeError("GTFS loaded but required tables are empty")
-        except Exception as exc:
-            self.loaded = False
-            self.error = str(exc)
-        return self
-
-    def _load_tables(self, reader):
-        for r in reader("agency.txt"):
-            aid = clean_text(r.get("agency_id")) or "agency"
-            self.agency[aid] = dict(r)
-
-        for r in reader("stops.txt"):
-            sid = clean_text(r.get("stop_id"))
-            if not sid:
-                continue
-            name = human_name(r.get("stop_name")) or sid
-            self.stops[sid] = {
-                **dict(r),
-                "stop_id": sid,
-                "stop_name": name,
-                "name": name,
-                "code": public_stop_code({**dict(r), "stop_name": name}),
-                "lat": safe_float(r.get("stop_lat")),
-                "lon": safe_float(r.get("stop_lon")),
-            }
-
-        for r in reader("routes.txt"):
-            rid = clean_text(r.get("route_id"))
-            if not rid:
-                continue
-            short = clean_text(r.get("route_short_name")) or clean_text(r.get("route_long_name")) or rid
-            row = {**dict(r), "route_id": rid, "route_short_name": short, "line": short}
-            self.routes[rid] = row
-            self.route_by_short[line_norm(short)].append(rid)
-
-        for r in reader("trips.txt"):
-            tid = clean_text(r.get("trip_id"))
-            if not tid:
-                continue
-            rid = clean_text(r.get("route_id"))
-            line = self.routes.get(rid, {}).get("route_short_name", "")
-            self.trips[tid] = {**dict(r), "trip_id": tid, "route_id": rid, "line": line, "destination": short_destination(r.get("trip_headsign"))}
-
-        for r in reader("calendar.txt"):
-            sid = clean_text(r.get("service_id"))
-            if sid:
-                self.calendar[sid] = dict(r)
-
-        for r in reader("calendar_dates.txt"):
-            sid = clean_text(r.get("service_id"))
-            d = clean_text(r.get("date"))
-            if sid and d:
-                self.calendar_dates[sid][d] = safe_int(r.get("exception_type"), 0)
-
-        for r in reader("stop_times.txt"):
-            tid = clean_text(r.get("trip_id"))
-            sid = clean_text(r.get("stop_id"))
-            if not tid or not sid:
-                continue
-            row = {**dict(r), "trip_id": tid, "stop_id": sid, "stop_sequence": safe_int(r.get("stop_sequence"), 0)}
-            self.stop_times_by_trip[tid].append(row)
-
-        for tid, rows in self.stop_times_by_trip.items():
-            rows.sort(key=lambda x: safe_int(x.get("stop_sequence"), 0))
-            trip = self.trips.get(tid, {})
-            if not trip:
-                continue
-            for i, row in enumerate(rows):
-                sid = row.get("stop_id")
-                st = self.stops.get(sid, {})
-                dep = {
-                    **row,
-                    "line": trip.get("line", ""),
-                    "route_id": trip.get("route_id", ""),
-                    "service_id": trip.get("service_id", ""),
-                    "direction_id": trip.get("direction_id", ""),
-                    "headsign": short_destination(row.get("stop_headsign") or trip.get("trip_headsign") or trip.get("destination")),
-                    "headsign_full": human_name(row.get("stop_headsign") or trip.get("trip_headsign") or trip.get("destination")),
-                    "stop_name": st.get("stop_name", sid),
-                    "stop_code": st.get("code", "BUS"),
-                    "is_last_stop": i == len(rows) - 1,
-                }
-                self.stop_departures_index[sid].append(dep)
-
-        shape_rows = reader("shapes.txt")
-        for r in shape_rows:
-            sid = clean_text(r.get("shape_id"))
-            lat = safe_float(r.get("shape_pt_lat"))
-            lon = safe_float(r.get("shape_pt_lon"))
-            if sid and lat is not None and lon is not None:
-                self.shapes[sid].append({"lat": lat, "lon": lon, "seq": safe_int(r.get("shape_pt_sequence"), 0)})
-        for sid, pts in self.shapes.items():
-            pts.sort(key=lambda p: p.get("seq", 0))
-
-    def active_service_ids(self, service_day: date) -> Set[str]:
-        ymd = service_day.strftime("%Y%m%d")
-        weekday = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"][service_day.weekday()]
-        active: Set[str] = set()
-        for sid, r in self.calendar.items():
-            start = clean_text(r.get("start_date"))
-            end = clean_text(r.get("end_date"))
-            if start and ymd < start:
-                continue
-            if end and ymd > end:
-                continue
-            if clean_text(r.get(weekday)) == "1":
-                active.add(sid)
-        for sid, changes in self.calendar_dates.items():
-            et = changes.get(ymd)
-            if et == 1:
-                active.add(sid)
-            elif et == 2 and sid in active:
-                active.remove(sid)
-        if not self.calendar and self.calendar_dates:
-            for sid, changes in self.calendar_dates.items():
-                if changes.get(ymd) == 1:
-                    active.add(sid)
-        return active
-
-    def trip_first_stop(self, trip_id: str) -> Dict[str, Any]:
-        rows = self.stop_times_by_trip.get(trip_id, [])
-        return rows[0] if rows else {}
-
-    def trip_last_stop(self, trip_id: str) -> Dict[str, Any]:
-        rows = self.stop_times_by_trip.get(trip_id, [])
-        return rows[-1] if rows else {}
-
-
-gtfs = GTFSStore()
+gtfs_provider = GTFSStoreProvider(
+    GTFSStore(zip_path=GTFS_ZIP, directory_path=GTFS_DIR)
+)
+gtfs = GTFSStoreProxy(gtfs_provider)
 
 
 def xml_text(node: Optional[ET.Element], path: str = "") -> str:
@@ -437,14 +87,6 @@ def xml_text(node: Optional[ET.Element], path: str = "") -> str:
 
 def children_by_local(root: ET.Element, name: str) -> List[ET.Element]:
     return [e for e in root.iter() if e.tag.split("}")[-1] == name]
-
-
-def fleet_from_vehicle_ref(vehicle_ref: str) -> str:
-    s = clean_text(vehicle_ref)
-    if not s:
-        return ""
-    nums = re.findall(r"\d{2,6}", s)
-    return nums[-1][-4:] if nums else s[-6:]
 
 
 class LiveStore:
@@ -546,27 +188,26 @@ live_store = LiveStore()
 
 
 def service_days_for_departures() -> List[date]:
-    n = now_london()
-    return [(n - timedelta(days=1)).date(), n.date(), (n + timedelta(days=1)).date()]
+    return service_days(now_london())
 
 
 def trip_headsign(trip: Dict[str, Any]) -> str:
     return human_name(trip.get("trip_headsign") or trip.get("destination") or "")
 
 
-def shape_for_trip(trip: Dict[str, Any]) -> List[Dict[str, float]]:
+def shape_for_trip(store: GTFSStore, trip: Dict[str, Any]) -> List[Dict[str, float]]:
     sid = clean_text(trip.get("shape_id"))
-    if sid and gtfs.shapes.get(sid):
-        return gtfs.shapes[sid][:3000]
+    if sid and store.shapes.get(sid):
+        return store.shapes[sid][:3000]
     out = []
-    for r in gtfs.stop_times_by_trip.get(trip.get("trip_id"), []):
-        st = gtfs.stops.get(r.get("stop_id"), {})
+    for r in store.stop_times_by_trip.get(trip.get("trip_id"), []):
+        st = store.stops.get(r.get("stop_id"), {})
         if st.get("lat") is not None and st.get("lon") is not None:
             out.append({"lat": st["lat"], "lon": st["lon"]})
     return out
 
 
-def match_live_to_departure(dep: Dict[str, Any], sched_dt: datetime, vehicles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def match_live_to_departure(store: GTFSStore, dep: Dict[str, Any], sched_dt: datetime, vehicles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     best = None
     best_score = -9999
     for v in vehicles:
@@ -581,7 +222,7 @@ def match_live_to_departure(dep: Dict[str, Any], sched_dt: datetime, vehicles: L
             if diff > LIVE_MATCH_MINUTES:
                 continue
             score += max(0, 100 - int(diff * 3))
-        stop = gtfs.stops.get(dep.get("stop_id"), {})
+        stop = store.stops.get(dep.get("stop_id"), {})
         if stop_same(stop, v.get("currentStopRef", ""), v.get("currentStopName", "")):
             score += 80
         if v.get("vehicleAtStop"):
@@ -594,8 +235,8 @@ def match_live_to_departure(dep: Dict[str, Any], sched_dt: datetime, vehicles: L
     return best
 
 
-def enrich_departure(dep: Dict[str, Any], service_day: date, sched_dt: datetime, vehicles: List[Dict[str, Any]]) -> Dict[str, Any]:
-    live = match_live_to_departure(dep, sched_dt, vehicles)
+def enrich_departure(store: GTFSStore, dep: Dict[str, Any], service_day: date, sched_dt: datetime, vehicles: List[Dict[str, Any]]) -> Dict[str, Any]:
+    live = match_live_to_departure(store, dep, sched_dt, vehicles)
     live_dt = parse_iso_dt(live.get("liveTime")) if live else None
     display_dt = live_dt or sched_dt
     mins = minutes_until(display_dt)
@@ -627,13 +268,13 @@ def enrich_departure(dep: Dict[str, Any], service_day: date, sched_dt: datetime,
     }
 
 
-def find_live_for_trip(trip: Dict[str, Any], service_day: date, vehicles: List[Dict[str, Any]], vehicle_hint: str = "") -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
+def find_live_for_trip(store: GTFSStore, trip: Dict[str, Any], service_day: date, vehicles: List[Dict[str, Any]], vehicle_hint: str = "") -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
     line = trip.get("line", "")
     dest = trip_headsign(trip)
     trip_id = trip.get("trip_id", "")
     hint_codes = extract_codes(vehicle_hint)
-    rows = gtfs.stop_times_by_trip.get(trip_id, [])
-    first = gtfs.trip_first_stop(trip_id)
+    rows = store.stop_times_by_trip.get(trip_id, [])
+    first = store.trip_first_stop(trip_id)
     first_dt = gtfs_time_to_datetime(service_day, first.get("departure_time") or first.get("arrival_time") or "")
     best = None
     best_seq = None
@@ -652,7 +293,7 @@ def find_live_for_trip(trip: Dict[str, Any], service_day: date, vehicles: List[D
             score += 300
         seq_found = None
         for r in rows:
-            st = gtfs.stops.get(r.get("stop_id"), {})
+            st = store.stops.get(r.get("stop_id"), {})
             if stop_same(st, v.get("currentStopRef", ""), v.get("currentStopName", "")):
                 seq_found = safe_int(r.get("stop_sequence"), 0)
                 score += 160
@@ -674,15 +315,21 @@ def api_error(text: str, status: int = 400):
 
 
 def require_gtfs():
-    if not gtfs.loaded:
-        gtfs.load()
-    if not gtfs.loaded:
-        return api_error(f"GTFS data unavailable: {gtfs.error or 'no usable dataset'}", 503)
-    return None
+    store = gtfs_provider.get()
+    if not store.loaded:
+        candidate = GTFSStore(zip_path=GTFS_ZIP, directory_path=GTFS_DIR).load()
+        if candidate.loaded:
+            gtfs_provider.replace(candidate)
+            store = candidate
+    if not store.loaded:
+        return store, api_error(f"GTFS data unavailable: {store.error or 'no usable dataset'}", 503)
+    return store, None
 
 
 def initialize_legacy_stores():
-    gtfs.load()
+    candidate = GTFSStore(zip_path=GTFS_ZIP, directory_path=GTFS_DIR).load()
+    if candidate.loaded:
+        gtfs_provider.replace(candidate)
     live_store.fetch(force=True)
 
 
@@ -693,8 +340,7 @@ def health():
 
 @app.get("/api/status")
 def status():
-    if not gtfs.loaded:
-        gtfs.load()
+    store, _ = require_gtfs()
     vehicles = live_store.fetch()
     refresh_service = getattr(app.state, "gtfs_refresh", None)
     refresh = refresh_service.snapshot() if refresh_service else {}
@@ -709,11 +355,11 @@ def status():
             "lastFetchTime": live_store.last_fetch.isoformat() if live_store.last_fetch else None,
         },
         "gtfs": {
-            "ok": gtfs.loaded,
-            "loaded": gtfs.loaded,
-            "error": gtfs.error or None,
-            "source": refresh.get("source") or gtfs.source,
-            "activeDataSource": gtfs.source,
+            "ok": store.loaded,
+            "loaded": store.loaded,
+            "error": store.error or None,
+            "source": refresh.get("source") or store.source,
+            "activeDataSource": store.source,
             "refreshEnabled": refresh.get("enabled", False),
             "refreshRunning": refresh.get("running", False),
             "lastCheckedAt": refresh.get("lastCheckedAt"),
@@ -722,17 +368,18 @@ def status():
             "sha256": refresh.get("sha256"),
             "etag": refresh.get("etag"),
             "lastModified": refresh.get("lastModified"),
-            "usingCachedData": refresh.get("usingCachedData", bool(gtfs.loaded)),
+            "usingCachedData": refresh.get("usingCachedData", bool(store.loaded)),
             "refreshIntervalSeconds": refresh.get("refreshIntervalSeconds"),
-            "lastError": refresh.get("lastError") or (gtfs.error or None),
+            "lastError": refresh.get("lastError") or (store.error or None),
+            "metadataPersistenceError": refresh.get("metadataPersistenceError"),
             "counts": {
-                "agency": len(gtfs.agency),
-                "stops": len(gtfs.stops),
-                "routes": len(gtfs.routes),
-                "trips": len(gtfs.trips),
-                "stop_times_trips": len(gtfs.stop_times_by_trip),
-                "stop_departures_index_stops": len(gtfs.stop_departures_index),
-                "shapes": len(gtfs.shapes),
+                "agency": len(store.agency),
+                "stops": len(store.stops),
+                "routes": len(store.routes),
+                "trips": len(store.trips),
+                "stop_times_trips": len(store.stop_times_by_trip),
+                "stop_departures_index_stops": len(store.stop_departures_index),
+                "shapes": len(store.shapes),
             },
         },
         "serverTime": now_london().isoformat(),
@@ -750,7 +397,7 @@ def index():
 
 @app.get("/api/search")
 def api_search(q: str = ""):
-    unavailable = require_gtfs()
+    store, unavailable = require_gtfs()
     if unavailable:
         return unavailable
     query = clean_text(q)
@@ -758,7 +405,7 @@ def api_search(q: str = ""):
     stops = []
     routes = []
     if nq:
-        for sid, st in gtfs.stops.items():
+        for sid, st in store.stops.items():
             hay = norm(st.get("stop_name", "") + " " + sid + " " + st.get("code", ""))
             if nq in hay:
                 stops.append({
@@ -771,7 +418,7 @@ def api_search(q: str = ""):
                 })
                 if len(stops) >= 50:
                     break
-        for rid, rt in gtfs.routes.items():
+        for rid, rt in store.routes.items():
             line = rt.get("route_short_name", "")
             hay = norm(line + " " + rt.get("route_long_name", "") + " " + rid)
             if nq in hay or nq == norm(line):
@@ -788,10 +435,10 @@ def api_search(q: str = ""):
 
 @app.get("/api/stops/{stop_id}/departures")
 def api_stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN):
-    unavailable = require_gtfs()
+    store, unavailable = require_gtfs()
     if unavailable:
         return unavailable
-    stop = gtfs.stops.get(stop_id)
+    stop = store.stops.get(stop_id)
     if not stop:
         return api_error("Stop not found", 404)
     n = now_london()
@@ -799,8 +446,8 @@ def api_stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN):
     vehicles = live_store.fetch()
     result = []
     for service_day in service_days_for_departures():
-        active = gtfs.active_service_ids(service_day)
-        for dep in gtfs.stop_departures_index.get(stop_id, []):
+        active = store.active_service_ids(service_day)
+        for dep in store.stop_departures_index.get(stop_id, []):
             if active and dep.get("service_id") not in active:
                 continue
             if clean_text(dep.get("pickup_type")) == "1" or dep.get("is_last_stop"):
@@ -808,7 +455,7 @@ def api_stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN):
             sched_dt = gtfs_time_to_datetime(service_day, dep.get("departure_time") or dep.get("arrival_time"))
             if not sched_dt or sched_dt < n - timedelta(minutes=2) or sched_dt > end:
                 continue
-            result.append(enrich_departure(dep, service_day, sched_dt, vehicles))
+            result.append(enrich_departure(store, dep, service_day, sched_dt, vehicles))
     result.sort(key=lambda x: x.get("displayTimeIso") or x.get("scheduledTimeIso") or "")
     dedup = []
     seen = set()
@@ -823,25 +470,25 @@ def api_stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN):
 
 @app.get("/api/trips/{trip_id}")
 def api_trip(trip_id: str, service_date: str = "", vehicle: str = ""):
-    unavailable = require_gtfs()
+    store, unavailable = require_gtfs()
     if unavailable:
         return unavailable
-    trip = gtfs.trips.get(trip_id)
+    trip = store.trips.get(trip_id)
     if not trip:
         return api_error("Trip not found", 404)
     try:
         service_day = date.fromisoformat(service_date) if service_date else now_london().date()
     except Exception:
         service_day = now_london().date()
-    route = gtfs.routes.get(trip.get("route_id"), {})
+    route = store.routes.get(trip.get("route_id"), {})
     vehicles = live_store.fetch()
-    live, current_seq = find_live_for_trip(trip, service_day, vehicles, vehicle)
-    rows = gtfs.stop_times_by_trip.get(trip_id, [])
+    live, current_seq = find_live_for_trip(store, trip, service_day, vehicles, vehicle)
+    rows = store.stop_times_by_trip.get(trip_id, [])
     n = now_london()
     delay = live.get("delayMinutes") if live else None
     out = []
     for r in rows:
-        st = gtfs.stops.get(r.get("stop_id"), {})
+        st = store.stops.get(r.get("stop_id"), {})
         sched_dt = gtfs_time_to_datetime(service_day, r.get("departure_time") or r.get("arrival_time"))
         live_dt = None
         is_current = False
@@ -898,26 +545,26 @@ def api_trip(trip_id: str, service_date: str = "", vehicle: str = ""):
         "live": live,
         "delayLabel": delay_label,
         "currentSequence": current_seq,
-        "shape": shape_for_trip(trip),
+        "shape": shape_for_trip(store, trip),
         "now": now_london().isoformat(),
     }
 
 
 @app.get("/api/routes/{line}")
 def api_route(line: str):
-    unavailable = require_gtfs()
+    store, unavailable = require_gtfs()
     if unavailable:
         return unavailable
     ln = line_norm(line)
-    route_ids = gtfs.route_by_short.get(ln, [])
+    route_ids = store.route_by_short.get(ln, [])
     if not route_ids:
-        route_ids = [rid for rid, r in gtfs.routes.items() if line_norm(r.get("route_id")) == ln]
+        route_ids = [rid for rid, r in store.routes.items() if line_norm(r.get("route_id")) == ln]
     if not route_ids:
         return api_error("Route not found", 404)
     vehicles = [v for v in live_store.fetch() if line_norm(v.get("line")) == ln]
-    active = gtfs.active_service_ids(now_london().date()) | gtfs.active_service_ids((now_london() - timedelta(days=1)).date())
+    active = store.active_service_ids(now_london().date()) | store.active_service_ids((now_london() - timedelta(days=1)).date())
     directions_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    for trip in gtfs.trips.values():
+    for trip in store.trips.values():
         if trip.get("route_id") not in route_ids:
             continue
         if active and trip.get("service_id") not in active:
@@ -927,13 +574,13 @@ def api_route(line: str):
         if key in directions_map:
             continue
         stops = []
-        for r in gtfs.stop_times_by_trip.get(trip.get("trip_id"), []):
-            st = gtfs.stops.get(r.get("stop_id"), {})
+        for r in store.stop_times_by_trip.get(trip.get("trip_id"), []):
+            st = store.stops.get(r.get("stop_id"), {})
             stops.append({"id": r.get("stop_id"), "name": st.get("stop_name", r.get("stop_id")), "code": st.get("code", "BUS"), "lat": st.get("lat"), "lon": st.get("lon"), "sequence": r.get("stop_sequence")})
         directions_map[key] = {"directionId": key[0], "destination": dest, "tripId": trip.get("trip_id"), "stops": stops}
         if len(directions_map) >= 6:
             break
-    return {"ok": True, "line": clean_text(line), "routes": [gtfs.routes[rid] for rid in route_ids], "vehicles": vehicles, "directions": list(directions_map.values())}
+    return {"ok": True, "line": clean_text(line), "routes": [store.routes[rid] for rid in route_ids], "vehicles": vehicles, "directions": list(directions_map.values())}
 
 
 @app.get("/api/vehicles")
@@ -947,7 +594,7 @@ def api_vehicles(line: str = ""):
 
 @app.get("/api/map")
 def api_map(line: str = ""):
-    unavailable = require_gtfs()
+    store, unavailable = require_gtfs()
     if unavailable:
         return unavailable
     ln = line_norm(line)
@@ -956,24 +603,24 @@ def api_map(line: str = ""):
         vehicles = [v for v in vehicles if line_norm(v.get("line")) == ln]
     shapes = []
     if ln:
-        route_ids = gtfs.route_by_short.get(ln, [])
-        active = gtfs.active_service_ids(now_london().date()) | gtfs.active_service_ids((now_london() - timedelta(days=1)).date())
+        route_ids = store.route_by_short.get(ln, [])
+        active = store.active_service_ids(now_london().date()) | store.active_service_ids((now_london() - timedelta(days=1)).date())
         seen = set()
-        for trip in gtfs.trips.values():
+        for trip in store.trips.values():
             sid = clean_text(trip.get("shape_id"))
             if trip.get("route_id") in route_ids and sid and sid not in seen:
                 if active and trip.get("service_id") not in active:
                     continue
-                pts = gtfs.shapes.get(sid, [])
+                pts = store.shapes.get(sid, [])
                 if pts:
                     shapes.append({"shapeId": sid, "points": pts[:3000]})
                     seen.add(sid)
             if len(shapes) >= 8:
                 break
         if not shapes:
-            for trip in gtfs.trips.values():
+            for trip in store.trips.values():
                 if trip.get("route_id") in route_ids:
-                    shapes.append({"shapeId": trip.get("trip_id"), "points": shape_for_trip(trip)})
+                    shapes.append({"shapeId": trip.get("trip_id"), "points": shape_for_trip(store, trip)})
                     break
     pts = [(v.get("latitude"), v.get("longitude")) for v in vehicles if v.get("latitude") is not None and v.get("longitude") is not None]
     if pts:

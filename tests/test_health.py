@@ -57,24 +57,21 @@ class HealthTests(unittest.TestCase):
             "refreshIntervalSeconds": 21600,
             "lastError": None,
         }
-        original_store = legacy.gtfs
-        try:
-            legacy.gtfs = UnavailableStore()
-            with patch.object(gtfs_refresh, "snapshot", return_value=fake_refresh), patch.object(
-                legacy.live_store, "fetch", return_value=[]
-            ):
-                status = legacy.status()
-        finally:
-            legacy.gtfs = original_store
+        with patch.object(legacy.gtfs_provider, "get", return_value=UnavailableStore()), patch.object(
+            legacy, "GTFSStore", return_value=UnavailableStore()
+        ), patch.object(
+            gtfs_refresh, "snapshot", return_value=fake_refresh
+        ), patch.object(legacy.live_store, "fetch", return_value=[]):
+            status = legacy.status()
         self.assertFalse(status["gtfs"]["loaded"])
         self.assertTrue(status["gtfs"]["refreshEnabled"])
         self.assertEqual(status["gtfs"]["refreshIntervalSeconds"], 21600)
         self.assertEqual(status["gtfs"]["etag"], '"v1"')
 
     def test_gtfs_data_endpoints_return_503_when_unavailable(self):
-        original_store = legacy.gtfs
-        try:
-            legacy.gtfs = UnavailableStore()
+        with patch.object(legacy.gtfs_provider, "get", return_value=UnavailableStore()), patch.object(
+            legacy, "GTFSStore", return_value=UnavailableStore()
+        ):
             responses = [
                 legacy.api_search("x"),
                 legacy.api_stop_departures("S"),
@@ -82,8 +79,6 @@ class HealthTests(unittest.TestCase):
                 legacy.api_route("1"),
                 legacy.api_map("1"),
             ]
-        finally:
-            legacy.gtfs = original_store
         self.assertTrue(all(response.status_code == 503 for response in responses))
 
 

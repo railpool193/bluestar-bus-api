@@ -62,6 +62,14 @@ Refresh metadata is atomically written to `data/gtfs/metadata.json`. Corrupt
 metadata is ignored at startup. `/api/status` and `/health` remain available
 without GTFS; GTFS-dependent data endpoints return HTTP 503.
 
+The active GTFS implementation now lives in `app/services/gtfs_loader.py`, with
+calendar evaluation in `app/services/gtfs_calendar.py`. A thread-safe provider
+atomically swaps fully built stores. Each GTFS-dependent request obtains one
+store snapshot at its start, so an in-flight request can safely finish against
+the previous immutable-by-convention instance while a refresh activates the new
+one. Metadata persistence failures are reported separately and do not roll back
+an already successful data activation.
+
 The refresh worker is process-local. Railway should run one web worker unless
 duplicate per-process feed checks are intentionally acceptable.
 
@@ -69,8 +77,10 @@ duplicate per-process feed checks are intentionally acceptable.
 
 `app.main:app` is the deployment entry point. During the compatibility phase it
 exports the proven FastAPI instance from the root `main.py`, preserving the
-existing endpoint contracts while new services move into `app/`. No legacy GTFS,
-SIRI or frontend file has been deleted. See `docs/current-system-assessment.md`.
+existing endpoint contracts. Pure time, text and geographic helpers plus the
+GTFS loader/calendar/provider have moved into `app/`; SIRI parsing, live matching
+and endpoint declarations remain in the root compatibility module. No legacy
+GTFS, SIRI or frontend file has been deleted. See `docs/current-system-assessment.md`.
 
 ## Tests
 

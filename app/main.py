@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 import main as legacy
 
 from app.config import settings
+from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_refresh import GTFSRefreshService
 
 
@@ -12,11 +13,11 @@ app = legacy.app
 
 
 def _build_candidate(path):
-    return legacy.GTFSStore().load_from_path(path)
+    return GTFSStore().load_from_path(path)
 
 
 def _activate_candidate(candidate) -> None:
-    legacy.gtfs = candidate
+    legacy.gtfs_provider.replace(candidate)
 
 
 gtfs_refresh = GTFSRefreshService(

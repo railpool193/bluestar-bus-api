@@ -107,6 +107,7 @@ class GTFSRefreshService:
             "downloadedBytes": 0,
             "refreshIntervalSeconds": self.interval_seconds,
             "lastError": None,
+            "metadataPersistenceError": None,
         }
 
     def _load_metadata(self) -> dict:
@@ -142,6 +143,16 @@ class GTFSRefreshService:
         finally:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
+
+    def _persist_metadata(self) -> bool:
+        self._metadata["metadataPersistenceError"] = None
+        try:
+            self._write_metadata()
+            return True
+        except Exception as exc:
+            self._metadata["metadataPersistenceError"] = str(exc)
+            logger.warning("Could not persist GTFS refresh metadata: %s", exc)
+            return False
 
     @staticmethod
     def _sha256(path: Path) -> str:
@@ -224,7 +235,7 @@ class GTFSRefreshService:
             status = getattr(response, "status", getattr(response, "code", 200))
             if status == 304:
                 self._metadata.update({"usingCachedData": True, "lastError": None})
-                self._write_metadata()
+                self._persist_metadata()
                 return False
             if not 200 <= int(status) < 300:
                 raise ValueError(f"Unexpected GTFS HTTP status: {status}")
@@ -260,7 +271,7 @@ class GTFSRefreshService:
                         "lastError": None,
                     }
                 )
-                self._write_metadata()
+                self._persist_metadata()
                 return False
             candidate = self.build_candidate(temp_path)
             if candidate is None or not getattr(candidate, "loaded", False):
@@ -299,15 +310,12 @@ class GTFSRefreshService:
                     "lastError": None,
                 }
             )
-            self._write_metadata()
+            self._persist_metadata()
             return True
         except Exception as exc:
             self._metadata.update({"usingCachedData": self.target_path.exists(), "lastError": str(exc)})
             logger.exception("GTFS refresh failed: %s", exc)
-            try:
-                self._write_metadata()
-            except Exception as metadata_exc:
-                logger.warning("Could not persist GTFS refresh error: %s", metadata_exc)
+            self._persist_metadata()
             return False
         finally:
             if temp_path is not None:
