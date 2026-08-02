@@ -1,0 +1,1 @@
+"""Vehicle endpoint migration boundary."""

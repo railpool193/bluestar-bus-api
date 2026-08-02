@@ -1,0 +1,1 @@
+"""Bluestar modular application package."""

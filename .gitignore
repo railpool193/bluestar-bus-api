@@ -1,0 +1,6 @@
+.venv/
+.deps/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.gtfs.tmp
