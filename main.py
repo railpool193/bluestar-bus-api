@@ -263,9 +263,8 @@ class GTFSStore:
         self.__init__()
         try:
             if GTFS_ZIP.exists():
-                self.source = f"zip:{GTFS_ZIP.name}"
-                with zipfile.ZipFile(GTFS_ZIP, "r") as zf:
-                    self._load_tables(lambda n: self._read_zip(zf, n))
+                self.load_from_path(GTFS_ZIP)
+                return
             elif GTFS_DIR.exists():
                 self.source = f"dir:{GTFS_DIR.name}"
                 self._load_tables(lambda n: self._read_dir(GTFS_DIR, n))
@@ -277,6 +276,23 @@ class GTFSStore:
         except Exception as exc:
             self.loaded = False
             self.error = str(exc)
+
+    def load_from_path(self, path: Path):
+        self.__init__()
+        candidate = Path(path)
+        try:
+            if not candidate.is_file():
+                raise FileNotFoundError(f"GTFS ZIP not found: {candidate}")
+            self.source = f"zip:{candidate.name}"
+            with zipfile.ZipFile(candidate, "r") as zf:
+                self._load_tables(lambda n: self._read_zip(zf, n))
+            self.loaded = bool(self.stops and self.routes and self.trips and self.stop_times_by_trip)
+            if not self.loaded:
+                raise RuntimeError("GTFS loaded but required tables are empty")
+        except Exception as exc:
+            self.loaded = False
+            self.error = str(exc)
+        return self
 
     def _load_tables(self, reader):
         for r in reader("agency.txt"):
@@ -657,8 +673,15 @@ def api_error(text: str, status: int = 400):
     return JSONResponse({"ok": False, "error": text}, status_code=status)
 
 
-@app.on_event("startup")
-def startup():
+def require_gtfs():
+    if not gtfs.loaded:
+        gtfs.load()
+    if not gtfs.loaded:
+        return api_error(f"GTFS data unavailable: {gtfs.error or 'no usable dataset'}", 503)
+    return None
+
+
+def initialize_legacy_stores():
     gtfs.load()
     live_store.fetch(force=True)
 
@@ -673,6 +696,8 @@ def status():
     if not gtfs.loaded:
         gtfs.load()
     vehicles = live_store.fetch()
+    refresh_service = getattr(app.state, "gtfs_refresh", None)
+    refresh = refresh_service.snapshot() if refresh_service else {}
     return {
         "live": {
             "ok": live_store.ok,
@@ -685,8 +710,21 @@ def status():
         },
         "gtfs": {
             "ok": gtfs.loaded,
+            "loaded": gtfs.loaded,
             "error": gtfs.error or None,
-            "source": gtfs.source,
+            "source": refresh.get("source") or gtfs.source,
+            "activeDataSource": gtfs.source,
+            "refreshEnabled": refresh.get("enabled", False),
+            "refreshRunning": refresh.get("running", False),
+            "lastCheckedAt": refresh.get("lastCheckedAt"),
+            "lastUpdatedAt": refresh.get("lastUpdatedAt"),
+            "lastSuccessfulLoadAt": refresh.get("lastSuccessfulLoadAt"),
+            "sha256": refresh.get("sha256"),
+            "etag": refresh.get("etag"),
+            "lastModified": refresh.get("lastModified"),
+            "usingCachedData": refresh.get("usingCachedData", bool(gtfs.loaded)),
+            "refreshIntervalSeconds": refresh.get("refreshIntervalSeconds"),
+            "lastError": refresh.get("lastError") or (gtfs.error or None),
             "counts": {
                 "agency": len(gtfs.agency),
                 "stops": len(gtfs.stops),
@@ -712,8 +750,9 @@ def index():
 
 @app.get("/api/search")
 def api_search(q: str = ""):
-    if not gtfs.loaded:
-        gtfs.load()
+    unavailable = require_gtfs()
+    if unavailable:
+        return unavailable
     query = clean_text(q)
     nq = norm(query)
     stops = []
@@ -749,8 +788,9 @@ def api_search(q: str = ""):
 
 @app.get("/api/stops/{stop_id}/departures")
 def api_stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN):
-    if not gtfs.loaded:
-        gtfs.load()
+    unavailable = require_gtfs()
+    if unavailable:
+        return unavailable
     stop = gtfs.stops.get(stop_id)
     if not stop:
         return api_error("Stop not found", 404)
@@ -783,8 +823,9 @@ def api_stop_departures(stop_id: str, minutes: int = DEPARTURE_WINDOW_MIN):
 
 @app.get("/api/trips/{trip_id}")
 def api_trip(trip_id: str, service_date: str = "", vehicle: str = ""):
-    if not gtfs.loaded:
-        gtfs.load()
+    unavailable = require_gtfs()
+    if unavailable:
+        return unavailable
     trip = gtfs.trips.get(trip_id)
     if not trip:
         return api_error("Trip not found", 404)
@@ -864,8 +905,9 @@ def api_trip(trip_id: str, service_date: str = "", vehicle: str = ""):
 
 @app.get("/api/routes/{line}")
 def api_route(line: str):
-    if not gtfs.loaded:
-        gtfs.load()
+    unavailable = require_gtfs()
+    if unavailable:
+        return unavailable
     ln = line_norm(line)
     route_ids = gtfs.route_by_short.get(ln, [])
     if not route_ids:
@@ -905,8 +947,9 @@ def api_vehicles(line: str = ""):
 
 @app.get("/api/map")
 def api_map(line: str = ""):
-    if not gtfs.loaded:
-        gtfs.load()
+    unavailable = require_gtfs()
+    if unavailable:
+        return unavailable
     ln = line_norm(line)
     vehicles = live_store.fetch()
     if ln:

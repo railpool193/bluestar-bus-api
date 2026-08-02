@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import os
+import shutil
 import tempfile
 import threading
+import time
+import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Callable, Optional
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Optional
 
+
+logger = logging.getLogger(__name__)
 
 REQUIRED_GTFS_FILES = {
     "agency.txt",
@@ -19,18 +26,27 @@ REQUIRED_GTFS_FILES = {
     "trips.txt",
     "stop_times.txt",
 }
+CALENDAR_FILES = {"calendar.txt", "calendar_dates.txt"}
 
 
-@dataclass
-class RefreshStatus:
-    enabled: bool = False
-    running: bool = False
-    last_attempt: Optional[str] = None
-    last_success: Optional[str] = None
-    last_error: Optional[str] = None
-    source_url_configured: bool = False
-    changed: bool = False
-    sha256: Optional[str] = None
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def masked_url(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    if not parsed.query:
+        return url
+    sensitive = {"api_key", "apikey", "key", "token", "secret", "password", "signature", "sig"}
+    masked_query = urllib.parse.urlencode(
+        [
+            (key, "***" if key.lower() in sensitive else value)
+            for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        ]
+    )
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, masked_query, parsed.fragment)
+    )
 
 
 class GTFSRefreshService:
@@ -39,26 +55,93 @@ class GTFSRefreshService:
         *,
         source_url: str,
         target_path: Path,
+        metadata_path: Path,
         interval_seconds: int,
         timeout_seconds: int,
         max_download_bytes: int,
+        max_uncompressed_bytes: int,
+        max_attempts: int,
         enabled: bool,
-        on_changed: Optional[Callable[[], None]] = None,
+        build_candidate: Callable[[Path], Any],
+        activate_candidate: Callable[[Any], None],
+        opener: Callable[..., Any] = urllib.request.urlopen,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.source_url = source_url
-        self.target_path = target_path
+        self.target_path = Path(target_path)
+        self.metadata_path = Path(metadata_path)
         self.interval_seconds = interval_seconds
         self.timeout_seconds = timeout_seconds
         self.max_download_bytes = max_download_bytes
+        self.max_uncompressed_bytes = max_uncompressed_bytes
+        self.max_attempts = min(3, max(1, max_attempts))
         self.enabled = enabled and bool(source_url)
-        self.on_changed = on_changed
-        self.status = RefreshStatus(
-            enabled=self.enabled,
-            source_url_configured=bool(source_url),
-        )
+        self.build_candidate = build_candidate
+        self.activate_candidate = activate_candidate
+        self.opener = opener
+        self.sleep = sleep
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._metadata = self._load_metadata()
+        self._metadata.update(
+            {
+                "source": masked_url(source_url),
+                "activeZipPath": str(self.target_path),
+                "refreshIntervalSeconds": interval_seconds,
+            }
+        )
+        self.running = False
+
+    def _default_metadata(self) -> dict:
+        return {
+            "source": masked_url(self.source_url),
+            "lastCheckedAt": None,
+            "lastUpdatedAt": None,
+            "lastSuccessfulLoadAt": None,
+            "sha256": None,
+            "etag": None,
+            "lastModified": None,
+            "usingCachedData": self.target_path.exists(),
+            "activeZipPath": str(self.target_path),
+            "downloadedBytes": 0,
+            "refreshIntervalSeconds": self.interval_seconds,
+            "lastError": None,
+        }
+
+    def _load_metadata(self) -> dict:
+        metadata = self._default_metadata()
+        try:
+            if self.metadata_path.is_file():
+                loaded = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    metadata.update(loaded)
+        except Exception as exc:
+            logger.warning("Ignoring unreadable GTFS metadata: %s", exc)
+        return metadata
+
+    def _write_metadata(self) -> None:
+        self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path: Optional[Path] = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="\n",
+                delete=False,
+                dir=self.metadata_path.parent,
+                suffix=".json.tmp",
+            ) as stream:
+                temp_path = Path(stream.name)
+                json.dump(self._metadata, stream, ensure_ascii=False, indent=2, sort_keys=True)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_path, self.metadata_path)
+            temp_path = None
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
 
     @staticmethod
     def _sha256(path: Path) -> str:
@@ -68,32 +151,84 @@ class GTFSRefreshService:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    @staticmethod
-    def validate(path: Path) -> None:
+    def validate(self, path: Path) -> None:
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError("GTFS download is empty")
         if not zipfile.is_zipfile(path):
             raise ValueError("Downloaded GTFS source is not a ZIP file")
         with zipfile.ZipFile(path) as archive:
-            names = {Path(name).name.lower() for name in archive.namelist()}
+            total_uncompressed = 0
+            names = set()
+            for info in archive.infolist():
+                normalized = info.filename.replace("\\", "/")
+                zip_path = PurePosixPath(normalized)
+                if zip_path.is_absolute() or ".." in zip_path.parts:
+                    raise ValueError(f"Unsafe path in GTFS ZIP: {info.filename}")
+                total_uncompressed += info.file_size
+                if total_uncompressed > self.max_uncompressed_bytes:
+                    raise ValueError("GTFS uncompressed content exceeds configured size limit")
+                names.add(zip_path.name.lower())
+            bad_file = archive.testzip()
+            if bad_file:
+                raise ValueError(f"GTFS ZIP CRC check failed: {bad_file}")
             missing = sorted(REQUIRED_GTFS_FILES - names)
             if missing:
                 raise ValueError(f"GTFS ZIP is missing required files: {', '.join(missing)}")
+            if not names.intersection(CALENDAR_FILES):
+                raise ValueError("GTFS ZIP must contain calendar.txt or calendar_dates.txt")
 
     def snapshot(self) -> dict:
-        return asdict(self.status)
+        return {
+            **self._metadata,
+            "enabled": self.enabled,
+            "running": self.running,
+            "sourceUrlConfigured": bool(self.source_url),
+        }
+
+    def _request_headers(self) -> dict:
+        headers = {"User-Agent": "Bluestar-GTFS-Refresh/2.0"}
+        if self._metadata.get("etag"):
+            headers["If-None-Match"] = self._metadata["etag"]
+        if self._metadata.get("lastModified"):
+            headers["If-Modified-Since"] = self._metadata["lastModified"]
+        return headers
+
+    def _open_with_retry(self, request: urllib.request.Request):
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                return self.opener(request, timeout=self.timeout_seconds)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 304:
+                    return exc
+                if exc.code < 500 or attempt == self.max_attempts:
+                    raise
+                last_error = exc
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                if attempt == self.max_attempts:
+                    raise
+                last_error = exc
+            self.sleep(min(attempt, 2))
+        raise RuntimeError(str(last_error) if last_error else "GTFS download failed")
 
     def refresh(self) -> bool:
         if not self.enabled or not self._lock.acquire(blocking=False):
             return False
-        self.status.running = True
-        self.status.last_attempt = datetime.now(timezone.utc).isoformat()
+        self.running = True
+        self._metadata["lastCheckedAt"] = utc_now()
         temp_path: Optional[Path] = None
         try:
             self.target_path.parent.mkdir(parents=True, exist_ok=True)
-            request = urllib.request.Request(
-                self.source_url,
-                headers={"User-Agent": "Bluestar-GTFS-Refresh/1.0"},
-            )
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            request = urllib.request.Request(self.source_url, headers=self._request_headers())
+            response = self._open_with_retry(request)
+            status = getattr(response, "status", getattr(response, "code", 200))
+            if status == 304:
+                self._metadata.update({"usingCachedData": True, "lastError": None})
+                self._write_metadata()
+                return False
+            if not 200 <= int(status) < 300:
+                raise ValueError(f"Unexpected GTFS HTTP status: {status}")
+            with response:
                 content_length = response.headers.get("Content-Length")
                 if content_length and int(content_length) > self.max_download_bytes:
                     raise ValueError("GTFS download exceeds configured size limit")
@@ -109,28 +244,75 @@ class GTFSRefreshService:
                         stream.write(chunk)
                     stream.flush()
                     os.fsync(stream.fileno())
+                etag = response.headers.get("ETag")
+                last_modified = response.headers.get("Last-Modified")
+            self._metadata["downloadedBytes"] = downloaded
             self.validate(temp_path)
             new_hash = self._sha256(temp_path)
             old_hash = self._sha256(self.target_path) if self.target_path.exists() else None
-            changed = new_hash != old_hash
-            if changed:
+            if new_hash == old_hash:
+                self._metadata.update(
+                    {
+                        "sha256": new_hash,
+                        "etag": etag or self._metadata.get("etag"),
+                        "lastModified": last_modified or self._metadata.get("lastModified"),
+                        "usingCachedData": True,
+                        "lastError": None,
+                    }
+                )
+                self._write_metadata()
+                return False
+            candidate = self.build_candidate(temp_path)
+            if candidate is None or not getattr(candidate, "loaded", False):
+                error = getattr(candidate, "error", None) if candidate is not None else None
+                raise ValueError(error or "Candidate GTFSStore could not be loaded")
+            backup_path: Optional[Path] = None
+            if self.target_path.exists():
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", delete=False, dir=self.target_path.parent, suffix=".rollback.tmp"
+                ) as backup:
+                    backup_path = Path(backup.name)
+                shutil.copy2(self.target_path, backup_path)
+            try:
                 os.replace(temp_path, self.target_path)
                 temp_path = None
-                if self.on_changed:
-                    self.on_changed()
-            self.status.changed = changed
-            self.status.sha256 = new_hash
-            self.status.last_success = datetime.now(timezone.utc).isoformat()
-            self.status.last_error = None
-            return changed
+                self.activate_candidate(candidate)
+            except Exception:
+                if backup_path is not None:
+                    os.replace(backup_path, self.target_path)
+                    backup_path = None
+                else:
+                    self.target_path.unlink(missing_ok=True)
+                raise
+            finally:
+                if backup_path is not None:
+                    backup_path.unlink(missing_ok=True)
+            successful_at = utc_now()
+            self._metadata.update(
+                {
+                    "lastUpdatedAt": successful_at,
+                    "lastSuccessfulLoadAt": successful_at,
+                    "sha256": new_hash,
+                    "etag": etag,
+                    "lastModified": last_modified,
+                    "usingCachedData": False,
+                    "lastError": None,
+                }
+            )
+            self._write_metadata()
+            return True
         except Exception as exc:
-            self.status.changed = False
-            self.status.last_error = str(exc)
+            self._metadata.update({"usingCachedData": self.target_path.exists(), "lastError": str(exc)})
+            logger.exception("GTFS refresh failed: %s", exc)
+            try:
+                self._write_metadata()
+            except Exception as metadata_exc:
+                logger.warning("Could not persist GTFS refresh error: %s", metadata_exc)
             return False
         finally:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
-            self.status.running = False
+            self.running = False
             self._lock.release()
 
     def _run(self) -> None:

@@ -41,11 +41,30 @@ in 2025 while the checked `gtfs/` calendar starts in 2026. `gtfs.py`,
 `gtfs_core.py`, and `gtfs_utils.py` are parallel implementations and are not
 imported by the active application.
 
-The new `GTFSRefreshService` downloads a configured feed with a timeout and
-size limit, validates required GTFS files, compares SHA-256, atomically replaces
-the configured ZIP, and reloads the active in-memory store. A failed download
-or validation leaves the last working ZIP untouched. Refresh is disabled when
-no source URL is configured.
+`GTFSRefreshService` uses Bluestar's public current-network GTFS URL by default
+and checks every 21600 seconds (6 hours). `GTFS_DOWNLOAD_URL` and the compatible
+`GTFS_URL` override the source; `GTFS_REFRESH_SECONDS` and the compatible
+`GTFS_REFRESH_INTERVAL_SECONDS` override the interval.
+
+Each refresh downloads to a temporary file with bounded retry, timeout and size
+limits. It verifies HTTP success, non-empty content, ZIP structure, CRC, safe
+member paths, total uncompressed size, required tables and at least one calendar
+table. It then builds a complete `GTFSStore` through `load_from_path`. Only a
+successfully loaded candidate may replace the active ZIP, after which a single
+assignment activates the candidate store. Requests therefore see either the old
+complete store or the new complete store, never a partially populated instance.
+
+ETag and Last-Modified values are persisted and sent as `If-None-Match` and
+`If-Modified-Since`. HTTP 304 only updates `lastCheckedAt`; it does not rewrite
+or reload data. SHA-256 provides unchanged-content detection when cache headers
+are absent. Metadata is atomically written to `data/gtfs/metadata.json`; corrupt
+metadata is logged and ignored rather than blocking startup.
+
+The FastAPI lifespan owns one daemon refresh thread per process and stops it on
+shutdown. Multiple Railway workers would each perform their own checks, so one
+worker is the recommended default. `/health` performs no GTFS read or download.
+`/api/status` remains diagnostic when GTFS is missing, while GTFS-dependent
+search, stop, trip, route and map endpoints return an explanatory HTTP 503.
 
 ## SIRI and live matching flow
 
