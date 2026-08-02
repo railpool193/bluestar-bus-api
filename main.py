@@ -10,7 +10,6 @@ from fastapi.staticfiles import StaticFiles
 
 from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_store_provider import GTFSStoreProvider, GTFSStoreProxy
-from app.services.live_matching import find_live_for_trip, stop_same
 from app.services.live_store_provider import LiveSnapshotProvider
 from app.services.siri_parser import children_by_local, xml_text
 from app.services.vehicle_service import vehicles_for_line
@@ -19,8 +18,9 @@ from app.api.health import create_health_router
 from app.api.search import create_search_router
 from app.api.status import create_status_router
 from app.api.stops import create_stops_router
+from app.api.trips import create_trips_router
 from app.api.vehicles import create_vehicles_router
-from app.api.dependencies import APIRuntime, SearchRuntime, StatusRuntime, StopRuntime
+from app.api.dependencies import APIRuntime, SearchRuntime, StatusRuntime, StopRuntime, TripRuntime
 from app.utils.geo_utils import haversine_m
 from app.utils.text_utils import (
     clean_text, destination_match, extract_codes, fleet_from_vehicle_ref,
@@ -91,18 +91,6 @@ def trip_headsign(trip: Dict[str, Any]) -> str:
     return human_name(trip.get("trip_headsign") or trip.get("destination") or "")
 
 
-def shape_for_trip(store: GTFSStore, trip: Dict[str, Any]) -> List[Dict[str, float]]:
-    sid = clean_text(trip.get("shape_id"))
-    if sid and store.shapes.get(sid):
-        return store.shapes[sid][:3000]
-    out = []
-    for r in store.stop_times_by_trip.get(trip.get("trip_id"), []):
-        st = store.stops.get(r.get("stop_id"), {})
-        if st.get("lat") is not None and st.get("lon") is not None:
-            out.append({"lat": st["lat"], "lon": st["lon"]})
-    return out
-
-
 def api_error(text: str, status: int = 400):
     return JSONResponse({"ok": False, "error": text}, status_code=status)
 
@@ -135,88 +123,6 @@ def index():
     if p.exists():
         return FileResponse(str(p))
     return HTMLResponse("Bluestar Unilink")
-
-
-@app.get("/api/trips/{trip_id}")
-def api_trip(trip_id: str, service_date: str = "", vehicle: str = ""):
-    store, unavailable = require_gtfs()
-    if unavailable:
-        return unavailable
-    trip = store.trips.get(trip_id)
-    if not trip:
-        return api_error("Trip not found", 404)
-    try:
-        service_day = date.fromisoformat(service_date) if service_date else now_london().date()
-    except Exception:
-        service_day = now_london().date()
-    route = store.routes.get(trip.get("route_id"), {})
-    vehicles = current_live_vehicles()
-    live, current_seq = find_live_for_trip(store, trip, service_day, vehicles, vehicle_hint=vehicle)
-    rows = store.stop_times_by_trip.get(trip_id, [])
-    n = now_london()
-    delay = live.get("delayMinutes") if live else None
-    out = []
-    for r in rows:
-        st = store.stops.get(r.get("stop_id"), {})
-        sched_dt = gtfs_time_to_datetime(service_day, r.get("departure_time") or r.get("arrival_time"))
-        live_dt = None
-        is_current = False
-        live_future = False
-        seq = safe_int(r.get("stop_sequence"), 0)
-        if live:
-            if stop_same(st, live.get("currentStopRef", ""), live.get("currentStopName", "")):
-                is_current = True
-                live_dt = parse_iso_dt(live.get("liveTime")) or sched_dt
-            elif current_seq and seq > current_seq and isinstance(delay, int) and sched_dt:
-                live_future = True
-                live_dt = sched_dt + timedelta(minutes=delay)
-        display_dt = live_dt or sched_dt
-        mins = minutes_until(display_dt)
-        if mins is not None and mins < 0:
-            mins = None
-        past = bool(display_dt and display_dt < n - timedelta(seconds=30) and not is_current)
-        if current_seq and seq < current_seq:
-            past = True
-        if is_current:
-            right = "LIVE" if live.get("vehicleAtStop") else "Due"
-        elif mins is not None:
-            right = "Due" if mins <= 1 and (live_future or live) else f"{mins}'"
-        else:
-            right = ""
-        out.append({
-            "stopId": r.get("stop_id"),
-            "name": st.get("stop_name", r.get("stop_id")),
-            "sequence": seq,
-            "lat": st.get("lat"),
-            "lon": st.get("lon"),
-            "scheduledTime": hhmm(sched_dt),
-            "scheduledTimeIso": sched_dt.isoformat() if sched_dt else "",
-            "displayTime": hhmm(display_dt),
-            "displayTimeIso": display_dt.isoformat() if display_dt else "",
-            "minutes": mins,
-            "rightLabel": right,
-            "live": bool(is_current or live_future),
-            "current": is_current,
-            "past": past,
-        })
-    if isinstance(delay, int):
-        delay_label = f"{delay:+d}"
-    elif live:
-        delay_label = "LIVE"
-    else:
-        delay_label = "--"
-    return {
-        "ok": True,
-        "trip": {**trip, "destination": short_destination(trip_headsign(trip)), "destinationFull": trip_headsign(trip)},
-        "route": route,
-        "serviceDate": service_day.isoformat(),
-        "stops": out,
-        "live": live,
-        "delayLabel": delay_label,
-        "currentSequence": current_seq,
-        "shape": shape_for_trip(store, trip),
-        "now": now_london().isoformat(),
-    }
 
 
 @app.get("/api/routes/{line}")
@@ -295,6 +201,14 @@ stops_router, api_stop_departures = create_stops_router(
     ),
     unavailable_response=api_error,
 )
+trips_router, api_trip = create_trips_router(
+    runtime=TripRuntime(
+        gtfs_provider=gtfs_provider,
+        live_provider=live_snapshot_provider,
+        now=lambda: now_london(),
+    ),
+    unavailable_response=api_error,
+)
 map_router, api_map = create_map_router(
     runtime=APIRuntime(
         gtfs_provider=gtfs_provider,
@@ -309,6 +223,7 @@ app.router.routes.extend(health_router.routes)
 app.router.routes.extend(status_router.routes)
 app.router.routes.extend(search_router.routes)
 app.router.routes.extend(stops_router.routes)
+app.router.routes.extend(trips_router.routes)
 app.router.routes.extend(vehicles_router.routes)
 app.router.routes.extend(map_router.routes)
 

@@ -178,9 +178,26 @@ still returns scheduled departures without initiating a fetch.
 
 Both routers are registered exactly once before the frontend catch-all. The root
 compatibility module retains callable aliases but no decorators or copied
-response assembly for these endpoints. Trips, routes, `/`, and the frontend
-fallback remain in the root module. The next migration should move trips and
-routes, with trips first because routes can then reuse the extracted trip/shape
+response assembly for these endpoints.
+
+## Eighth-stage trip boundary
+
+`GET /api/trips/{trip_id}` now lives in `app/api/trips.py`. Its `TripRuntime`
+provides one GTFS snapshot, one live snapshot and one current-time value per
+request. Valid ISO service dates are honored; missing or invalid values fall back
+to that single reference time's local date.
+
+The complete response assembly is in `app/services/trip_service.py`. It reuses
+`find_live_for_trip`, `stop_same`, the shared time/text helpers, and
+`app/services/map_service.py`'s `shape_for_trip`. Current-stop LIVE/Due labels,
+future-stop delay estimates, past-stop state and signed delay labels remain
+compatible. Without a matching SIRI vehicle it returns the full scheduled trip,
+and shape data falls back to stop coordinates when GTFS shapes are unavailable.
+
+The trip router is registered exactly once before the frontend catch-all. The
+root compatibility module now retains only the routes endpoint, `/`, and the
+frontend fallback. The next migration should move the routes endpoint while
+reusing the existing vehicle filtering, trip headsign, calendar, and stop/shape
 presentation services.
 
 ## Incremental migration plan
@@ -193,8 +210,8 @@ presentation services.
 5. **Complete:** move SIRI fetching and live matching into isolated services
    with mocked HTTP and XML fixtures.
 6. **In progress:** move endpoint groups into `app/api/` routers one at a time,
-   retaining aliases. Vehicles, map, health, status, search, and stop departures
-   are complete; trips and routes remain.
+   retaining aliases. Vehicles, map, health, status, search, stop departures,
+   and trips are complete; routes remains.
 7. Split the active inline frontend into `static/css` and `static/js/views` only
    after browser-level regression coverage exists.
 8. Compare and archive duplicate data/code only after runtime references and
