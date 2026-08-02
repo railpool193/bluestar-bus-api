@@ -95,10 +95,14 @@ remain available and the snapshot becomes stale with an error diagnostic.
 
 ## Migration status
 
-`app.main:app` is the deployment entry point. During the compatibility phase it
-exports the proven FastAPI instance from the root `main.py`, preserving the
-existing endpoint contracts. Pure time, text and geographic helpers plus the
-GTFS and SIRI services have moved into `app/`. `/api/vehicles` is implemented by
+`app.main:app` is the deployment entry point and creates the production app with
+`app.factory.create_app()`. `app.runtime.ApplicationRuntime` owns one GTFS
+provider, one live provider, and their refresh services per application. Merely
+creating or importing an app does not start workers; lifespan loads a local GTFS
+candidate, then starts GTFS and live refresh, and shuts them down live-first.
+
+Pure time, text and geographic helpers plus the GTFS and SIRI services live in
+`app/`. `/api/vehicles` is implemented by
 `app/api/vehicles.py` and `/api/map` by `app/api/map.py`; `/health` and
 `/api/status`, `/api/search`, `/api/stops/{stop_id}/departures`, and
 `/api/trips/{trip_id}` and `/api/routes/{line}` are implemented by their
@@ -110,9 +114,11 @@ falls back to scheduled output. Trip presentation reuses the shared live-matchin
 and map-shape services, including stop-coordinate shape fallback. Route requests
 also read one GTFS/live/time snapshot, combine current and previous service days,
 deduplicate directions by direction and destination, and retain at most six.
-No migrated request loads or downloads data. Only frontend route declarations
-remain in the root compatibility module. No legacy
-GTFS, SIRI or frontend file has been deleted. See `docs/current-system-assessment.md`.
+No migrated request loads or downloads data. `app/api/frontend.py` owns `/` and
+the final SPA catch-all; `/static` is mounted once when its directory exists.
+The root `main.py` is only a compatibility re-export shim and creates no app,
+provider, service, route, or mount. No legacy GTFS, SIRI, frontend, or data file
+has been deleted. See `docs/current-system-assessment.md`.
 
 ## Tests
 

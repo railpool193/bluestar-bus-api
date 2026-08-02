@@ -12,6 +12,7 @@ from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_store_provider import GTFSStoreProvider
 from app.services.live_store_provider import LiveSnapshot, LiveSnapshotProvider
 from app.utils.time_utils import LONDON
+from tests.route_helpers import application_routes
 
 
 NOW = datetime(2026, 8, 2, 10, 0, tzinfo=LONDON)
@@ -44,11 +45,12 @@ def runtime(store, live):
 class APIRouterMigrationTests(unittest.TestCase):
     def test_routes_and_openapi_are_registered_exactly_once_before_fallback(self):
         for path in ("/api/vehicles", "/api/map"):
-            self.assertEqual(sum(getattr(route, "path", None) == path for route in app.routes), 1)
+            self.assertEqual(sum(getattr(route, "path", None) == path for route in application_routes(app)), 1)
             self.assertIn(path, app.openapi()["paths"])
-        fallback_index = next(index for index, route in enumerate(app.routes) if getattr(route, "path", None) == "/{path:path}")
+        routes = application_routes(app)
+        fallback_index = next(index for index, route in enumerate(routes) if getattr(route, "path", None) == "/{path:path}")
         for path in ("/api/vehicles", "/api/map"):
-            api_index = next(index for index, route in enumerate(app.routes) if getattr(route, "path", None) == path)
+            api_index = next(index for index, route in enumerate(routes) if getattr(route, "path", None) == path)
             self.assertLess(api_index, fallback_index)
 
     def test_vehicles_empty_success_filter_stale_and_snapshot_immutability(self):

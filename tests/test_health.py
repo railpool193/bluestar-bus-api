@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from app.main import app, gtfs_refresh, gtfs_refresh_status
 import main as legacy
+from tests.route_helpers import application_routes
 
 
 class UnavailableStore:
@@ -23,7 +24,7 @@ class UnavailableStore:
 
 class HealthTests(unittest.TestCase):
     def test_expected_routes_are_registered(self):
-        paths = {route.path for route in app.routes}
+        paths = {getattr(route, "path", None) for route in application_routes(app)}
         for path in (
             "/health", "/api/status", "/api/gtfs/refresh/status", "/api/search",
             "/api/stops/{stop_id}/departures", "/api/routes/{line}",

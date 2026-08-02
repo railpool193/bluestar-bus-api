@@ -2,9 +2,10 @@
 
 ## Runtime and deployment
 
-The live implementation is the root `main.py`. It creates a FastAPI application,
+The live implementation is `app.main:app`, assembled by `app/factory.py`. It
 mounts `static/` at `/static`, serves `templates/index.html` for `/` and all
-non-API fallback paths, and loads GTFS plus live SIRI data during startup.
+non-API fallback paths, and loads local GTFS plus starts refresh workers only
+during lifespan startup. Root `main.py` is a compatibility re-export shim.
 
 The previous `Procfile` used `gunicorn main:app`; `render.yaml` used
 `uvicorn main:app`. The new deployment entry point is consistently
@@ -214,6 +215,34 @@ compatibility module now contains only `GET /` and the frontend fallback as
 endpoint declarations. The next stage should migrate application assembly and
 frontend routes incrementally; it should not delete legacy files.
 
+## Tenth-stage application assembly
+
+`app/factory.py` now creates each FastAPI application, installs CORS, mounts
+`/static` when available, registers all API routers through `include_router`, and
+adds `app/api/frontend.py` last. `app/api/gtfs.py` owns refresh diagnostics and
+`app/api/errors.py` owns the shared JSON error response. Every concrete endpoint
+is unique and precedes the SPA catch-all.
+
+`app/runtime.py` owns application-scoped GTFS/live providers, compatibility
+proxies, and GTFS/live refresh services. Separate factory calls use separate
+mutable providers. Runtime construction performs no download, XML parsing, or
+worker start. Lifespan first attempts a local GTFS candidate load, then starts
+GTFS refresh followed by live refresh; shutdown stops live refresh and then GTFS
+refresh. Individual startup failures are logged without unnecessarily preventing
+the web app from serving.
+
+`app/main.py` creates the single production instance with `app = create_app()`
+and exports its runtime and refresh services. The root `main.py` is now a minimal
+one-way compatibility shim: it re-exports the same app and selected historic
+names but creates no FastAPI app, providers, services, routes, or mounts. No
+module under `app/` imports the root module. `Procfile` and Render use
+`app.main:app`.
+
+All API router migrations and application assembly are complete. No legacy or
+parallel data/frontend files were deleted. The next stage is browser-level
+frontend regression coverage; CSS/JavaScript decomposition should only follow
+that safety net.
+
 ## Incremental migration plan
 
 1. Keep `app.main:app` as the stable deployment boundary and retain legacy code.
@@ -223,10 +252,10 @@ frontend routes incrementally; it should not delete legacy files.
    activate complete candidates through a store provider.
 5. **Complete:** move SIRI fetching and live matching into isolated services
    with mocked HTTP and XML fixtures.
-6. **In progress:** move endpoint groups into `app/api/` routers one at a time,
+6. **Complete:** move endpoint groups into `app/api/` routers one at a time,
    retaining aliases. Vehicles, map, health, status, search, stop departures,
-   trips, and routes are complete. Application assembly and frontend routes
-   remain.
+   trips, and routes are complete; application assembly and frontend routes are
+   now also owned by the `app` package.
 7. Split the active inline frontend into `static/css` and `static/js/views` only
    after browser-level regression coverage exists.
 8. Compare and archive duplicate data/code only after runtime references and

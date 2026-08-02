@@ -15,6 +15,7 @@ from app.services.live_store_provider import LiveSnapshot
 from app.services.live_store_provider import LiveSnapshotProvider
 from app.utils.time_utils import LONDON
 import main as legacy
+from tests.route_helpers import application_routes
 
 
 NOW = datetime(2026, 8, 3, 1, 0, tzinfo=LONDON)
@@ -78,7 +79,7 @@ class SearchStopLegacyContractTests(unittest.TestCase):
     def setUp(self):
         self.store = contract_store()
         self.store_patch = patch.object(legacy.gtfs_provider, "get", return_value=self.store)
-        self.now_patch = patch.object(legacy, "now_london", return_value=NOW)
+        self.now_patch = patch("app.runtime.now_london", return_value=NOW)
         self.live_patch = patch.object(legacy.live_snapshot_provider, "get", return_value=LiveSnapshot())
         self.store_patch.start()
         self.now_patch.start()
@@ -151,13 +152,14 @@ class SearchStopLegacyContractTests(unittest.TestCase):
 
 class SearchStopRouterBoundaryTests(unittest.TestCase):
     def test_routes_and_openapi_are_registered_once_before_fallback(self):
+        routes = application_routes(app)
         fallback_index = next(
-            index for index, route in enumerate(app.routes)
+            index for index, route in enumerate(routes)
             if getattr(route, "path", None) == "/{path:path}"
         )
         for path in ("/api/search", "/api/stops/{stop_id}/departures"):
             matches = [
-                index for index, route in enumerate(app.routes)
+                index for index, route in enumerate(routes)
                 if getattr(route, "path", None) == path
             ]
             self.assertEqual(len(matches), 1)

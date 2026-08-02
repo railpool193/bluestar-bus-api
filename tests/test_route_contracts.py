@@ -13,6 +13,7 @@ from app.services.gtfs_store_provider import GTFSStoreProvider
 from app.services.live_store_provider import LiveSnapshot, LiveSnapshotProvider
 from app.utils.time_utils import LONDON
 import main as legacy
+from tests.route_helpers import application_routes
 
 
 NOW = datetime(2026, 8, 3, 1, 0, tzinfo=LONDON)
@@ -93,7 +94,7 @@ class RouteLegacyContractTests(unittest.TestCase):
     def setUp(self):
         self.store = route_store()
         self.store_patch = patch.object(legacy.gtfs_provider, "get", return_value=self.store)
-        self.now_patch = patch.object(legacy, "now_london", return_value=NOW)
+        self.now_patch = patch("app.runtime.now_london", return_value=NOW)
         self.live_patch = patch.object(legacy.live_snapshot_provider, "get", return_value=LiveSnapshot((vehicle(),), True))
         self.store_patch.start(); self.now_patch.start(); self.live_patch.start()
 
@@ -156,12 +157,13 @@ class RouteRouterBoundaryTests(unittest.TestCase):
 
     def test_route_openapi_and_all_api_routes_precede_fallback(self):
         path = "/api/routes/{line}"
-        matches = [index for index, route in enumerate(app.routes) if getattr(route, "path", None) == path]
-        fallback_index = next(index for index, route in enumerate(app.routes) if getattr(route, "path", None) == "/{path:path}")
+        routes = application_routes(app)
+        matches = [index for index, route in enumerate(routes) if getattr(route, "path", None) == path]
+        fallback_index = next(index for index, route in enumerate(routes) if getattr(route, "path", None) == "/{path:path}")
         self.assertEqual(len(matches), 1)
         self.assertLess(matches[0], fallback_index)
         self.assertEqual(list(app.openapi()["paths"]).count(path), 1)
-        self.assertTrue(all(index < fallback_index for index, route in enumerate(app.routes) if str(getattr(route, "path", "")).startswith("/api/")))
+        self.assertTrue(all(index < fallback_index for index, route in enumerate(routes) if str(getattr(route, "path", "")).startswith("/api/")))
 
     def test_snapshots_and_time_are_read_once_without_io(self):
         store = route_store()

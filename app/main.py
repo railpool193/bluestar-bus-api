@@ -1,79 +1,27 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-
-import main as legacy
-
-from app.config import settings
-from app.services.gtfs_loader import GTFSStore
-from app.services.gtfs_refresh import GTFSRefreshService
-from app.services.live_refresh import LiveRefreshService
-from app.services.siri_client import SIRIClient, SIRIClientConfig
+from app.factory import create_app
+from app.runtime import create_runtime
 
 
-app = legacy.app
+runtime = create_runtime()
+app = create_app(runtime)
 
+gtfs_refresh = runtime.gtfs_refresh
+live_refresh = runtime.live_refresh
+gtfs_provider = runtime.gtfs_provider
+live_snapshot_provider = runtime.live_provider
+gtfs = runtime.gtfs
+live_store = runtime.live_store
 
-def _build_candidate(path):
-    return GTFSStore().load_from_path(path)
-
-
-def _activate_candidate(candidate) -> None:
-    legacy.gtfs_provider.replace(candidate)
-
-
-gtfs_refresh = GTFSRefreshService(
-    source_url=settings.gtfs_download_url,
-    target_path=settings.gtfs_zip_path,
-    metadata_path=settings.gtfs_metadata_path,
-    interval_seconds=settings.gtfs_refresh_interval_seconds,
-    timeout_seconds=settings.gtfs_download_timeout_seconds,
-    max_download_bytes=settings.gtfs_max_download_bytes,
-    max_uncompressed_bytes=settings.gtfs_max_uncompressed_bytes,
-    max_attempts=settings.gtfs_refresh_attempts,
-    enabled=settings.gtfs_auto_refresh,
-    build_candidate=_build_candidate,
-    activate_candidate=_activate_candidate,
-)
-app.state.gtfs_refresh = gtfs_refresh
-
-live_config = SIRIClientConfig.from_env()
-live_refresh = LiveRefreshService(
-    client=SIRIClient(live_config),
-    provider=legacy.live_snapshot_provider,
-    interval_seconds=legacy.LIVE_CACHE_TTL_SEC,
-    max_age_seconds=legacy.LIVE_MAX_AGE_SECONDS,
-    operator_filter=legacy.LIVE_OPERATOR_FILTER,
-)
-app.state.live_refresh = live_refresh
-
-
-@asynccontextmanager
-async def lifespan(_app):
-    legacy.initialize_legacy_stores()
-    gtfs_refresh.start()
-    live_refresh.start()
-    try:
-        yield
-    finally:
-        live_refresh.stop()
-        gtfs_refresh.stop()
-
-
-app.router.lifespan_context = lifespan
-
-
-@app.get("/api/gtfs/refresh/status")
-def gtfs_refresh_status() -> dict:
-    return gtfs_refresh.snapshot()
-
-
-# The compatibility app installs its frontend catch-all before this module adds
-# refresh diagnostics. Keep the API route ahead of that catch-all.
-_gtfs_refresh_route = app.router.routes.pop()
-_fallback_index = next(
-    index
-    for index, route in enumerate(app.router.routes)
-    if getattr(route, "path", None) == "/{path:path}"
-)
-app.router.routes.insert(_fallback_index, _gtfs_refresh_route)
+health = runtime.endpoints["health"]
+status = runtime.endpoints["status"]
+api_search = runtime.endpoints["api_search"]
+api_stop_departures = runtime.endpoints["api_stop_departures"]
+api_trip = runtime.endpoints["api_trip"]
+api_route = runtime.endpoints["api_route"]
+api_vehicles = runtime.endpoints["api_vehicles"]
+api_map = runtime.endpoints["api_map"]
+gtfs_refresh_status = runtime.endpoints["gtfs_refresh_status"]
+index = runtime.endpoints["index"]
+spa_fallback = runtime.endpoints["spa_fallback"]

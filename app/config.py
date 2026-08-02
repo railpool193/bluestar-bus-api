@@ -27,6 +27,16 @@ class Settings:
     gtfs_max_uncompressed_bytes: int
     gtfs_metadata_path: Path
     gtfs_refresh_attempts: int
+    app_name: str = "Bluestar Unilink Menetrend"
+    gtfs_directory_path: Path = PROJECT_ROOT / "gtfs"
+    live_cache_ttl_seconds: int = 8
+    live_max_age_seconds: int = 360
+    live_operator_filter: str = "BLUS"
+    departure_window_minutes: int = 120
+    departure_limit: int = 80
+    live_match_minutes: int = 38
+    templates_path: Path = PROJECT_ROOT / "templates"
+    static_path: Path = PROJECT_ROOT / "static"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -60,6 +70,16 @@ class Settings:
             gtfs_refresh_attempts=min(
                 3, max(1, int(os.getenv("GTFS_REFRESH_ATTEMPTS", "3")))
             ),
+            app_name=os.getenv("APP_NAME", "Bluestar Unilink Menetrend"),
+            gtfs_directory_path=Path(os.getenv("GTFS_DIR", str(PROJECT_ROOT / "gtfs"))),
+            live_cache_ttl_seconds=int(os.getenv("LIVE_CACHE_TTL_SEC", "8")),
+            live_max_age_seconds=int(os.getenv("LIVE_MAX_AGE_SECONDS", "360")),
+            live_operator_filter=os.getenv("LIVE_OPERATOR_FILTER", "BLUS").strip().upper(),
+            departure_window_minutes=int(os.getenv("DEPARTURE_WINDOW_MIN", "120")),
+            departure_limit=int(os.getenv("DEPARTURE_LIMIT", "80")),
+            live_match_minutes=int(os.getenv("LIVE_MATCH_MINUTES", "38")),
+            templates_path=PROJECT_ROOT / "templates",
+            static_path=PROJECT_ROOT / "static",
         )
 
 

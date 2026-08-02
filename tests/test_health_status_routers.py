@@ -9,6 +9,7 @@ from app.services.gtfs_loader import GTFSStore
 from app.services.gtfs_store_provider import GTFSStoreProvider
 from app.services.live_store_provider import LiveSnapshot, LiveSnapshotProvider
 from app.utils.time_utils import LONDON
+from tests.route_helpers import application_routes
 
 
 NOW = datetime(2026, 8, 2, 10, 0, tzinfo=LONDON)
@@ -64,13 +65,14 @@ def status_endpoint(store, live, refresh):
 
 class HealthStatusRouterTests(unittest.TestCase):
     def test_routes_and_openapi_are_registered_once_before_fallback(self):
+        routes = application_routes(app)
         fallback_index = next(
-            index for index, route in enumerate(app.routes)
+            index for index, route in enumerate(routes)
             if getattr(route, "path", None) == "/{path:path}"
         )
         for path in ("/health", "/api/status"):
             matches = [
-                index for index, route in enumerate(app.routes)
+                index for index, route in enumerate(routes)
                 if getattr(route, "path", None) == path
             ]
             self.assertEqual(len(matches), 1)

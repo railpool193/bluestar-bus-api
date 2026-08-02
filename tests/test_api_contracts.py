@@ -113,7 +113,7 @@ class APIContractTests(unittest.TestCase):
         self.previous_live = legacy.live_snapshot_provider.get()
         legacy.live_snapshot_provider.replace(LiveSnapshot())
         self.store_patch = patch.object(legacy.gtfs_provider, "get", return_value=self.store)
-        self.now_patch = patch.object(legacy, "now_london", return_value=FIXED_NOW)
+        self.now_patch = patch("app.runtime.now_london", return_value=FIXED_NOW)
         self.live_patch = patch.object(legacy.live_store, "fetch", return_value=[])
         self.refresh_patch = patch.object(
             gtfs_refresh,
