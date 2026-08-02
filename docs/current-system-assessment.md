@@ -146,10 +146,24 @@ stop-coordinate fallback logic is in `app/services/map_service.py`. Neither
 endpoint initiates network activity, and missing GTFS retains the HTTP 503
 contract.
 
-The root compatibility module still declares `/health`, `/api/status`,
-`/api/search`, stop departures, trips, routes, `/`, and the frontend fallback.
-The next migration should move `/health` and `/api/status`, followed by search
-and stop routers.
+## Sixth-stage health and status boundary
+
+`GET /health` now lives in `app/api/health.py`, and `GET /api/status` in
+`app/api/status.py`. Both APIRouters are registered exactly once before the
+frontend catch-all. The root compatibility module retains callable aliases only;
+it no longer declares or assembles either response.
+
+Health is a pure process check and reads only the application name and current
+time. Status uses an explicit `StatusRuntime` and reads exactly one existing GTFS
+provider snapshot, one existing live provider snapshot and one GTFS refresh
+diagnostic snapshot per request. It never invokes GTFS loading, download, SIRI
+fetching, XML parsing or refresh startup. Sensitive query values in reported GTFS
+sources are masked. The response keys and missing/stale-data behavior remain
+compatible.
+
+The root compatibility module still declares `/api/search`, stop departures,
+trips, routes, `/`, and the frontend fallback. The next router migration should
+move search and stop endpoints.
 
 ## Incremental migration plan
 
@@ -160,7 +174,8 @@ and stop routers.
    activate complete candidates through a store provider.
 5. **Complete:** move SIRI fetching and live matching into isolated services
    with mocked HTTP and XML fixtures.
-6. Move endpoint groups into `app/api/` routers one at a time, retaining aliases.
+6. **In progress:** move endpoint groups into `app/api/` routers one at a time,
+   retaining aliases. Vehicles, map, health and status are complete.
 7. Split the active inline frontend into `static/css` and `static/js/views` only
    after browser-level regression coverage exists.
 8. Compare and archive duplicate data/code only after runtime references and

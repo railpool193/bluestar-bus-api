@@ -17,8 +17,10 @@ from app.services.live_store_provider import LiveSnapshotProvider
 from app.services.siri_parser import children_by_local, xml_text
 from app.services.vehicle_service import vehicles_for_line
 from app.api.map import create_map_router
+from app.api.health import create_health_router
+from app.api.status import create_status_router
 from app.api.vehicles import create_vehicles_router
-from app.api.dependencies import APIRuntime
+from app.api.dependencies import APIRuntime, StatusRuntime
 from app.utils.geo_utils import haversine_m
 from app.utils.text_utils import (
     clean_text, destination_match, extract_codes, fleet_from_vehicle_ref,
@@ -129,67 +131,6 @@ def initialize_legacy_stores():
 
 def current_live_vehicles() -> List[Dict[str, Any]]:
     return [dict(vehicle) for vehicle in live_snapshot_provider.get().vehicles]
-
-
-@app.get("/health")
-def health():
-    return {"ok": True, "app": APP_NAME, "time": now_london().isoformat()}
-
-
-@app.get("/api/status")
-def status():
-    store, _ = require_gtfs()
-    live_snapshot = live_snapshot_provider.get().with_age(now_london())
-    vehicles = [dict(vehicle) for vehicle in live_snapshot.vehicles]
-    refresh_service = getattr(app.state, "gtfs_refresh", None)
-    refresh = refresh_service.snapshot() if refresh_service else {}
-    return {
-        "live": {
-            "ok": live_snapshot.ok,
-            "activeCount": len(vehicles),
-            "rawCount": live_snapshot.raw_count,
-            "maxAgeSeconds": LIVE_MAX_AGE_SECONDS,
-            "operatorFilter": LIVE_OPERATOR_FILTER,
-            "error": live_snapshot.error or None,
-            "lastFetchTime": live_snapshot.last_attempt_at.isoformat() if live_snapshot.last_attempt_at else None,
-            "lastAttemptAt": live_snapshot.last_attempt_at.isoformat() if live_snapshot.last_attempt_at else None,
-            "lastSuccessAt": live_snapshot.last_success_at.isoformat() if live_snapshot.last_success_at else None,
-            "stale": live_snapshot.stale,
-            "ageSeconds": live_snapshot.age_seconds,
-            "fetchDurationMs": live_snapshot.fetch_duration_ms,
-            "refreshIntervalSeconds": LIVE_CACHE_TTL_SEC,
-        },
-        "gtfs": {
-            "ok": store.loaded,
-            "loaded": store.loaded,
-            "error": store.error or None,
-            "source": refresh.get("source") or store.source,
-            "activeDataSource": store.source,
-            "refreshEnabled": refresh.get("enabled", False),
-            "refreshRunning": refresh.get("running", False),
-            "lastCheckedAt": refresh.get("lastCheckedAt"),
-            "lastUpdatedAt": refresh.get("lastUpdatedAt"),
-            "lastSuccessfulLoadAt": refresh.get("lastSuccessfulLoadAt"),
-            "sha256": refresh.get("sha256"),
-            "etag": refresh.get("etag"),
-            "lastModified": refresh.get("lastModified"),
-            "usingCachedData": refresh.get("usingCachedData", bool(store.loaded)),
-            "refreshIntervalSeconds": refresh.get("refreshIntervalSeconds"),
-            "lastError": refresh.get("lastError") or (store.error or None),
-            "metadataPersistenceError": refresh.get("metadataPersistenceError"),
-            "counts": {
-                "agency": len(store.agency),
-                "stops": len(store.stops),
-                "routes": len(store.routes),
-                "trips": len(store.trips),
-                "stop_times_trips": len(store.stop_times_by_trip),
-                "stop_departures_index_stops": len(store.stop_departures_index),
-                "shapes": len(store.shapes),
-            },
-        },
-        "serverTime": now_london().isoformat(),
-        "timezone": "Europe/London",
-    }
 
 
 @app.get("/")
@@ -397,6 +338,25 @@ vehicles_router, api_vehicles = create_vehicles_router(
         now=lambda: now_london(),
     ),
 )
+health_router, health = create_health_router(
+    app_name=APP_NAME,
+    now=lambda: now_london(),
+)
+status_router, status = create_status_router(
+    runtime=StatusRuntime(
+        gtfs_provider=gtfs_provider,
+        live_provider=live_snapshot_provider,
+        gtfs_refresh_snapshot=lambda: (
+            getattr(app.state, "gtfs_refresh").snapshot()
+            if getattr(app.state, "gtfs_refresh", None)
+            else {}
+        ),
+        now=lambda: now_london(),
+        live_max_age_seconds=LIVE_MAX_AGE_SECONDS,
+        live_operator_filter=LIVE_OPERATOR_FILTER,
+        live_refresh_interval_seconds=LIVE_CACHE_TTL_SEC,
+    ),
+)
 map_router, api_map = create_map_router(
     runtime=APIRuntime(
         gtfs_provider=gtfs_provider,
@@ -407,6 +367,8 @@ map_router, api_map = create_map_router(
     ),
     unavailable_response=api_error,
 )
+app.router.routes.extend(health_router.routes)
+app.router.routes.extend(status_router.routes)
 app.router.routes.extend(vehicles_router.routes)
 app.router.routes.extend(map_router.routes)
 
