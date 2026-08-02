@@ -21,7 +21,7 @@ def enrich_departure(store: GTFSStore, departure: Mapping[str, Any], service_day
     display_at = live_at or scheduled_at
     minutes = int(round((display_at - reference_time).total_seconds() / 60))
     if minutes < 0: minutes = 0 if minutes >= -2 else None
-    due = bool(minutes is not None and minutes <= 1)
+    due = bool(live and minutes is not None and minutes <= 1)
     return {
         "tripId": departure.get("trip_id"), "trip_id": departure.get("trip_id"), "serviceDate": service_day.isoformat(),
         "line": departure.get("line", ""), "routeId": departure.get("route_id", ""), "routeColor": store.routes.get(departure.get("route_id"), {}).get("route_color", ""), "stopId": departure.get("stop_id", ""),
@@ -33,6 +33,9 @@ def enrich_departure(store: GTFSStore, departure: Mapping[str, Any], service_day
         "minutesText": "Due" if due else (f"{minutes} min" if minutes is not None else ""),
         "live": bool(live), "isDue": due, "vehicleRef": live.get("vehicleRef") if live else "",
         "fleet": live.get("fleet") if live else "", "delayMinutes": live.get("delayMinutes") if live else None,
+        "currentStopRef": (live.get("currentStopRef") or "") if live else "",
+        "currentStopName": (live.get("currentStopName") or "") if live else "",
+        "vehicleAtStop": bool(live and live.get("vehicleAtStop")),
     }
 
 
@@ -65,7 +68,7 @@ def stop_departures(
             )
             if (
                 not scheduled_at
-                or scheduled_at < reference_time - timedelta(minutes=2)
+                or scheduled_at < reference_time - timedelta(minutes=matching_minutes)
                 or scheduled_at > end
             ):
                 continue
@@ -78,6 +81,11 @@ def stop_departures(
             matched_live=matches.get(index),
         )
         for index, (departure, service_day, scheduled_at) in enumerate(candidates)
+    ]
+    timetable_cutoff = reference_time - timedelta(seconds=90)
+    result = [
+        item for item in result
+        if item.get("live") or parse_iso_dt(item.get("scheduledTimeIso")) >= timetable_cutoff
     ]
     result.sort(key=lambda item: item.get("displayTimeIso") or item.get("scheduledTimeIso") or "")
     deduplicated: list[dict[str, Any]] = []

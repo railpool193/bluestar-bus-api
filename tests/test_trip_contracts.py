@@ -19,7 +19,7 @@ from tests.route_helpers import application_routes
 
 NOW = datetime(2026, 8, 3, 1, 0, tzinfo=LONDON)
 TOP_LEVEL_KEYS = {"ok", "trip", "route", "serviceDate", "stops", "live", "delayLabel", "currentSequence", "shape", "now"}
-STOP_KEYS = {"stopId", "name", "sequence", "lat", "lon", "scheduledTime", "scheduledTimeIso", "displayTime", "displayTimeIso", "minutes", "rightLabel", "live", "current", "past"}
+STOP_KEYS = {"stopId", "stopCode", "name", "sequence", "lat", "lon", "scheduledTime", "scheduledTimeIso", "displayTime", "displayTimeIso", "minutes", "rightLabel", "live", "current", "past"}
 
 
 def response_body(value):

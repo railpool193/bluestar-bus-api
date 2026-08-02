@@ -73,6 +73,7 @@ def present_trip(
         stops.append(
             {
                 "stopId": row.get("stop_id"),
+                "stopCode": stop.get("code", ""),
                 "name": stop.get("stop_name", row.get("stop_id")),
                 "sequence": sequence,
                 "lat": stop.get("lat"),

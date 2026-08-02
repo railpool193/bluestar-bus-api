@@ -125,7 +125,7 @@ class SearchStopLegacyContractTests(unittest.TestCase):
         departure = next(item for item in result["departures"] if item["tripId"] == "T24")
         self.assertEqual(
             set(departure),
-            {"tripId", "trip_id", "serviceDate", "line", "routeId", "routeColor", "stopId", "stopName", "stopSequence", "destination", "destinationFull", "scheduledTime", "scheduledTimeIso", "displayTime", "displayTimeIso", "minutes", "minutesText", "live", "isDue", "vehicleRef", "fleet", "delayMinutes"},
+            {"tripId", "trip_id", "serviceDate", "line", "routeId", "routeColor", "stopId", "stopName", "stopSequence", "destination", "destinationFull", "scheduledTime", "scheduledTimeIso", "displayTime", "displayTimeIso", "minutes", "minutesText", "live", "isDue", "vehicleRef", "fleet", "delayMinutes", "currentStopRef", "currentStopName", "vehicleAtStop"},
         )
         self.assertEqual(departure["serviceDate"], "2026-08-02")
         self.assertEqual(departure["scheduledTime"], "01:05")
@@ -149,9 +149,24 @@ class SearchStopLegacyContractTests(unittest.TestCase):
         live = next(item for item in result["departures"] if item["tripId"] == "T24")
         self.assertEqual((live["live"], live["isDue"], live["minutesText"]), (True, True, "Due"))
         self.assertEqual((live["vehicleRef"], live["fleet"], live["delayMinutes"]), ("V1", "1001", -4))
+        self.assertEqual((live["currentStopRef"], live["currentStopName"], live["vehicleAtStop"]), ("S1", "", True))
 
 
 class SearchStopRouterBoundaryTests(unittest.TestCase):
+    def test_past_timetable_is_removed_but_delayed_live_is_kept(self):
+        store = contract_store()
+        store.stop_departures_index["S1"] = [
+            {**store.stop_departures_index["S1"][0], "trip_id": "PAST", "departure_time": "24:57:00"},
+            {**store.stop_departures_index["S1"][0], "trip_id": "DELAYED", "departure_time": "24:55:00"},
+        ]
+        vehicle = {"line": "U1", "destinationFull": "University Interchange", "liveTime": (NOW + timedelta(minutes=3)).isoformat(), "fleet": "1804", "datedVehicleJourneyRef": "DELAYED"}
+        _, endpoint = create_stops_router(
+            runtime=StopRuntime(CountingGTFSProvider(store), CountingLiveProvider(LiveSnapshot((vehicle,), True)), lambda: NOW, 120, 80, 38),
+            unavailable_response=api_error,
+        )
+        departures = endpoint("S1")["departures"]
+        self.assertEqual([item["tripId"] for item in departures], ["DELAYED"])
+        self.assertTrue(departures[0]["live"])
     def test_live_departure_is_enriched_after_matching(self):
         store = contract_store()
         vehicle = {"operator": "BLUS", "line": "U1", "destinationFull": "University Interchange", "liveTime": (NOW + timedelta(minutes=5)).isoformat(), "currentStopRef": "S1", "fleet": "1804", "datedVehicleJourneyRef": "T24"}

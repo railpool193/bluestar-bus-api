@@ -1,0 +1,6 @@
+export function routeColour(value){const colour=String(value||'').replace(/^#/,'');return /^[0-9a-f]{6}$/i.test(colour)?`#${colour}`:'#1597dc'}
+export function contrastText(colour){const hex=routeColour(colour).slice(1),r=parseInt(hex.slice(0,2),16),g=parseInt(hex.slice(2,4),16),b=parseInt(hex.slice(4),16);return (r*299+g*587+b*114)/1000>155?'#071322':'#ffffff'}
+export function departureState(value){if(!value?.live)return {kind:'timetable',labelKey:'timetable'};const delay=Number(value.delayMinutes);if(Number.isFinite(delay)){if(delay>0)return {kind:'late',labelKey:'late',delay:`+${delay}`};if(delay<0)return {kind:'early',labelKey:'early',delay:String(delay)};return {kind:'on-time',labelKey:'onTime',delay:'0'}}return {kind:'live',labelKey:'live',delay:null}}
+export function primaryTime(value){return value?.live?(value.displayTime||value.expectedTime||value.scheduledTime):value?.scheduledTime}
+export function vehicleMeta(value){if(!value)return[];const items=[value.fleet];if(!value.vehicleMetadataAmbiguous)items.push(value.registration,value.vehicleType,value.fuel,value.livery||value.branding,value.vehicleName);return items.filter(Boolean)}
+export function shortTime(value){if(!value)return'';try{return new Intl.DateTimeFormat(undefined,{hour:'2-digit',minute:'2-digit'}).format(new Date(value))}catch{return''}}

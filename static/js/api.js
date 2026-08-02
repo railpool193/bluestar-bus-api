@@ -1,0 +1,1 @@
+export async function api(path,{signal}={}){const response=await fetch(path,{cache:'no-store',signal});let value;try{value=await response.json()}catch{throw new Error(`HTTP ${response.status}`)}if(!response.ok||value?.ok===false)throw new Error(value?.error||`HTTP ${response.status}`);return value}

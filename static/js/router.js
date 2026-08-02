@@ -1,0 +1,5 @@
+const views=new Set(['home','stop','trip','route','vehicles','map']);const required={stop:'stopId',trip:'tripId',route:'line'}
+export function normalizeRoute(view,params={}){const clean={};for(const [key,value] of Object.entries(params))if(value!==undefined&&value!==null&&String(value)!=='')clean[key]=String(value);return !views.has(view)||(required[view]&&!clean[required[view]])?{view:'home',params:{}}:{view,params:clean}}
+export function routeHash(view,params={}){const target=normalizeRoute(view,params),query=new URLSearchParams(target.params).toString();return `#${target.view}${query?`?${query}`:''}`}
+export function readRoute(hash=location.hash){const [view='home',query='']=hash.replace(/^#/,'').split('?');return normalizeRoute(view||'home',Object.fromEntries(new URLSearchParams(query)))}
+export function navigate(view,params={},replace=false){const target=normalizeRoute(view,params),url=location.pathname+location.search+routeHash(target.view,target.params);history[replace?'replaceState':'pushState'](target,'',url);dispatchEvent(new CustomEvent('app:navigate',{detail:target}))}

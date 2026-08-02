@@ -53,7 +53,7 @@ class LiveMatchingTests(unittest.TestCase):
         due = enrich_departure(store_fixture(), departure, date(2026, 8, 2), scheduled, [vehicle(liveTime="2026-08-02T10:01:00+01:00")], reference_time=NOW, matching_minutes=38)
         self.assertTrue(due["live"]); self.assertTrue(due["isDue"]); self.assertEqual(due["delayMinutes"], 5)
         fallback = enrich_departure(store_fixture(), departure, date(2026, 8, 2), scheduled, [], reference_time=NOW, matching_minutes=38)
-        self.assertFalse(fallback["live"]); self.assertEqual(fallback["vehicleRef"], "")
+        self.assertFalse(fallback["live"]); self.assertFalse(fallback["isDue"]); self.assertNotEqual(fallback["minutesText"], "Due"); self.assertEqual(fallback["vehicleRef"], "")
 
     def test_one_vehicle_is_allocated_to_only_one_of_three_departures(self):
         matches = match_live_to_departures(
